@@ -12,7 +12,10 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * Annotating: a style bar above the canvas, arrows (heads at the start / end / both), text, speech bubbles,
   markers, highlights, pixelate, and pasted pictures.
 * Helpers: adjustable crop, a blank canvas, a pin you can resize and crop, and an on-screen ruler (calibratable) and protractor.
-* **Ctrl+S** saves the picture **and** an editable `.snapm` project. The folder, file name pattern, format and quality are under **Settings**.
+* **Ctrl+S** saves the picture **and** an editable `.snapm` project, named like Greenshot after the app you captured
+  (e.g. `2026-11-18 11_34_09-Autodesk AutoCAD LT 2026 - [plan.dwg].png`).
+  The folder, file name pattern, format and quality are under **Settings**.
+* Export formats: **PNG, JPG, BMP, GIF, TIFF, PDF, ICO**, plus `.snapm` (stays editable).
 
 ## Run it
 Double-click `SnapMeasure.exe`. It sits in the system tray (bottom-right).
@@ -107,7 +110,7 @@ Drag a guide to move it, or drag it back onto the ruler to delete it. `Ctrl+R` o
 **Scale:** set the unit and *1 pixel = …* in the right panel. The **Measurements** list (dimensions, areas, angles) →
 *Copy measurements* pastes straight into Excel.
 
-**Save:** `Ctrl+S` quick-saves a PNG to *Pictures\SnapMeasure*. `Ctrl+Shift+S` saves as PNG, JPG or BMP,
+**Save:** `Ctrl+S` saves to *Pictures\SnapMeasure* (or the folder you choose in **Settings**). `Ctrl+Shift+S` saves as PNG, JPG, BMP, GIF, TIFF, PDF or ICO,
 or as **.snapm**, which stays fully editable and keeps the crop and guides.
 
 **Pin** (`Ctrl+P`) keeps a copy of the image on top of other windows. You can:
@@ -139,7 +142,7 @@ Not included (yet): scrolling capture, OCR, upload plugins.
 
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 62 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 68 built-in checks.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.
