@@ -82,13 +82,17 @@ namespace SnapMeasure
         Point start, cur;
         Rectangle sel, hover, lastDirty, hintRect;
         public Rectangle Result;
-        readonly Font font = new Font("Segoe UI", 13f, FontStyle.Bold, GraphicsUnit.Pixel);
-        readonly Font small = new Font("Segoe UI", 12f, FontStyle.Regular, GraphicsUnit.Pixel);
+        readonly Font font, small;
+        int Zoom { get { return Math.Max(8, (int)Math.Round(8 * k)); } }   // magnifier pixels per screen pixel
+        readonly float k;            // UI scale of the monitor the capture starts on (2 on a 200 % screen)
         const string Hint = "Drag to select an area  ·  Click a window to capture it  ·  Arrow keys = 1 px nudge  ·  Enter = all screens  ·  Esc / right-click = cancel";
 
         public RegionSelector(Bitmap shot, Rectangle vs, List<Rectangle> wins)
         {
             this.shot = shot; this.vs = vs; this.wins = wins;
+            k = Native.ScaleAt(Cursor.Position);
+            font = new Font("Segoe UI", 13f * k, FontStyle.Bold, GraphicsUnit.Pixel);
+            small = new Font("Segoe UI", 12f * k, FontStyle.Regular, GraphicsUnit.Pixel);
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
@@ -111,7 +115,7 @@ namespace SnapMeasure
 
             Rectangle scr = Screen.FromPoint(cp).Bounds;
             Size hs = TextRenderer.MeasureText(Hint, small);
-            hintRect = new Rectangle(scr.X - vs.X + (scr.Width - hs.Width) / 2 - 12, scr.Y - vs.Y + 14, hs.Width + 24, hs.Height + 12);
+            hintRect = new Rectangle(scr.X - vs.X + (scr.Width - hs.Width) / 2 - (int)(12 * k), scr.Y - vs.Y + (int)(14 * k), hs.Width + (int)(24 * k), hs.Height + (int)(12 * k));
             UpdateHover();
         }
 
@@ -154,18 +158,18 @@ namespace SnapMeasure
 
         Rectangle MagRect()
         {
-            int w = 15 * 8, h = 15 * 8 + 40;
-            int x = cur.X + 24, y = cur.Y + 24;
-            if (x + w > ClientSize.Width) x = cur.X - 24 - w;
-            if (y + h > ClientSize.Height) y = cur.Y - 24 - h;
+            int z = Zoom, w = 15 * z, h = 15 * z + (int)(40 * k), gap = (int)(24 * k);
+            int x = cur.X + gap, y = cur.Y + gap;
+            if (x + w > ClientSize.Width) x = cur.X - gap - w;
+            if (y + h > ClientSize.Height) y = cur.Y - gap - h;
             return new Rectangle(x, y, w, h);
         }
 
         Rectangle LabelRect(Rectangle r)
         {
-            int y = r.Y - 28;
-            if (y < 0) y = r.Y + 4;
-            return new Rectangle(r.X, y, 220, 26);
+            int hh = (int)(26 * k), y = r.Y - hh - (int)(2 * k);
+            if (y < 0) y = r.Y + (int)(4 * k);
+            return new Rectangle(r.X, y, (int)(260 * k), hh);
         }
 
         void Dirty()
@@ -214,7 +218,8 @@ namespace SnapMeasure
         void DrawMag(Graphics g)
         {
             Rectangle m = MagRect();
-            const int cells = 15, z = 8, half = 7;
+            const int cells = 15, half = 7;
+            int z = Zoom;
             Rectangle src = new Rectangle(cur.X - half, cur.Y - half, cells, cells);
             Rectangle dst = new Rectangle(m.X, m.Y, cells * z, cells * z);
             g.FillRectangle(Brushes.Black, m);

@@ -594,6 +594,23 @@ namespace SnapMeasure
             gShadow = Grp("", cShadow);
             foreach (Control c in new Control[] { lStyleFor, gLine, gFill, gFont, rowTextStyle, gHeads, rowHl, rowMarkStart, gShadow, pal })
                 styleBar.Controls.Add(c);
+            ReturnFocusToCanvas(styleBar);
+        }
+
+        /// <summary>After using a style-bar control, give the keyboard back to the canvas so tool keys (V, T, K …) work at once.</summary>
+        void ReturnFocusToCanvas(Control root)
+        {
+            foreach (Control c in root.Controls)
+            {
+                Action back = () => BeginInvoke((Action)(() => { if (!cv.IsEditingText) cv.Focus(); }));
+                ComboBox cb = c as ComboBox;
+                if (cb != null) { cb.DropDownClosed += (s, e) => back(); continue; }
+                if (c is CheckBox || c is Button) { c.Click += (s, e) => back(); continue; }
+                if (c is TrackBar) { c.MouseUp += (s, e) => back(); continue; }
+                NumericUpDown nu = c as NumericUpDown;
+                if (nu != null) { nu.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; back(); } }; continue; }
+                if (c.Controls.Count > 0) ReturnFocusToCanvas(c);
+            }
         }
 
         Panel BuildProps()

@@ -1403,6 +1403,18 @@ namespace SnapMeasure
             ViewMoved();
         }
 
+        /// <summary>If another window takes the mouse in the middle of a drag, cancel it cleanly
+        /// (otherwise a guide or selection box could be left hanging and dropped on the next click).</summary>
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (Capture) return;
+            bool changed = false;
+            if (guideAxis != 0) { guideAxis = 0; guideIdx = -1; changed = true; }
+            if (marquee) { marquee = false; changed = true; }
+            if (changed) Invalidate();
+        }
+
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
