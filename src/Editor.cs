@@ -77,6 +77,7 @@ namespace SnapMeasure
             k = Native.ScaleAt(Cursor.Position);
             fs = k / Native.SystemScale;          // fonts are in points at the system DPI, so scale them by the difference
             Text = "SnapMeasure – " + title;
+            captureTitle = title;
             Icon = AppIcon.Get();
             AutoScaleMode = AutoScaleMode.None;
             Font = new Font("Segoe UI", 9f * fs);
@@ -222,7 +223,7 @@ namespace SnapMeasure
             Ic(AddBtn(bar, "Blank", "New empty canvas to draw and scribble on", (s, e) => App.NewBlankCanvas(this)), "blank");
             Ic(AddBtn(bar, "Open…", "Open an image or .snapm project (Ctrl+O)", (s, e) => OpenFile()), "open");
             bar.Items.Add(new ToolStripSeparator());
-            Ic(AddBtn(bar, "Save", "Quick-save PNG to your save folder (Ctrl+S)", (s, e) => QuickSave()), "save");
+            Ic(AddBtn(bar, "Save", "Save the picture (and an editable .snapm) to your save folder (Ctrl+S) – folder, name and format in Settings", (s, e) => QuickSave()), "save");
             Ic(AddBtn(bar, "Save as…", "PNG / JPG / BMP, or an editable .snapm project (Ctrl+Shift+S)", (s, e) => SaveAs()), "saveas");
             Ic(AddBtn(bar, "Copy", "Copy the annotated image to the clipboard (Ctrl+C with nothing selected)", (s, e) => CopyImage()), "copy");
             Ic(AddBtn(bar, "Pin", "Pin the image on screen, always on top (Ctrl+P)", (s, e) => Pin()), "pin");
@@ -269,6 +270,8 @@ namespace SnapMeasure
             bar.Items.Add(new ToolStripSeparator());
             bPanel = Ic(AddBtn(bar, "Scale panel", "Show or hide the scale & measurements panel on the right (F4)", (s, e) => TogglePanel()), "panel");
             bPanel.Checked = Settings.GetBool("ShowPanel", true);
+            Ic(AddBtn(bar, "Settings", "Output settings: save folder, file name, format, quality", (s, e) => Dialogs.OutputSettings(this)), "settings");
+            IconOnly(AddBtn(bar, "About", "About SnapMeasure, shortcuts and the GitHub page", (s, e) => App.ShowAbout(this)), "help");
         }
 
         void TogglePanel()
@@ -685,7 +688,11 @@ namespace SnapMeasure
             status.Items.Add(lHint);
             Version v = typeof(EditorForm).Assembly.GetName().Version;
             lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor);
-            lVersion.ForeColor = Color.FromArgb(110, 110, 110);
+            lVersion.ForeColor = Color.FromArgb(0, 102, 204);
+            lVersion.IsLink = true;
+            lVersion.LinkBehavior = LinkBehavior.HoverUnderline;
+            lVersion.ToolTipText = "About SnapMeasure – " + AppInfo.RepoUrl;
+            lVersion.Click += (s, e) => App.ShowAbout(this);
             status.Items.Add(new ToolStripSeparator());
             status.Items.Add(lVersion);
         }
@@ -1030,24 +1037,39 @@ namespace SnapMeasure
             dirty = false;
         }
 
+        /// <summary>Ctrl+S: picture in the chosen format (+ an editable .snapm project), named by the output settings.</summary>
         void QuickSave()
         {
             try
             {
                 string dir = Settings.SaveFolder;
                 Directory.CreateDirectory(dir);
-                string path = Path.Combine(dir, "SnapMeasure_" + DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss") + ".png");
-                SaveTo(path);
+                string ext = Output.Format;
+                bool proj = Output.SaveProject;
+                string name = Output.MakeName(Output.Pattern, captureTime, captureTitle, Output.Pattern.Contains("${n") ? Output.NextNumber() : 0);
+                // saving the same editor again overwrites its own files instead of piling up copies
+                string b = quickBase != null && Path.GetDirectoryName(quickBase) == dir ? quickBase : Output.UniqueBase(dir, name, ext, proj);
+                SaveTo(b + "." + ext);
+                if (proj) SaveTo(b + ".snapm");
+                quickBase = b;
+                if (Output.CopyPath) { try { Clipboard.SetText(b + "." + ext); } catch { } }
+                Text = "SnapMeasure – " + Path.GetFileName(b + "." + ext);
+                Flash("Saved " + Path.GetFileName(b) + "." + ext + (proj ? " + .snapm" : "") + " in " + dir + (Output.CopyPath ? "  (path copied)" : ""));
             }
             catch (Exception ex) { MessageBox.Show(this, "Could not save: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
+
+        string quickBase;
+        readonly DateTime captureTime = DateTime.Now;
+        string captureTitle;
 
         bool SaveAs()
         {
             using (SaveFileDialog d = new SaveFileDialog())
             {
                 d.Filter = "PNG image|*.png|JPEG image|*.jpg|Bitmap|*.bmp|SnapMeasure project – stays editable|*.snapm";
-                d.FileName = lastSaved != null ? Path.GetFileNameWithoutExtension(lastSaved) : "SnapMeasure_" + DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                d.FileName = lastSaved != null ? Path.GetFileNameWithoutExtension(lastSaved) : Output.MakeName(Output.Pattern, captureTime, captureTitle, 0);
+                d.FilterIndex = Math.Max(1, Array.IndexOf(Output.Formats, Output.Format) + 1);
                 try { Directory.CreateDirectory(Settings.SaveFolder); d.InitialDirectory = Settings.SaveFolder; } catch { }
                 if (d.ShowDialog(this) != DialogResult.OK) return false;
                 try { SaveTo(d.FileName); return true; }
@@ -1078,7 +1100,7 @@ namespace SnapMeasure
                     ImageCodecInfo jpg = Array.Find(ImageCodecInfo.GetImageEncoders(), c => c.FormatID == ImageFormat.Jpeg.Guid);
                     using (EncoderParameters ep = new EncoderParameters(1))
                     {
-                        ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 92L);
+                        ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)Output.JpegQuality);
                         b.Save(path, jpg, ep);
                     }
                 }

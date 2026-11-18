@@ -1,18 +1,18 @@
-# SnapMeasure 1.3
+# SnapMeasure 1.0
 
 Portable screenshot tool with **dimensions, area, angles, scale, polygon highlighting, rulers & guides, rotation, effects and speech bubbles**,
 plus an **on-screen ruler and protractor** that float over any app.
 One file, `SnapMeasure.exe` (~230 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
 (it uses the .NET Framework 4.x that's built into Windows).
 **Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
-Free and open source under the [MIT licence](LICENSE).
+Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
-**New in 1.3:**
-* A **style bar** right above the canvas replaces the old style panel on the right.
-* **Alt colour keys**, **arrowheads** at the start / end / both, and **pasted pictures** you can move and scale.
-* A **blank canvas**, a **pin** you can resize and crop, and an on-screen **ruler that you can calibrate** to real units.
-* The version number is at the bottom right. There's a **new logo** and icons in the tray menu.
-* The UI is now sized for the monitor it opens on, and there's extra security hardening.
+**Highlights:**
+* Measuring: dimensions, area / perimeter, 3-point angle, scale calibration, rulers & guides, Excel export.
+* Annotating: a style bar above the canvas, arrows (heads at the start / end / both), text, speech bubbles,
+  markers, highlights, pixelate, and pasted pictures.
+* Helpers: adjustable crop, a blank canvas, a pin you can resize and crop, and an on-screen ruler (calibratable) and protractor.
+* **Ctrl+S** saves the picture **and** an editable `.snapm` project. The folder, file name pattern, format and quality are under **Settings**.
 
 ## Run it
 Double-click `SnapMeasure.exe`. It sits in the system tray (bottom-right).
@@ -139,7 +139,7 @@ Not included (yet): scrolling capture, OCR, upload plugins.
 
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 56 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 62 built-in checks.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.

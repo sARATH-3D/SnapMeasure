@@ -14,9 +14,9 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
-[assembly: System.Reflection.AssemblyCopyright("SnapMeasure – free portable screenshot & measuring tool")]
+[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
 
@@ -333,6 +333,19 @@ namespace SnapMeasure
                 cv.Shapes.Remove(weird); cv.Shapes.Remove(weird2);
             }
 
+            // ---- output file names ----
+            {
+                DateTime t0 = new DateTime(2026, 11, 18, 14, 5, 33);
+                check("Name pattern", Output.MakeName("${capturetime:yyyy-MM-dd HH_mm_ss}-${title}", t0, "Region 120×80", 1), "2026-11-18 14_05_33-Region 120×80");
+                check("Name tokens", Output.MakeName("Shot_${date}_${time}_${n}", t0, "", 7), "Shot_2026-11-18_14-05-33_007");
+                check("Name can't leave the folder", Output.MakeName("..\\..\\Windows\\${title}", t0, "a/b:c", 1), "_._Windows_a_b_c");
+                check("Reserved name made safe", Output.MakeName("CON", t0, "", 1), "_CON");
+                check("Empty name falls back", Output.MakeName("   ", t0, "", 1), "SnapMeasure");
+                string od = Path.Combine(dir, "out"); Directory.CreateDirectory(od);
+                File.WriteAllText(Path.Combine(od, "shot.png"), "x");
+                check("No overwrite", Path.GetFileName(Output.UniqueBase(od, "shot", "png", true)), "shot (2)");
+            }
+
             // ---- adjustable crop ----
             {
                 cv.CropRect = new Rectangle(100, 100, 400, 250);
@@ -484,6 +497,17 @@ namespace SnapMeasure
             catch (Exception ex) { MessageBox.Show("Could not read the clipboard: " + ex.Message, "SnapMeasure"); }
         }
 
+        public static string FailedHotkeys = "";
+        static AboutForm about;
+
+        public static void ShowAbout(IWin32Window owner)
+        {
+            if (about != null && !about.IsDisposed) { about.Activate(); return; }
+            about = new AboutForm(AboutText.Shortcuts(FailedHotkeys));
+            about.FormClosed += (s, e) => about = null;
+            about.Show(owner);
+        }
+
         /// <summary>Empty canvas to draw and scribble on.</summary>
         public static void NewBlankCanvas(IWin32Window owner)
         {
@@ -595,10 +619,10 @@ namespace SnapMeasure
             copy.Checked = Settings.GetBool("CopyOnCapture", true);
             copy.Click += (s, e) => { copy.Checked = !copy.Checked; Settings.Set("CopyOnCapture", copy.Checked ? "1" : "0"); };
             menu.Items.Add(copy);
-            Item(menu, "Choose save folder…", "", ChooseFolder, false).Image = Icons.Cmd("folder", 16);
+            Item(menu, "Output settings…", "", () => Dialogs.OutputSettings(null), false).Image = Icons.Cmd("settings", 16);
             Item(menu, "Open save folder", "", OpenFolder, false).Image = Icons.Cmd("folderopen", 16);
             menu.Items.Add(new ToolStripSeparator());
-            Item(menu, "Keyboard shortcuts && about…", "", ShowAbout, false).Image = Icons.Cmd("help", 16);
+            Item(menu, "About SnapMeasure && shortcuts…", "", ShowAbout, false).Image = Icons.Cmd("help", 16);
             Item(menu, "Exit", "", ExitApp, false).Image = Icons.Cmd("exit", 16);
             ni.ContextMenuStrip = menu;
             ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.CaptureRegion(); };
@@ -646,16 +670,6 @@ namespace SnapMeasure
             }
         }
 
-        void ChooseFolder()
-        {
-            using (FolderBrowserDialog d = new FolderBrowserDialog())
-            {
-                d.Description = "Where should Save (Ctrl+S) put screenshots?";
-                d.SelectedPath = Settings.SaveFolder;
-                if (d.ShowDialog() == DialogResult.OK) Settings.Set("SaveFolder", d.SelectedPath);
-            }
-        }
-
         void OpenFolder()
         {
             try { Directory.CreateDirectory(Settings.SaveFolder); Process.Start("explorer.exe", "\"" + Settings.SaveFolder + "\""); }
@@ -664,32 +678,8 @@ namespace SnapMeasure
 
         void ShowAbout()
         {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("SnapMeasure 1.3 – portable screenshot & measuring tool");
-            sb.AppendLine();
-            sb.AppendLine("CAPTURE");
-            sb.AppendLine("  PrtSc / Ctrl+Shift+1\tRegion (or click a window)");
-            sb.AppendLine("  Alt+PrtSc / Ctrl+Shift+2\tActive window");
-            sb.AppendLine("  Ctrl+PrtSc / Ctrl+Shift+3\tScreen under mouse");
-            sb.AppendLine("  Shift+PrtSc / Ctrl+Shift+4\tLast region again");
-            if (failedKeys.Count > 0) sb.AppendLine("  Not available (used by another app): " + string.Join(", ", failedKeys.ToArray()));
-            sb.AppendLine();
-            sb.AppendLine("EDITOR TOOLS");
-            sb.AppendLine("  V Select   D Dimension   M Area   K Calibrate scale");
-            sb.AppendLine("  P Polygon   H Highlight   R Rectangle   E Ellipse   L Line");
-            sb.AppendLine("  A Arrow   F Freehand   T Text   S Speech bubble   G Angle");
-            sb.AppendLine("  N Number marker   Shift+N Letter marker");
-            sb.AppendLine("  B Pixelate   C Crop (adjustable; Delete = remove crop)");
-            sb.AppendLine();
-            sb.AppendLine("  Ctrl+A select all   Ctrl+C/X/V copy, cut, paste shapes   Ctrl+D duplicate");
-            sb.AppendLine("  Ctrl+] / Ctrl+[ forward / backward   (+Shift = front / back)   Ctrl+R rulers");
-            sb.AppendLine();
-            sb.AppendLine("  Home = fit & centre   Shift = 15° / square   Alt = no snapping");
-            sb.AppendLine("  Ctrl+wheel = zoom   Space+drag or middle mouse = pan");
-            sb.AppendLine("  Ctrl+S save   Ctrl+Shift+S save as   Ctrl+C copy   Ctrl+P pin");
-            sb.AppendLine();
-            sb.AppendLine("Settings file: " + Settings.FilePath);
-            MessageBox.Show(sb.ToString(), "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            App.FailedHotkeys = string.Join(", ", failedKeys.ToArray());
+            App.ShowAbout(null);
         }
 
         void ExitApp()
@@ -705,6 +695,38 @@ namespace SnapMeasure
             ni.Visible = false;
             ni.Dispose();
             ExitThread();
+        }
+    }
+
+    internal static class AboutText
+    {
+        public static string Shortcuts(string failed)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("CAPTURE");
+            sb.AppendLine("  PrtSc / Ctrl+Shift+1\tRegion (or click a window)");
+            sb.AppendLine("  Alt+PrtSc / Ctrl+Shift+2\tActive window");
+            sb.AppendLine("  Ctrl+PrtSc / Ctrl+Shift+3\tScreen under mouse");
+            sb.AppendLine("  Shift+PrtSc / Ctrl+Shift+4\tLast region again");
+            if (!string.IsNullOrEmpty(failed)) sb.AppendLine("  Not available (used by another app): " + failed);
+            sb.AppendLine();
+            sb.AppendLine("EDITOR TOOLS");
+            sb.AppendLine("  V Select   D Dimension   M Area   K Calibrate scale");
+            sb.AppendLine("  P Polygon   H Highlight   R Rectangle   E Ellipse   L Line");
+            sb.AppendLine("  A Arrow   F Freehand   T Text   S Speech bubble   G Angle");
+            sb.AppendLine("  N Number marker   Shift+N Letter marker");
+            sb.AppendLine("  B Pixelate   C Crop (adjustable; Delete = remove crop)");
+            sb.AppendLine();
+            sb.AppendLine("  Ctrl+A select all   Ctrl+C/X/V copy, cut, paste shapes   Ctrl+D duplicate");
+            sb.AppendLine("  Ctrl+] / Ctrl+[ forward / backward   (+Shift = front / back)   Ctrl+R rulers");
+            sb.AppendLine();
+            sb.AppendLine("  Home = fit & centre   Shift = 15° / square   Alt = no snapping");
+            sb.AppendLine("  Ctrl+wheel = zoom   Space+drag or middle mouse = pan");
+            sb.AppendLine("  Alt+1..9 line colour   Alt+Shift+1..9 fill colour   Alt+L / Alt+F pickers");
+            sb.AppendLine("  Ctrl+S save picture (+ .snapm)   Ctrl+Shift+S save as   Ctrl+P pin   F4 scale panel");
+            sb.AppendLine();
+            sb.AppendLine("Settings file: " + Settings.FilePath);
+            return sb.ToString();
         }
     }
 
@@ -1041,6 +1063,90 @@ namespace SnapMeasure
                 Buttons(f, k);
                 f.Shown += (s, e) => { f.Activate(); t.Focus(); t.SelectAll(); };
                 return f.ShowDialog(owner) == DialogResult.OK ? t.Text : null;
+            }
+        }
+
+        /// <summary>Output settings: save folder, file name pattern, format, quality, and what else to do on save.</summary>
+        public static void OutputSettings(IWin32Window owner)
+        {
+            float k = K(owner);
+            Func<float, int> S = v => (int)Math.Round(v * k);
+            using (Form f = Base("Output settings", k, 520, 330))
+            {
+                Func<string, int, Label> lab = (t, y) =>
+                {
+                    Label l = new Label(); l.Text = t; l.AutoSize = true; l.Location = new Point(S(12), S(y + 4)); f.Controls.Add(l); return l;
+                };
+                lab("Save folder", 14); lab("File name", 48); lab("Example", 80); lab("Image format", 112); lab("JPEG quality", 146);
+
+                TextBox folder = new TextBox(); folder.Text = Settings.SaveFolder; folder.SetBounds(S(120), S(14), S(340), S(26));
+                Button browse = new Button(); browse.Text = "…"; browse.SetBounds(S(466), S(13), S(40), S(26));
+                browse.Click += (s, e) =>
+                {
+                    using (FolderBrowserDialog d = new FolderBrowserDialog())
+                    {
+                        d.Description = "Where should Save (Ctrl+S) put your pictures?";
+                        try { d.SelectedPath = folder.Text; } catch { }
+                        if (d.ShowDialog(f) == DialogResult.OK) folder.Text = d.SelectedPath;
+                    }
+                };
+                TextBox pattern = new TextBox(); pattern.Text = Output.Pattern; pattern.SetBounds(S(120), S(48), S(340), S(26));
+                Button help = new Button(); help.Text = "?"; help.SetBounds(S(466), S(47), S(40), S(26));
+                help.Click += (s, e) => MessageBox.Show(f,
+                    "Placeholders you can use in the file name:\n\n" +
+                    "${capturetime:yyyy-MM-dd HH_mm_ss}   date and time in any format\n" +
+                    "${date}   e.g. 2026-11-18\n" +
+                    "${time}   e.g. 14-05-33\n" +
+                    "${title}   the window or capture name\n" +
+                    "${n}   running number 001, 002 … (${n:D4} = 0001)\n\n" +
+                    "Characters that aren't allowed in file names become _ .",
+                    "File name pattern", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Label example = new Label(); example.AutoSize = true; example.ForeColor = Color.FromArgb(0, 90, 170); example.Location = new Point(S(120), S(84));
+                ComboBox fmt = new ComboBox(); fmt.DropDownStyle = ComboBoxStyle.DropDownList;
+                fmt.Items.AddRange(new string[] { "PNG – best quality, keeps transparency", "JPG – smaller files", "BMP – uncompressed" });
+                fmt.SetBounds(S(120), S(112), S(340), S(26));
+                fmt.SelectedIndex = Array.IndexOf(Output.Formats, Output.Format);
+                TrackBar q = new TrackBar(); q.Minimum = 10; q.Maximum = 100; q.TickStyle = TickStyle.None; q.AutoSize = false;
+                q.SetBounds(S(116), S(144), S(300), S(28)); q.Value = Output.JpegQuality;
+                Label ql = new Label(); ql.AutoSize = true; ql.Location = new Point(S(424), S(150)); ql.Text = q.Value + " %";
+                q.ValueChanged += (s, e) => ql.Text = q.Value + " %";
+                CheckBox proj = new CheckBox(); proj.Text = "Ctrl+S also saves an editable .snapm project next to the picture";
+                proj.AutoSize = true; proj.Location = new Point(S(14), S(186)); proj.Checked = Output.SaveProject;
+                CheckBox copy = new CheckBox(); copy.Text = "Copy the file path to the clipboard after saving";
+                copy.AutoSize = true; copy.Location = new Point(S(14), S(212)); copy.Checked = Output.CopyPath;
+                CheckBox clip = new CheckBox(); clip.Text = "Copy every new capture to the clipboard";
+                clip.AutoSize = true; clip.Location = new Point(S(14), S(238)); clip.Checked = Settings.GetBool("CopyOnCapture", true);
+
+                Action update = () =>
+                {
+                    string ext = fmt.SelectedIndex >= 0 ? Output.Formats[fmt.SelectedIndex] : "png";
+                    string n = Output.MakeName(pattern.Text, DateTime.Now, "Region 1249×841", 1);
+                    example.Text = n + "." + ext + (proj.Checked ? "   +   " + n + ".snapm" : "");
+                    q.Enabled = ext == "jpg";
+                };
+                pattern.TextChanged += (s, e) => update();
+                fmt.SelectedIndexChanged += (s, e) => update();
+                proj.CheckedChanged += (s, e) => update();
+                update();
+
+                foreach (Control c in new Control[] { folder, browse, pattern, help, example, fmt, q, ql, proj, copy, clip }) f.Controls.Add(c);
+                Buttons(f, k);
+                while (f.ShowDialog(owner) == DialogResult.OK)
+                {
+                    string dir = folder.Text.Trim();
+                    bool okDir = false;
+                    try { okDir = dir.Length > 0 && Path.IsPathRooted(dir); if (okDir) Directory.CreateDirectory(dir); }
+                    catch (Exception) { okDir = false; }
+                    if (!okDir) { MessageBox.Show(f, "Choose a folder that exists or can be created, e.g. C:\\Users\\you\\Pictures\\SnapMeasure", "Output settings"); continue; }
+                    Settings.Set("SaveFolder", dir);
+                    Settings.Set("FilePattern", string.IsNullOrWhiteSpace(pattern.Text) ? Output.DefaultPattern : pattern.Text.Trim());
+                    Settings.Set("ImageFormat", Output.Formats[Math.Max(0, fmt.SelectedIndex)]);
+                    Settings.Set("JpegQuality", q.Value.ToString(CultureInfo.InvariantCulture));
+                    Settings.Set("SaveProjectToo", proj.Checked ? "1" : "0");
+                    Settings.Set("CopyPathOnSave", copy.Checked ? "1" : "0");
+                    Settings.Set("CopyOnCapture", clip.Checked ? "1" : "0");
+                    return;
+                }
             }
         }
 
@@ -1468,6 +1574,22 @@ namespace SnapMeasure
                             using (Pen yp = new Pen(amber, 3f)) g.DrawLine(yp, 8, 12, 14, 5);
                             using (Pen tp = new Pen(ink, 1f)) g.DrawLine(tp, 6.5f, 14, 8, 12);
                             break;
+                        case "settings":    // gear
+                            {
+                                using (SolidBrush gb = new SolidBrush(Color.FromArgb(95, 100, 110)))
+                                {
+                                    for (int i = 0; i < 8; i++)
+                                    {
+                                        GraphicsState st = g.Save();
+                                        g.TranslateTransform(8, 8); g.RotateTransform(i * 45);
+                                        g.FillRectangle(gb, -1.6f, -7.5f, 3.2f, 3.5f);
+                                        g.Restore(st);
+                                    }
+                                    g.FillEllipse(gb, 2.5f, 2.5f, 11, 11);
+                                }
+                                g.FillEllipse(Brushes.White, 5.5f, 5.5f, 5, 5);
+                                break;
+                            }
                         case "panel":       // window with a right side panel
                             g.FillRectangle(Brushes.White, 1.5f, 2.5f, 13, 11); g.DrawRectangle(p, 1.5f, 2.5f, 13, 11);
                             using (SolidBrush pb2 = new SolidBrush(Color.FromArgb(180, 0, 110, 210))) g.FillRectangle(pb2, 10, 3, 4, 10);
