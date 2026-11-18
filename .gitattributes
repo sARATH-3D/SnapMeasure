@@ -1,0 +1,7 @@
+# Windows project: keep CRLF line endings in the working copy, normalise in the repository
+* text=auto
+*.cs   text eol=crlf
+*.cmd  text eol=crlf
+*.md   text eol=crlf
+*.manifest text eol=crlf
+*.ico  binary

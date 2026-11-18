@@ -1,0 +1,22 @@
+# Built program – publish it on the GitHub Releases page instead
+*.exe
+*.zip
+*.pdb
+
+# Personal settings (save folder, last capture region …)
+SnapMeasure.ini
+
+# Local helper for publishing
+publish-to-github.cmd
+
+# Old versions kept locally
+Backup/
+
+# Ready-to-share copies (rebuilt from source)
+Share/
+
+# Editor / OS clutter
+.vs/
+*.user
+Thumbs.db
+desktop.ini
