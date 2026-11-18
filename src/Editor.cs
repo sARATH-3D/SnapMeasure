@@ -1067,7 +1067,7 @@ namespace SnapMeasure
         {
             using (SaveFileDialog d = new SaveFileDialog())
             {
-                d.Filter = "PNG image|*.png|JPEG image|*.jpg|Bitmap|*.bmp|SnapMeasure project – stays editable|*.snapm";
+                d.Filter = Output.SaveFilter;
                 d.FileName = lastSaved != null ? Path.GetFileNameWithoutExtension(lastSaved) : Output.MakeName(Output.Pattern, captureTime, captureTitle, 0);
                 d.FilterIndex = Math.Max(1, Array.IndexOf(Output.Formats, Output.Format) + 1);
                 try { Directory.CreateDirectory(Settings.SaveFolder); d.InitialDirectory = Settings.SaveFolder; } catch { }
@@ -1107,6 +1107,14 @@ namespace SnapMeasure
             }
             else if (ext == ".bmp")
                 using (Bitmap b = cv.Flatten(Color.White)) b.Save(path, ImageFormat.Bmp);
+            else if (ext == ".gif")
+                using (Bitmap b = cv.Flatten(Color.White)) Output.SaveGif(b, path);
+            else if (ext == ".tif" || ext == ".tiff")
+                using (Bitmap b = cv.Flatten(null)) b.Save(path, ImageFormat.Tiff);
+            else if (ext == ".pdf")
+                using (Bitmap b = cv.Flatten(Color.White)) Output.SavePdf(b, path, Output.JpegQuality);
+            else if (ext == ".ico")
+                using (Bitmap b = cv.Flatten(null)) Output.SaveIco(b, path);
             else
                 using (Bitmap b = cv.Flatten(null)) b.Save(path, ImageFormat.Png);
             lastSaved = path;

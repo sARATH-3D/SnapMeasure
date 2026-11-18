@@ -32,17 +32,43 @@ namespace SnapMeasure
         /// <summary>Freeze all screens, let the user drag a region or click a window. Returns null on cancel.</summary>
         public static Bitmap SelectRegion(out Rectangle screenRect)
         {
+            string title;
+            return SelectRegion(out screenRect, out title);
+        }
+
+        /// <summary>As above; 'title' = the app / window that was captured (like Greenshot), for the file name.</summary>
+        public static Bitmap SelectRegion(out Rectangle screenRect, out string title)
+        {
             screenRect = Rectangle.Empty;
+            title = "";
             Rectangle vs = VirtualBounds;
-            List<Rectangle> wins = Native.GetVisibleWindowRects();
+            string active = Native.WindowTitle(Native.GetForegroundWindow());   // the app you were in when you pressed the key
+            List<string> titles = new List<string>();
+            List<Rectangle> wins = Native.GetVisibleWindowRects(titles);
             using (Bitmap shot = Grab(vs))
             using (RegionSelector f = new RegionSelector(shot, vs, wins))
             {
                 if (f.ShowDialog() != DialogResult.OK) return null;
                 Rectangle r = f.Result;
                 screenRect = new Rectangle(r.X + vs.X, r.Y + vs.Y, r.Width, r.Height);
+                title = TitleFor(screenRect, wins, titles, active);
                 return Crop(shot, r);
             }
+        }
+
+        /// <summary>Name of the window the area belongs to: the front-most titled window under its centre,
+        /// or the app that was active when the capture started.</summary>
+        public static string TitleFor(Rectangle area, List<Rectangle> wins, List<string> titles, string active)
+        {
+            Point c = new Point(area.X + area.Width / 2, area.Y + area.Height / 2);
+            for (int i = 0; i < wins.Count && i < titles.Count; i++)
+            {
+                if (!wins[i].Contains(c)) continue;
+                string t = titles[i];
+                if (t.Length == 0 || t.StartsWith("SnapMeasure")) continue;
+                return t;
+            }
+            return active != null && !active.StartsWith("SnapMeasure") ? active : "";
         }
     }
 

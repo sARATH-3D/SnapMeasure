@@ -96,8 +96,20 @@ namespace SnapMeasure
             return DwmGetWindowAttribute(h, 14, out c, 4) == 0 && c != 0;
         }
 
+        /// <summary>Title bar text of a window ("" if none).</summary>
+        public static string WindowTitle(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return "";
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(512);
+            GetWindowText(h, sb, 512);
+            return sb.ToString().Trim();
+        }
+
         /// <summary>Top-level windows in Z order (front first), for click-to-capture-window.</summary>
-        public static List<Rectangle> GetVisibleWindowRects()
+        public static List<Rectangle> GetVisibleWindowRects() { return GetVisibleWindowRects(null); }
+
+        /// <summary>Same, also filling 'titles' (same order) with each window's title text.</summary>
+        public static List<Rectangle> GetVisibleWindowRects(List<string> titles)
         {
             List<Rectangle> list = new List<Rectangle>();
             IntPtr shell = GetShellWindow();
@@ -110,6 +122,7 @@ namespace SnapMeasure
                 Rectangle r = GetWindowBounds(h);
                 if (r.Width < 16 || r.Height < 16) return true;
                 list.Add(r);
+                if (titles != null) titles.Add(WindowTitle(h));
                 return true;
             }, IntPtr.Zero);
             return list;

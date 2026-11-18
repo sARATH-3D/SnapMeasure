@@ -346,6 +346,41 @@ namespace SnapMeasure
                 check("No overwrite", Path.GetFileName(Output.UniqueBase(od, "shot", "png", true)), "shot (2)");
             }
 
+            // ---- window title for file names (like Greenshot) ----
+            {
+                List<Rectangle> ws = new List<Rectangle> { new Rectangle(0, 0, 500, 400), new Rectangle(0, 0, 1920, 1080) };
+                List<string> ts = new List<string> { "SnapMeasure – old", "Autodesk AutoCAD LT 2026 - [QF01012-R00.dwg]" };
+                check("Title of captured app", ScreenCapture.TitleFor(new Rectangle(100, 100, 50, 50), ws, ts, "Slack"), "Autodesk AutoCAD LT 2026 - [QF01012-R00.dwg]");
+                check("Falls back to active app", ScreenCapture.TitleFor(new Rectangle(3000, 100, 50, 50), ws, ts, "Rhino 8 Commercial - [Parallel]"), "Rhino 8 Commercial - [Parallel]");
+                check("Greenshot-style default name",
+                      Output.MakeName(Output.DefaultPattern, new DateTime(2026, 11, 18, 11, 34, 9), "Autodesk AutoCAD LT 2026 - [QF01012-R00.dwg]", 0),
+                      "2026-11-18 11_34_09-Autodesk AutoCAD LT 2026 - [QF01012-R00.dwg]");
+            }
+
+            // ---- extra export formats ----
+            using (Bitmap flat = cv.Flatten(Color.White))
+            {
+                string bx = Path.Combine(dir, "export");
+                Output.SaveGif(flat, bx + ".gif");
+                flat.Save(bx + ".tif", ImageFormat.Tiff);
+                Output.SaveIco(flat, bx + ".ico");
+                Output.SavePdf(flat, bx + ".pdf", 90);
+                string sizes = "";
+                foreach (string e in new string[] { ".gif", ".tif" })
+                    using (Image im = Image.FromFile(bx + e)) sizes += e + "=" + im.Width + "x" + im.Height + " ";
+                byte[] ico = File.ReadAllBytes(bx + ".ico");
+                int entries = ico[4] | ico[5] << 8, last = ico[6 + 16 * (entries - 1)];
+                sizes += ".ico=" + entries + " sizes, largest " + (last == 0 ? 256 : last);
+                check("GIF / TIFF / ICO export", sizes.Trim(), ".gif=900x600 .tif=900x600 .ico=7 sizes, largest 256");
+                using (Bitmap g2 = new Bitmap(bx + ".gif"))
+                {
+                    Color c = g2.GetPixel(475, 25);   // white background (between grid lines) stays white
+                    check("GIF keeps colours (±3)", (c.R >= 252 && c.G >= 252 && c.B >= 252).ToString(), "True");
+                }
+                string pdf = File.ReadAllText(bx + ".pdf", Encoding.ASCII);
+                check("PDF export", (pdf.StartsWith("%PDF-1.4") && pdf.Contains("/MediaBox [0 0 675 450]") && pdf.TrimEnd().EndsWith("%%EOF")).ToString(), "True");
+            }
+
             // ---- adjustable crop ----
             {
                 cv.CropRect = new Rectangle(100, 100, 400, 250);
@@ -400,6 +435,14 @@ namespace SnapMeasure
             t.Start();
         }
 
+        /// <summary>The captured app's window title (e.g. "Autodesk AutoCAD LT 2026 - [plan.dwg]"), or a fallback name.</summary>
+        static string Named(string windowTitle, string fallback)
+        {
+            string t = (windowTitle ?? "").Trim();
+            if (t.Length == 0 || t.StartsWith("SnapMeasure")) return fallback;
+            return t.Length > 120 ? t.Substring(0, 120) : t;
+        }
+
         static void Deliver(Bitmap b, string title)
         {
             if (b == null) return;
@@ -426,10 +469,11 @@ namespace SnapMeasure
             Guard(() =>
             {
                 Rectangle r;
-                Bitmap b = ScreenCapture.SelectRegion(out r);
+                string title;
+                Bitmap b = ScreenCapture.SelectRegion(out r, out title);
                 if (b == null) return;
                 Settings.Set("LastRegion", r.X + "," + r.Y + "," + r.Width + "," + r.Height);
-                Deliver(b, "Region " + r.Width + "×" + r.Height);
+                Deliver(b, Named(title, "Region " + r.Width + "×" + r.Height));
             });
         }
 
@@ -441,7 +485,7 @@ namespace SnapMeasure
                 Rectangle r = h == IntPtr.Zero ? Rectangle.Empty : Native.GetWindowBounds(h);
                 r.Intersect(ScreenCapture.VirtualBounds);
                 if (r.Width < 2 || r.Height < 2) return;
-                Deliver(ScreenCapture.Grab(r), "Window " + r.Width + "×" + r.Height);
+                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(h), "Window " + r.Width + "×" + r.Height));
             });
         }
 
@@ -450,7 +494,7 @@ namespace SnapMeasure
             Guard(() =>
             {
                 Rectangle r = Screen.FromPoint(Cursor.Position).Bounds;
-                Deliver(ScreenCapture.Grab(r), "Screen " + r.Width + "×" + r.Height);
+                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(Native.GetForegroundWindow()), "Screen " + r.Width + "×" + r.Height));
             });
         }
 
@@ -477,7 +521,10 @@ namespace SnapMeasure
                 Rectangle r = new Rectangle(x, y, w, h);
                 r.Intersect(ScreenCapture.VirtualBounds);
                 if (r.Width < 2 || r.Height < 2) return;
-                Deliver(ScreenCapture.Grab(r), "Last region " + r.Width + "×" + r.Height);
+                List<string> titles = new List<string>();
+                List<Rectangle> wins = Native.GetVisibleWindowRects(titles);
+                string t = ScreenCapture.TitleFor(r, wins, titles, Native.WindowTitle(Native.GetForegroundWindow()));
+                Deliver(ScreenCapture.Grab(r), Named(t, "Last region " + r.Width + "×" + r.Height));
             });
         }
 
@@ -539,7 +586,7 @@ namespace SnapMeasure
                     ProjectFile.CheckImageSize(tmp.Width, tmp.Height);
                     b = new Bitmap(tmp);
                 }
-                return new EditorForm(b, Path.GetFileName(path));
+                return new EditorForm(b, Path.GetFileNameWithoutExtension(path));
             }
             catch (Exception ex)
             {
@@ -1103,7 +1150,7 @@ namespace SnapMeasure
                     "File name pattern", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 Label example = new Label(); example.AutoSize = true; example.ForeColor = Color.FromArgb(0, 90, 170); example.Location = new Point(S(120), S(84));
                 ComboBox fmt = new ComboBox(); fmt.DropDownStyle = ComboBoxStyle.DropDownList;
-                fmt.Items.AddRange(new string[] { "PNG – best quality, keeps transparency", "JPG – smaller files", "BMP – uncompressed" });
+                fmt.Items.AddRange(Output.FormatNames);
                 fmt.SetBounds(S(120), S(112), S(340), S(26));
                 fmt.SelectedIndex = Array.IndexOf(Output.Formats, Output.Format);
                 TrackBar q = new TrackBar(); q.Minimum = 10; q.Maximum = 100; q.TickStyle = TickStyle.None; q.AutoSize = false;
@@ -1120,9 +1167,9 @@ namespace SnapMeasure
                 Action update = () =>
                 {
                     string ext = fmt.SelectedIndex >= 0 ? Output.Formats[fmt.SelectedIndex] : "png";
-                    string n = Output.MakeName(pattern.Text, DateTime.Now, "Region 1249×841", 1);
+                    string n = Output.MakeName(pattern.Text, DateTime.Now, "Autodesk AutoCAD LT 2026 - [plan.dwg]", 1);
                     example.Text = n + "." + ext + (proj.Checked ? "   +   " + n + ".snapm" : "");
-                    q.Enabled = ext == "jpg";
+                    q.Enabled = ext == "jpg" || ext == "pdf";
                 };
                 pattern.TextChanged += (s, e) => update();
                 fmt.SelectedIndexChanged += (s, e) => update();
