@@ -1,9 +1,11 @@
+<img src="docs/icon.png" alt="SnapMeasure icon: a capture frame with an amber measuring arrow" width="96" align="right">
+
 # SnapMeasure 1.2.1
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
 plus an **on-screen ruler and protractor** that float over any app.
-One file, `SnapMeasure.exe` (~300 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
+One file, `SnapMeasure.exe` (~400 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
 (it uses the .NET Framework 4.x, the PDF reader and the text recognition that are built into Windows).
 **Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
@@ -16,7 +18,8 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * Settings are saved safely when several SnapMeasure windows are open; *Open folder* works with a folder ending in `\`.
 * The magnifier stays on screen in corners and near the edge when monitors have different sizes.
 * Long sessions use less memory: undo pictures, fonts, menu icons, effect caches and PDF / text-recognition resources are freed when no longer needed.
-* New app icon: a capture frame with a measuring arrow.
+* **New app icon:** white capture-frame corners with an amber measuring arrow on a dark rounded square
+  (ruler ticks on the larger sizes). Look for it in the system tray.
 
 **What's new in 1.2:**
 * **Settings window** with three tabs: **Capture** (what PrtSc does – open the editor, only copy, only save, or copy + save;
@@ -217,6 +220,8 @@ Not included (yet): upload plugins.
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
 `SnapMeasure.exe --selftest <folder>` runs the 111 built-in checks.
+The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
+it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.
