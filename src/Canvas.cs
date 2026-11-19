@@ -310,8 +310,47 @@ namespace SnapMeasure
         public void PushUndo(DocState s)
         {
             undo.Add(s);
-            if (undo.Count > 300) undo.RemoveAt(0);
+            List<DocState> dropped = new List<DocState>(redo);
+            if (undo.Count > 300) { dropped.Add(undo[0]); undo.RemoveAt(0); }
             redo.Clear();
+            foreach (DocState d in dropped) ReleaseImage(d.Image);
+        }
+
+        /// <summary>Disposes a bitmap that is no longer the current picture or part of any undo / redo step.</summary>
+        void ReleaseImage(Bitmap b)
+        {
+            if (b == null || ReferenceEquals(b, Image)) return;
+            if ((before != null && ReferenceEquals(before.Image, b)) || (editBefore != null && ReferenceEquals(editBefore.Image, b))) return;
+            foreach (DocState d in undo) if (ReferenceEquals(d.Image, b)) return;
+            foreach (DocState d in redo) if (ReferenceEquals(d.Image, b)) return;
+            b.Dispose();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (editBox != null)
+                {
+                    Font ef = editBox.Font;
+                    Controls.Remove(editBox);
+                    editBox.Dispose();
+                    editBox = null;
+                    if (ef != null) ef.Dispose();
+                }
+                // several undo steps share one bitmap when only the shapes changed: dispose each bitmap once
+                List<Bitmap> owned = new List<Bitmap>();
+                Action<Bitmap> own = b => { if (b != null && !owned.Exists(x => ReferenceEquals(x, b))) owned.Add(b); };
+                own(Image);
+                foreach (DocState d in undo) own(d.Image);
+                foreach (DocState d in redo) own(d.Image);
+                if (before != null) own(before.Image);
+                if (editBefore != null) own(editBefore.Image);
+                undo.Clear(); redo.Clear(); before = null; editBefore = null;
+                Image = null;
+                foreach (Bitmap b in owned) b.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         void Restore(DocState s)
@@ -645,7 +684,9 @@ namespace SnapMeasure
             creating = null;
             PushUndo(Snapshot());
             // edge effects work on what you see: make the crop permanent first (same undo step)
+            Bitmap preBake = Image;
             if (op == "border" || op == "shadow" || op == "torn") BakeCrop();
+            Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;   // temporary cropped copy, replaced below
             int W = Image.Width, H = Image.Height;
             Bitmap nb;
             Func<PointF, PointF> map = null;
@@ -691,6 +732,7 @@ namespace SnapMeasure
             }
             else if (map != null) { HGuides.Clear(); VGuides.Clear(); }
             Image = nb;
+            if (baked != null) ReleaseImage(baked);
             Shapes = ns;
             Sel.Clear();
             Fit(); FireDoc(); FireSel();
@@ -902,7 +944,6 @@ namespace SnapMeasure
                 case ShapeKind.Perimeter: title = "Perimeter label (e.g. Gasket W12)"; break;
                 case ShapeKind.Angle: title = "Angle label (e.g. Roof pitch)"; break;
                 case ShapeKind.Note: title = "Note (shown here only – not on saved pictures)"; multi = true; break;
-                case ShapeKind.Stamp: title = "Stamp text: first line = stamp word, then date / name"; multi = true; break;
                 default: return;
             }
             Func<string, string, string> ask = multi ? AskNote : AskText;
@@ -964,7 +1005,9 @@ namespace SnapMeasure
             tb.ScrollBars = ScrollBars.None;
             tb.BorderStyle = BorderStyle.FixedSingle;
             float fsz = s.Kind == ShapeKind.Stamp ? 16f : s.FontSize;
+            Font oldTbFont = tb.Font;
             tb.Font = new Font("Segoe UI", Math.Max(6f, fsz * Zoom), s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style, GraphicsUnit.Pixel);
+            if (!ReferenceEquals(oldTbFont, tb.Font) && !ReferenceEquals(oldTbFont, Font) && !ReferenceEquals(oldTbFont, Control.DefaultFont)) oldTbFont.Dispose();
             tb.ForeColor = Color.FromArgb(255, s.Stroke);
             tb.BackColor = s.FillOpacity > 0 && s.Kind != ShapeKind.Cloud ? Color.FromArgb(255, s.Fill) : Color.White;
             if (tb.BackColor.GetBrightness() < 0.25f && tb.ForeColor.GetBrightness() < 0.25f) tb.BackColor = Color.White;
@@ -993,11 +1036,19 @@ namespace SnapMeasure
         public void RefreshEditStyle()
         {
             if (editBox == null) return;
-            editBox.Font = new Font("Segoe UI", Math.Max(6f, editShape.FontSize * Zoom), editShape.Style, GraphicsUnit.Pixel);
+            SetEditFont(new Font("Segoe UI", Math.Max(6f, editShape.FontSize * Zoom), editShape.Style, GraphicsUnit.Pixel));
             editBox.TextAlign = TbAlign(editShape.Align);
             editBox.ForeColor = Color.FromArgb(255, editShape.Stroke);
             LayoutEditBox();
             Invalidate();
+        }
+
+        /// <summary>Gives the edit box a new font and disposes the one it replaces.</summary>
+        void SetEditFont(Font f)
+        {
+            Font old = editBox.Font;
+            editBox.Font = f;
+            if (old != null && !ReferenceEquals(old, f)) old.Dispose();
         }
 
         public Shape EditingShape { get { return editShape; } }
@@ -1009,7 +1060,7 @@ namespace SnapMeasure
             float newSize = Math.Max(6f, (s.Kind == ShapeKind.Stamp ? 16f : s.FontSize) * Zoom);
             FontStyle fst = s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style;
             if (Math.Abs(editBox.Font.Size - newSize) > 0.1f || editBox.Font.Style != fst)
-                editBox.Font = new Font("Segoe UI", newSize, fst, GraphicsUnit.Pixel);
+                SetEditFont(new Font("Segoe UI", newSize, fst, GraphicsUnit.Pixel));
             if (s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Cloud)
             {
                 RectangleF r = s.Kind == ShapeKind.Stamp ? Geo.Rect(s.Pts[0], s.Pts[1]) : Renderer.CalloutRect(s);
@@ -1053,8 +1104,10 @@ namespace SnapMeasure
             Shape s = editShape;
             editShape = null;
             string text = tb.Text.Replace("\r\n", "\n");
+            Font tbFont = tb.Font;
             Controls.Remove(tb);
             tb.Dispose();
+            if (tbFont != null) tbFont.Dispose();
 
             if (!commit)
             {
@@ -1146,7 +1199,22 @@ namespace SnapMeasure
             add("Select all", "Ctrl+A", Shapes.Count > 0, SelectAll);
             if (CropRect.HasValue) add("Remove crop", "", true, RemoveCrop);
             if (HGuides.Count + VGuides.Count > 0) add("Clear guides", "", true, () => { HGuides.Clear(); VGuides.Clear(); Invalidate(); });
-            m.Closed += (s, e) => BeginInvoke((Action)(() => m.Dispose()));
+            m.Closed += (s, e) => BeginInvoke((Action)(() =>
+            {
+                // line-end previews are bitmaps made for this menu only
+                List<Image> icons = new List<Image>();
+                foreach (ToolStripItem top in m.Items)
+                {
+                    ToolStripMenuItem mi = top as ToolStripMenuItem;
+                    if (mi == null) continue;
+                    if (mi.Image != null) icons.Add(mi.Image);
+                    foreach (ToolStripItem sub in mi.DropDownItems) if (sub.Image != null) icons.Add(sub.Image);
+                }
+                Font mf = m.Font;
+                m.Dispose();
+                foreach (Image ic in icons) ic.Dispose();
+                mf.Dispose();
+            }));
             m.Show(this, at);
         }
 
@@ -1846,9 +1914,9 @@ namespace SnapMeasure
                 case Keys.A: CurrentTool = Tool.Arrow; break;
                 case Keys.F: CurrentTool = Tool.Freehand; break;
                 case Keys.T: CurrentTool = e.Shift ? Tool.Ocr : Tool.Text; break;
-                case Keys.W: CurrentTool = Tool.Perimeter; break;
+                case Keys.W: Styles[Tool.Perimeter].Mode = 1; CurrentTool = Tool.Perimeter; break;   // open path length
                 case Keys.I: CurrentTool = Tool.Coord; break;
-                case Keys.Q: CurrentTool = Tool.Perimeter; break;
+                case Keys.Q: Styles[Tool.Perimeter].Mode = 0; CurrentTool = Tool.Perimeter; break;   // closed perimeter
                 case Keys.X: CurrentTool = Tool.Cutout; break;
                 case Keys.U: CurrentTool = Tool.Cloud; break;
                 case Keys.Z: CurrentTool = Tool.Stamp; break;
@@ -2338,7 +2406,8 @@ namespace SnapMeasure
                     break;
                 case Tool.Perimeter:
                     if (p.Count >= 2)
-                        t = "Segment " + Scale.Len(Geo.Dist(p[p.Count - 2], p[p.Count - 1])) + "\nPerimeter " + Scale.Len(Geo.Perimeter(p, true)) +
+                        t = "Segment " + Scale.Len(Geo.Dist(p[p.Count - 2], p[p.Count - 1])) +
+                            (creating.IsOpenPath ? "\nTotal " : "\nPerimeter ") + Scale.Len(Geo.Perimeter(p, !creating.IsOpenPath)) +
                             "\nDouble-click / Enter = finish · Backspace = undo point";
                     break;
                 case Tool.Cloud:

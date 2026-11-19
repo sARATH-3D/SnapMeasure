@@ -199,6 +199,9 @@ namespace SnapMeasure
             int x = cur.X + gap, y = cur.Y + gap;
             if (x + w > ClientSize.Width) x = cur.X - gap - w;
             if (y + h > ClientSize.Height) y = cur.Y - gap - h;
+            // keep it fully on the overlay (e.g. a tiny screen or the cursor in a corner)
+            x = Math.Max(0, Math.Min(x, ClientSize.Width - w));
+            y = Math.Max(0, Math.Min(y, ClientSize.Height - h));
             return new Rectangle(x, y, w, h);
         }
 
@@ -212,11 +215,11 @@ namespace SnapMeasure
         void Dirty()
         {
             Rectangle r = CurrentRect();
-            Rectangle d = MagRect();
+            Rectangle d = showMag ? MagRect() : Rectangle.Empty;    // no magnifier: nothing to repaint around the cursor
             if (r.Width > 0)
             {
                 Rectangle rr = r; rr.Inflate(4, 4);
-                d = Rectangle.Union(d, rr);
+                d = d.IsEmpty ? rr : Rectangle.Union(d, rr);
                 d = Rectangle.Union(d, LabelRect(r));
             }
             Rectangle inv = lastDirty.IsEmpty ? d : Rectangle.Union(d, lastDirty);

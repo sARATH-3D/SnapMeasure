@@ -336,7 +336,7 @@ namespace SnapMeasure
         public static void Run(string dir)
         {
             Directory.CreateDirectory(dir);
-            StringBuilder log = new StringBuilder();
+            log.Clear();     // the shared log: Main writes it to selftest_error.txt if a check throws
             Action<string, string, string> check = (name, got, want) =>
                 log.AppendLine((got == want ? "PASS  " : "FAIL  ") + name + ": got '" + got + "', expected '" + want + "'");
             CultureInfo cc = CultureInfo.CurrentCulture;
@@ -730,21 +730,33 @@ namespace SnapMeasure
         }
 
         /// <summary>Settings → Capture: wait a moment (lets menus close) and decide whether to include the mouse pointer.</summary>
-        static void PreCapture()
+        static int PreCapture()
         {
             ScreenCapture.IncludeCursor = Settings.GetBool("CaptureCursor", false);
-            int ms = Math.Max(0, Math.Min(10000, Settings.GetInt("CaptureDelay", 0)));
-            if (ms > 0) Thread.Sleep(ms);
+            return Math.Max(0, Math.Min(10000, Settings.GetInt("CaptureDelay", 0)));
         }
 
+        /// <summary>Runs one capture at a time. The capture delay is a timer, so the tray, editors and overlays keep
+        /// working while it counts down; 'busy' stays set until the delayed capture has finished.</summary>
         static void Guard(Action a)
         {
             if (busy) return;
             busy = true;
-            PreCapture();
-            try { a(); }
-            catch (Exception ex) { MessageBox.Show("Capture failed: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
-            finally { busy = false; }
+            Action run = () =>
+            {
+                try { a(); }
+                catch (Exception ex) { MessageBox.Show("Capture failed: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+                finally { busy = false; }
+            };
+            int ms;
+            try { ms = PreCapture(); }
+            catch { busy = false; throw; }
+            if (ms > 0)
+            {
+                try { Later(ms, run); }
+                catch { busy = false; throw; }
+            }
+            else run();
         }
 
         public static void CaptureRegion()
@@ -828,7 +840,6 @@ namespace SnapMeasure
         }
 
         public static string FailedHotkeys = "";
-        static AboutForm about;
 
         /// <summary>About = the About tab of the settings window.</summary>
         public static void ShowAbout(IWin32Window owner)
@@ -889,27 +900,56 @@ namespace SnapMeasure
             });
         }
 
-        /// <summary>Capture text: pick an area of the screen, the text in it goes to the clipboard. Returns a status message.</summary>
-        public static string CaptureText()
+        /// <summary>Puts text on the clipboard, retrying briefly if another program has it open. False = still locked.</summary>
+        public static bool TrySetClipboardText(string t)
         {
-            string msg = null;
+            for (int i = 0; i < 5; i++)
+            {
+                try { Clipboard.SetText(t); return true; }
+                catch (System.Runtime.InteropServices.ExternalException) { Thread.Sleep(60); }
+            }
+            return false;
+        }
+
+        /// <summary>Same for a picture.</summary>
+        public static bool TrySetClipboardImage(Image img)
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                try { Clipboard.SetImage(img); return true; }
+                catch (System.Runtime.InteropServices.ExternalException) { Thread.Sleep(60); }
+            }
+            return false;
+        }
+
+        /// <summary>Capture text: pick an area of the screen, the text in it goes to the clipboard.
+        /// 'done' gets the status message (after the capture delay, if one is set).</summary>
+        public static void CaptureText(Action<string> done)
+        {
             Guard(() =>
             {
+                string msg = null;
                 Rectangle r;
                 string title;
                 Bitmap b = ScreenCapture.SelectRegion(out r, out title);
                 if (b == null) return;
                 using (b)
                 {
-                    if (!TextRecognition.Available) { msg = "Windows has no text-recognition language installed (Settings → Time & language → Language)."; return; }
-                    string t = TextRecognition.Read(b, null).Text;
-                    if (t.Trim().Length == 0) { msg = "No text found in that area."; return; }
-                    Clipboard.SetText(t);
-                    string one = t.Replace("\r", "").Replace("\n", " · ");
-                    msg = "Text copied: " + (one.Length > 120 ? one.Substring(0, 120) + "…" : one);
+                    if (!TextRecognition.Available) msg = "Windows has no text-recognition language installed (Settings → Time & language → Language).";
+                    else
+                    {
+                        string t = TextRecognition.Read(b, null).Text;
+                        if (t.Trim().Length == 0) msg = "No text found in that area.";
+                        else if (!TrySetClipboardText(t)) msg = "The clipboard is busy (another program has it open). Try again.";
+                        else
+                        {
+                            string one = t.Replace("\r", "").Replace("\n", " · ");
+                            msg = "Text copied: " + (one.Length > 120 ? one.Substring(0, 120) + "…" : one);
+                        }
+                    }
                 }
+                if (done != null) done(msg);
             });
-            return msg;
         }
 
         public static Form LoadEditor(string path)
@@ -1054,8 +1094,10 @@ namespace SnapMeasure
 
         void CaptureTextNow()
         {
-            string msg = App.CaptureText();
-            if (!string.IsNullOrEmpty(msg)) ni.ShowBalloonTip(4000, "SnapMeasure – text", msg, ToolTipIcon.Info);
+            App.CaptureText(msg =>
+            {
+                if (!string.IsNullOrEmpty(msg)) ni.ShowBalloonTip(4000, "SnapMeasure – text", msg, ToolTipIcon.Info);
+            });
         }
 
         void OpenDialog()
@@ -1069,7 +1111,15 @@ namespace SnapMeasure
 
         void OpenFolder()
         {
-            try { Directory.CreateDirectory(Settings.SaveFolder); Process.Start("explorer.exe", "\"" + Settings.SaveFolder + "\""); }
+            try
+            {
+                string dir = Settings.SaveFolder;
+                Directory.CreateDirectory(dir);
+                // the shell opens the folder itself: no quoting, so a trailing \ (e.g. D:\Shots\) can't break the path
+                ProcessStartInfo psi = new ProcessStartInfo(Path.GetFullPath(dir));
+                psi.UseShellExecute = true;
+                Process.Start(psi);
+            }
             catch (Exception ex) { MessageBox.Show(ex.Message, "SnapMeasure"); }
         }
 
@@ -1202,7 +1252,27 @@ namespace SnapMeasure
                 List<string> lines = new List<string>();
                 lines.Add("; SnapMeasure settings");
                 foreach (KeyValuePair<string, string> kv in d) lines.Add(kv.Key + "=" + kv.Value);
-                File.WriteAllLines(FilePath, lines.ToArray());
+                // write a temporary file next to it and swap it in, so another SnapMeasure process never reads half a file
+                string tmp = FilePath + "." + Process.GetCurrentProcess().Id + ".tmp";
+                File.WriteAllLines(tmp, lines.ToArray());
+                for (int attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        if (File.Exists(FilePath))
+                        {
+                            try { File.Replace(tmp, FilePath, null, true); }
+                            catch (PlatformNotSupportedException) { File.Copy(tmp, FilePath, true); File.Delete(tmp); }   // e.g. FAT USB stick
+                        }
+                        else File.Move(tmp, FilePath);
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        if (attempt >= 4) { try { File.Delete(tmp); } catch { } throw; }
+                        Thread.Sleep(40);
+                    }
+                }
                 readStamp = File.GetLastWriteTimeUtc(FilePath);
             }
             catch { }
@@ -1290,7 +1360,12 @@ namespace SnapMeasure
             return b;
         }
 
-        void CopyShown() { using (Bitmap b = ShownImage()) Clipboard.SetImage(b); }
+        void CopyShown()
+        {
+            using (Bitmap b = ShownImage())
+                if (!App.TrySetClipboardImage(b))
+                    MessageBox.Show(this, "The clipboard is busy (another program has it open). Try again.", "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
 
         void ApplySize()
         {
@@ -1526,6 +1601,7 @@ namespace SnapMeasure
                 if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
                 PictureBox ic = new PictureBox();
                 ic.Image = SystemIcons.Question.ToBitmap();
+                f.FormClosed += (s, e) => { Image im = ic.Image; ic.Image = null; if (im != null) im.Dispose(); };
                 ic.SizeMode = PictureBoxSizeMode.Zoom;
                 ic.SetBounds(S(14), S(14), S(32), S(32));
                 Label l = new Label(); l.Text = message; l.AutoSize = true; l.MaximumSize = new Size(S(390), 0); l.Location = new Point(S(58), S(20));
@@ -1668,6 +1744,7 @@ namespace SnapMeasure
                 // ---------- About ----------
                 {
                     PictureBox logo = new PictureBox(); logo.Image = AppIcon.Render(S(56)); logo.SetBounds(S(14), S(14), S(56), S(56));
+                    f.FormClosed += (s, e) => { Image im = logo.Image; logo.Image = null; if (im != null) im.Dispose(); };
                     Label name = new Label(); name.Text = AppInfo.Name + "  " + AppInfo.Version; name.Font = Native.UiFont("Segoe UI", 15f, k, FontStyle.Bold);
                     name.AutoSize = true; name.Location = new Point(S(82), S(12));
                     Label sub = new Label(); sub.UseMnemonic = false; sub.AutoSize = true; sub.ForeColor = Color.FromArgb(90, 90, 90); sub.Location = new Point(S(84), S(46));
@@ -2031,7 +2108,7 @@ namespace SnapMeasure
                             }
                             break;
                         case Tool.Freehand: g.DrawBezier(pr, 4, 22, 11, 2, 18, 32, 28, 8); break;
-                        case Tool.Text: g.DrawString("T", new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel), bi, new RectangleF(0, 0, 32, 32), sf); break;
+                        case Tool.Text: using (Font mkFont = new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("T", mkFont, bi, new RectangleF(0, 0, 32, 32), sf); break;
                         case Tool.Polygon:
                             {
                                 PointF[] a = { new PointF(4, 13), new PointF(13, 4), new PointF(28, 9), new PointF(24, 20), new PointF(28, 27), new PointF(9, 28) };
@@ -2053,7 +2130,7 @@ namespace SnapMeasure
                                     g.FillPolygon(rb, new PointF[] { new PointF(4.5f, 20), new PointF(10, 17.5f), new PointF(10, 22.5f) });
                                     g.FillPolygon(rb, new PointF[] { new PointF(27.5f, 20), new PointF(22, 17.5f), new PointF(22, 22.5f) });
                                 }
-                                g.DrawString("12", new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel), bi, new RectangleF(0, 3, 32, 14), sf);
+                                using (Font mkFont = new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("12", mkFont, bi, new RectangleF(0, 3, 32, 14), sf);
                                 break;
                             }
                         case Tool.Area:
@@ -2062,7 +2139,7 @@ namespace SnapMeasure
                                 using (SolidBrush f = new SolidBrush(Color.FromArgb(70, 0, 110, 210))) g.FillPolygon(f, a);
                                 g.DrawPolygon(pb, a);
                                 using (SolidBrush bb = new SolidBrush(blue))
-                                    g.DrawString("m²", new Font("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel), bb, new RectangleF(0, 2, 32, 30), sf);
+                                    using (Font mkFont = new Font("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("m²", mkFont, bb, new RectangleF(0, 2, 32, 30), sf);
                                 break;
                             }
                         case Tool.Calibrate:
@@ -2082,11 +2159,11 @@ namespace SnapMeasure
                             }
                         case Tool.Counter:
                             using (SolidBrush rb = new SolidBrush(red)) g.FillEllipse(rb, 5, 5, 22, 22);
-                            g.DrawString("1", new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel), Brushes.White, new RectangleF(5, 5, 22, 23), sf);
+                            using (Font mkFont = new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("1", mkFont, Brushes.White, new RectangleF(5, 5, 22, 23), sf);
                             break;
                         case Tool.Letter:
                             using (SolidBrush rb = new SolidBrush(blue)) g.FillEllipse(rb, 5, 5, 22, 22);
-                            g.DrawString("A", new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel), Brushes.White, new RectangleF(5, 5, 22, 23), sf);
+                            using (Font mkFont = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("A", mkFont, Brushes.White, new RectangleF(5, 5, 22, 23), sf);
                             break;
                         case Tool.Angle:
                             using (Pen pp = new Pen(blue, 2.2f))
@@ -2162,7 +2239,7 @@ namespace SnapMeasure
                                 PointF[] a = { new PointF(5, 9), new PointF(24, 5), new PointF(28, 22), new PointF(9, 27) };
                                 using (Pen pp = new Pen(green, 2.4f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
                                 using (SolidBrush gb = new SolidBrush(green))
-                                    g.DrawString("P", new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel), gb, new RectangleF(0, 1, 33, 32), sf);
+                                    using (Font mkFont = new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("P", mkFont, gb, new RectangleF(0, 1, 33, 32), sf);
                                 break;
                             }
                         case Tool.Cutout:
@@ -2183,7 +2260,7 @@ namespace SnapMeasure
                                 using (GraphicsPath gp = Renderer.RoundRect(new RectangleF(2, 8, 28, 16), 3))
                                 using (Pen pp = new Pen(sg, 2f)) g.DrawPath(pp, gp);
                                 using (SolidBrush sb = new SolidBrush(sg))
-                                    g.DrawString("OK", new Font("Segoe UI", 10, FontStyle.Bold, GraphicsUnit.Pixel), sb, new RectangleF(2, 8, 28, 16.5f), sf);
+                                    using (Font mkFont = new Font("Segoe UI", 10, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("OK", mkFont, sb, new RectangleF(2, 8, 28, 16.5f), sf);
                                 break;
                             }
                         case Tool.Note:
@@ -2195,7 +2272,7 @@ namespace SnapMeasure
                                 break;
                             }
                         case Tool.Markup:
-                            g.DrawString("ab", new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel), bi, new RectangleF(0, -2, 32, 28), sf);
+                            using (Font mkFont = new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("ab", mkFont, bi, new RectangleF(0, -2, 32, 28), sf);
                             using (Pen up = new Pen(red, 2.4f)) g.DrawLine(up, 5, 25, 27, 25);
                             break;
                         case Tool.Ocr:
@@ -2206,7 +2283,7 @@ namespace SnapMeasure
                                 g.DrawLines(cp, new PointF[] { new PointF(29, 22), new PointF(29, 29), new PointF(22, 29) });
                                 g.DrawLines(cp, new PointF[] { new PointF(10, 29), new PointF(3, 29), new PointF(3, 22) });
                             }
-                            g.DrawString("T", new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel), bi, new RectangleF(0, 0, 32, 32), sf);
+                            using (Font mkFont = new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("T", mkFont, bi, new RectangleF(0, 0, 32, 32), sf);
                             break;
                     }
                 }
