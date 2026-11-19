@@ -196,12 +196,23 @@ namespace SnapMeasure
         Rectangle MagRect()
         {
             int z = Zoom, w = 15 * z, h = 15 * z + (int)(40 * k), gap = (int)(24 * k);
+            // the overlay spans every monitor; keep the magnifier on the monitor under the pointer
+            // (monitors of different sizes leave parts of the overlay that no screen shows)
+            Rectangle area = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height);
+            try
+            {
+                Rectangle s = Screen.FromPoint(new Point(cur.X + vs.X, cur.Y + vs.Y)).Bounds;
+                s.Offset(-vs.X, -vs.Y);
+                s.Intersect(area);
+                if (s.Width > 0 && s.Height > 0) area = s;
+            }
+            catch (Exception) { }
             int x = cur.X + gap, y = cur.Y + gap;
-            if (x + w > ClientSize.Width) x = cur.X - gap - w;
-            if (y + h > ClientSize.Height) y = cur.Y - gap - h;
-            // keep it fully on the overlay (e.g. a tiny screen or the cursor in a corner)
-            x = Math.Max(0, Math.Min(x, ClientSize.Width - w));
-            y = Math.Max(0, Math.Min(y, ClientSize.Height - h));
+            if (x + w > area.Right) x = cur.X - gap - w;
+            if (y + h > area.Bottom) y = cur.Y - gap - h;
+            // keep it fully on that screen (e.g. a tiny screen or the cursor in a corner)
+            x = Math.Max(area.X, Math.Min(x, Math.Max(area.X, area.Right - w)));
+            y = Math.Max(area.Y, Math.Min(y, Math.Max(area.Y, area.Bottom - h)));
             return new Rectangle(x, y, w, h);
         }
 
