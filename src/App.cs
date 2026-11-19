@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.1.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -874,7 +874,7 @@ namespace SnapMeasure
             Location = new Point(wa.X + (wa.Width - Width) / 2, wa.Y + (wa.Height - Height) / 2);
 
             ContextMenuStrip m = new ContextMenuStrip();
-            m.Font = new Font("Segoe UI", 9f * Native.ScaleAt(Cursor.Position) / Native.SystemScale);
+            m.Font = Native.UiFont("Segoe UI", 9f, Native.ScaleAt(Cursor.Position));
             m.Items.Add("Copy", Icons.Cmd("copy", 16), (s, e) => CopyShown());
             m.Items.Add("Open in editor", Icons.Cmd("open", 16), (s, e) => { new EditorForm(ShownImage(), "Pinned image").Show(); });
             m.Items.Add(new ToolStripSeparator());
@@ -1079,9 +1079,28 @@ namespace SnapMeasure
             f.MinimizeBox = false; f.MaximizeBox = false; f.ShowInTaskbar = false;
             f.StartPosition = FormStartPosition.CenterParent;
             f.AutoScaleMode = AutoScaleMode.None;
-            f.Font = new Font("Segoe UI", 9f * k / Native.SystemScale);
+            f.Font = Native.UiFont("Segoe UI", 9f, k);
             f.ClientSize = new Size((int)(w * k), (int)(h * k));
             return f;
+        }
+
+        /// <summary>
+        /// A dialog opened from an always-on-top overlay (on-screen ruler / protractor) must stay above it and
+        /// must not cover it, otherwise the overlay hides the input box: place it just below (or above) the overlay.
+        /// </summary>
+        static void KeepClearOf(Form f, IWin32Window owner)
+        {
+            Form of = owner as Form;
+            if (of == null || !of.TopMost) return;
+            f.TopMost = true;
+            f.StartPosition = FormStartPosition.Manual;
+            Rectangle wa = Screen.FromControl(of).WorkingArea, ob = of.Bounds;
+            int gap = 12, w = f.Width, h = f.Height;
+            int x = Math.Max(wa.Left, Math.Min(ob.Left + (ob.Width - w) / 2, wa.Right - w));
+            int y = ob.Bottom + gap;
+            if (y + h > wa.Bottom) y = ob.Top - gap - h;
+            if (y < wa.Top) y = Math.Max(wa.Top, Math.Min(ob.Bottom + gap, wa.Bottom - h));
+            f.Location = new Point(x, y);
         }
 
         static void Buttons(Form f, float k)
@@ -1108,6 +1127,7 @@ namespace SnapMeasure
                 t.SetBounds((int)(12 * k), (int)(12 * k), f.ClientSize.Width - (int)(24 * k), multiline ? (int)(90 * k) : (int)(26 * k));
                 f.Controls.Add(t);
                 Buttons(f, k);
+                KeepClearOf(f, owner);
                 f.Shown += (s, e) => { f.Activate(); t.Focus(); t.SelectAll(); };
                 return f.ShowDialog(owner) == DialogResult.OK ? t.Text : null;
             }
@@ -1266,6 +1286,7 @@ namespace SnapMeasure
                 if (sc.Calibrated) t.Text = (px * sc.Upp).ToString("G6", CultureInfo.CurrentCulture);
                 f.Controls.Add(l); f.Controls.Add(t); f.Controls.Add(u);
                 Buttons(f, k);
+                KeepClearOf(f, owner);
                 f.Shown += (s, e) => { f.Activate(); t.Focus(); t.SelectAll(); };
                 while (f.ShowDialog(owner) == DialogResult.OK)
                 {

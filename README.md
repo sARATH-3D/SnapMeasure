@@ -1,4 +1,4 @@
-# SnapMeasure 1.0
+# SnapMeasure 1.0.1
 
 Portable screenshot tool with **dimensions, area, angles, scale, polygon highlighting, rulers & guides, rotation, effects and speech bubbles**,
 plus an **on-screen ruler and protractor** that float over any app.
@@ -6,6 +6,12 @@ One file, `SnapMeasure.exe` (~230 KB). No installer, no admin rights. It runs on
 (it uses the .NET Framework 4.x that's built into Windows).
 **Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
+
+**What's new in 1.0.1** (bug fixes):
+* Icons, text and menus are now the right size on every monitor, including a mix of 100 % and 200 % screens
+  (before, they could come out double or half size).
+* On-screen ruler: the "Set scale" box opens beside the ruler instead of underneath it,
+  and the right-click menu now also opens straight after dragging the ruler.
 
 **Highlights:**
 * Measuring: dimensions, area / perimeter, 3-point angle, scale calibration, rulers & guides, Excel export.

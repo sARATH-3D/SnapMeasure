@@ -104,7 +104,23 @@ namespace SnapMeasure
         protected override void OnKeyDown(KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Escape) { Close(); return; }
+            if (e.KeyCode == Keys.Apps || (e.KeyCode == Keys.F10 && e.Shift))
+            {
+                if (ContextMenuStrip != null) ContextMenuStrip.Show(this, PointToClient(Cursor.Position));
+                return;
+            }
             base.OnKeyDown(e);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            // Show the menu ourselves on right-button up. Relying on WM_CONTEXTMENU failed after the
+            // overlay had been dragged (the menu simply did not open), so that message is ignored.
+            const int WM_CONTEXTMENU = 0x007B, WM_RBUTTONUP = 0x0205;
+            if (m.Msg == WM_CONTEXTMENU) return;
+            base.WndProc(ref m);
+            if (m.Msg == WM_RBUTTONUP && ContextMenuStrip != null)
+                ContextMenuStrip.Show(Cursor.Position);
         }
 
         protected Point ScreenPt(MouseEventArgs e) { return PointToScreen(e.Location); }
@@ -134,7 +150,7 @@ namespace SnapMeasure
         protected ContextMenuStrip BuildMenu(params object[] items)
         {
             ContextMenuStrip m = new ContextMenuStrip();
-            m.Font = new Font("Segoe UI", 9f * k / Native.SystemScale);
+            m.Font = Native.UiFont("Segoe UI", 9f, k);
             for (int i = 0; i + 1 < items.Length; i += 2)
             {
                 string text = (string)items[i];

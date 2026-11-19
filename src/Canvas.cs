@@ -877,7 +877,7 @@ namespace SnapMeasure
         void ShowContextMenu(Point at, PointF ip)
         {
             ContextMenuStrip m = new ContextMenuStrip();
-            m.Font = new Font("Segoe UI", 9f * Dpi / Native.SystemScale);
+            m.Font = Native.UiFont("Segoe UI", 9f, Dpi);
             bool any = Sel.Count > 0;
             Func<string, string, bool, Action, ToolStripMenuItem> add = (text, keys, enabled, a) =>
             {
@@ -910,7 +910,7 @@ namespace SnapMeasure
         void ShowRulerMenu(Point at)
         {
             ContextMenuStrip m = new ContextMenuStrip();
-            m.Font = new Font("Segoe UI", 9f * Dpi / Native.SystemScale);
+            m.Font = Native.UiFont("Segoe UI", 9f, Dpi);
             ToolStripMenuItem clr = new ToolStripMenuItem("Clear all guides");
             clr.Enabled = HGuides.Count + VGuides.Count > 0;
             clr.Click += (s, e) => { HGuides.Clear(); VGuides.Clear(); Invalidate(); };

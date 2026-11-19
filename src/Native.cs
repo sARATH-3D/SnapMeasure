@@ -43,6 +43,16 @@ namespace SnapMeasure
             get { using (Graphics g = Graphics.FromHwnd(IntPtr.Zero)) return g.DpiX / 96f; }
         }
 
+        /// <summary>
+        /// UI font sized in pixels for a monitor scale k (1 = 100 %). Point-sized fonts are converted with the
+        /// DPI Windows had at sign-in, which is wrong when monitors with different scaling are mixed
+        /// (text came out half or double size), so all UI fonts are given in pixels instead.
+        /// </summary>
+        public static Font UiFont(string family, float pt, float k, FontStyle style = FontStyle.Regular)
+        {
+            return new Font(family, pt * 96f / 72f * k, style, GraphicsUnit.Pixel);
+        }
+
         /// <summary>UI scale of the monitor under a screen point (per-monitor DPI), e.g. 2 on a 200 % laptop screen.</summary>
         public static float ScaleAt(Point p)
         {

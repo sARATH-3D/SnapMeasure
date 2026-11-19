@@ -256,7 +256,7 @@ namespace SnapMeasure
     {
         public AboutForm(string shortcuts)
         {
-            float k = Native.ScaleAt(Cursor.Position), fs = k / Native.SystemScale;
+            float k = Native.ScaleAt(Cursor.Position);
             Func<float, int> S = v => (int)Math.Round(v * k);
             Text = "About " + AppInfo.Name;
             Icon = AppIcon.Get();
@@ -264,7 +264,7 @@ namespace SnapMeasure
             MaximizeBox = MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.None;
-            Font = new Font("Segoe UI", 9f * fs);
+            Font = Native.UiFont("Segoe UI", 9f, k);
             ClientSize = new Size(S(520), S(470));
             BackColor = Color.White;
 
@@ -275,7 +275,7 @@ namespace SnapMeasure
 
             Label name = new Label();
             name.Text = AppInfo.Name + "  " + AppInfo.Version;
-            name.Font = new Font("Segoe UI", 16f * fs, FontStyle.Bold);
+            name.Font = Native.UiFont("Segoe UI", 16f, k, FontStyle.Bold);
             name.AutoSize = true;
             name.Location = new Point(S(100), S(18));
             Controls.Add(name);
@@ -314,7 +314,7 @@ namespace SnapMeasure
             keys.ReadOnly = true;
             keys.ScrollBars = ScrollBars.Vertical;
             keys.BackColor = Color.FromArgb(247, 248, 250);
-            keys.Font = new Font("Consolas", 8.5f * fs);
+            keys.Font = Native.UiFont("Consolas", 8.5f, k);
             keys.Text = shortcuts.Replace("\r\n", "\n").Replace("\n", "\r\n");
             keys.SetBounds(S(20), S(152), S(480), S(260));
             Controls.Add(keys);

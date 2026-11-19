@@ -24,7 +24,7 @@ namespace SnapMeasure
     public class EditorForm : Form
     {
         readonly Canvas cv;
-        readonly float k, fs;
+        readonly float k;
         ToolStrip bar, toolBar;
         ToolStripButton bUndo, bRedo;
         ToolStripLabel lZoomBar;
@@ -75,12 +75,11 @@ namespace SnapMeasure
         {
             // size the UI for the monitor it opens on (e.g. 200 % laptop screen next to a 100 % desktop monitor)
             k = Native.ScaleAt(Cursor.Position);
-            fs = k / Native.SystemScale;          // fonts are in points at the system DPI, so scale them by the difference
             Text = "SnapMeasure – " + title;
             captureTitle = title;
             Icon = AppIcon.Get();
             AutoScaleMode = AutoScaleMode.None;
-            Font = new Font("Segoe UI", 9f * fs);
+            Font = Native.UiFont("Segoe UI", 9f, k);
             KeyPreview = true;
             StartPosition = FormStartPosition.Manual;
             Rectangle wa = Screen.FromPoint(Cursor.Position).WorkingArea;
@@ -359,7 +358,7 @@ namespace SnapMeasure
         {
             Label l = new Label();
             l.Text = text;
-            l.Font = new Font(Font.FontFamily, 9f * fs, FontStyle.Bold);
+            l.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
             l.ForeColor = Color.FromArgb(0, 90, 170);
             l.AutoSize = false;
             l.Width = S(236);
@@ -440,7 +439,7 @@ namespace SnapMeasure
         {
             CheckBox c = ToggleBase(tip);
             c.Text = text;
-            c.Font = new Font("Segoe UI", 9.5f * this.fs, style);
+            c.Font = Native.UiFont("Segoe UI", 9.5f, this.k, style);
             return c;
         }
 
@@ -518,7 +517,7 @@ namespace SnapMeasure
 
             lStyleFor = new Label();
             lStyleFor.AutoSize = true;
-            lStyleFor.Font = new Font(Font.FontFamily, 9f * fs, FontStyle.Bold);
+            lStyleFor.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
             lStyleFor.ForeColor = Color.FromArgb(0, 90, 170);
             lStyleFor.Margin = new Padding(0, S(6), S(12), 0);
             lStyleFor.MinimumSize = new Size(S(150), 0);
@@ -704,7 +703,7 @@ namespace SnapMeasure
             status.Items.Add(new ToolStripSeparator());
             status.Items.Add(lHint);
             Version v = typeof(EditorForm).Assembly.GetName().Version;
-            lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor);
+            lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor + (v.Build > 0 ? "." + v.Build : ""));
             lVersion.ForeColor = Color.FromArgb(0, 102, 204);
             lVersion.IsLink = true;
             lVersion.LinkBehavior = LinkBehavior.HoverUnderline;
