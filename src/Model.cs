@@ -115,6 +115,7 @@ namespace SnapMeasure
             Shape s = (Shape)MemberwiseClone();
             s.Pts = new List<PointF>(Pts);
             if (Holes != null) s.Holes = Holes.ConvertAll(h => new List<PointF>(h));
+            s.Cache = null; s.CacheKey = null;     // each copy builds its own render cache (never share a bitmap)
             return s;
         }
 
@@ -521,6 +522,14 @@ namespace SnapMeasure
         static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
         static Graphics mg;
         static Bitmap grayFor, grayCache;
+
+        /// <summary>Frees the grayscale copy made for 'img' (called when that picture is disposed).</summary>
+        public static void ReleaseCache(Bitmap img)
+        {
+            if (img == null || !ReferenceEquals(grayFor, img)) return;
+            grayFor = null;
+            if (grayCache != null) { grayCache.Dispose(); grayCache = null; }
+        }
 
         public static Graphics MeasureG
         {
@@ -1460,7 +1469,12 @@ namespace SnapMeasure
             RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
             if (gray.Count > 0)
             {
-                if (grayFor != img) { grayCache = Effects.Grayscale(img); grayFor = img; }
+                if (grayFor != img)
+                {
+                    Bitmap old = grayCache;
+                    grayCache = Effects.Grayscale(img); grayFor = img;
+                    if (old != null) old.Dispose();
+                }
                 using (Region rg = new Region(all))
                 {
                     foreach (Shape s in gray) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
@@ -1597,6 +1611,7 @@ namespace SnapMeasure
                         g3.DrawImage(smallB, new Rectangle(0, 0, sw * block, sh * block), new Rectangle(0, 0, sw, sh), GraphicsUnit.Pixel);
                     }
                 }
+                if (s.Cache != null) s.Cache.Dispose();
                 s.Cache = big;
                 s.CacheKey = key;
             }
@@ -2043,7 +2058,7 @@ namespace SnapMeasure
     /// <summary>Whole-image effects. Each returns a new 32-bit bitmap (the original stays for undo).</summary>
     public static class Effects
     {
-        public static Bitmap To32(Bitmap img)
+        public static Bitmap To32(Image img)
         {
             Bitmap b = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(b))
@@ -2256,7 +2271,7 @@ namespace SnapMeasure
             using (Image tmp = Image.FromStream(ms, false, true))
             {
                 CheckImageSize(tmp.Width, tmp.Height);
-                return Effects.To32(new Bitmap(tmp));
+                return Effects.To32(tmp);
             }
         }
 
@@ -2305,7 +2320,8 @@ namespace SnapMeasure
             {
                 case ShapeKind.Text: case ShapeKind.Counter: case ShapeKind.Freehand: case ShapeKind.Note:
                 case ShapeKind.Coord: case ShapeKind.Origin: need = 1; break;
-                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Angle: case ShapeKind.Perimeter: need = 3; break;
+                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Angle: need = 3; break;
+                case ShapeKind.Perimeter: need = s.Mode == 1 ? 2 : 3; break;      // an open path needs only 2 points
                 default: need = 2; break;
             }
             if (s.Pts.Count < need) return false;
@@ -2318,7 +2334,7 @@ namespace SnapMeasure
             s.Align = Math.Max(0, Math.Min(2, s.Align));
             s.HeadStart = Math.Max(0, Math.Min(9, s.HeadStart));
             s.HeadEnd = Math.Max(0, Math.Min(9, s.HeadEnd));
-            s.Mode = Math.Max(0, Math.Min(20, s.Mode));
+            s.Mode = Math.Max(0, Math.Min(Math.Max(20, Stamps.Custom), s.Mode));   // stamps go up to Custom
             s.Dash = Math.Max(0, Math.Min(5, s.Dash));
             s.Form = Math.Max(0, Math.Min(4, s.Form));
             if (s.Text != null && s.Text.Length > 100000) s.Text = s.Text.Substring(0, 100000);

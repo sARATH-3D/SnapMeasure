@@ -59,22 +59,32 @@ namespace SnapMeasure
         {
             ulong n = ms.Size;
             if (n > 400UL * 1024 * 1024) throw new InvalidDataException("The rendered page is too large.");
-            DataReader dr = new DataReader(ms.GetInputStreamAt(0));
-            Wait(dr.LoadAsync((uint)n));
-            byte[] bytes = new byte[n];
-            dr.ReadBytes(bytes);
-            return bytes;
+            using (IInputStream input = ms.GetInputStreamAt(0))
+            using (DataReader dr = new DataReader(input))
+            {
+                Wait(dr.LoadAsync((uint)n));
+                byte[] bytes = new byte[n];
+                dr.ReadBytes(bytes);
+                return bytes;
+            }
         }
 
+        /// <summary>A Windows memory stream holding 'data'. The caller disposes it.</summary>
         public static InMemoryRandomAccessStream FromBytes(byte[] data)
         {
             InMemoryRandomAccessStream ms = new InMemoryRandomAccessStream();
-            DataWriter dw = new DataWriter(ms);
-            dw.WriteBytes(data);
-            Wait(dw.StoreAsync());
-            dw.DetachStream();
-            ms.Seek(0);
-            return ms;
+            try
+            {
+                using (DataWriter dw = new DataWriter(ms))
+                {
+                    dw.WriteBytes(data);
+                    Wait(dw.StoreAsync());
+                    dw.DetachStream();          // so disposing the writer leaves the stream open
+                }
+                ms.Seek(0);
+                return ms;
+            }
+            catch { ms.Dispose(); throw; }
         }
     }
 
@@ -96,8 +106,8 @@ namespace SnapMeasure
                 i.Pages = (int)d.PageCount;
                 if (i.Pages > 0)
                 {
-                    Windows.Data.Pdf.PdfPage p = d.GetPage(0);
-                    i.WidthDip = p.Size.Width; i.HeightDip = p.Size.Height;
+                    using (Windows.Data.Pdf.PdfPage p = d.GetPage(0))
+                    { i.WidthDip = p.Size.Width; i.HeightDip = p.Size.Height; }
                 }
                 return i;
             });
@@ -129,16 +139,20 @@ namespace SnapMeasure
             {
                 Windows.Data.Pdf.PdfDocument d = Open(path);
                 if (index < 0 || index >= d.PageCount) throw new ArgumentOutOfRangeException("index", "The PDF has " + d.PageCount + " page(s).");
-                Windows.Data.Pdf.PdfPage p = d.GetPage((uint)index);
-                double w = p.Size.Width, h = p.Size.Height;          // 1/96 inch (DIPs), not PDF points
-                mm = new SizeF((float)(w / 96.0 * 25.4), (float)(h / 96.0 * 25.4));
-                useDpi = SafeDpi(w, h, useDpi);
-                Windows.Data.Pdf.PdfPageRenderOptions o = new Windows.Data.Pdf.PdfPageRenderOptions();
-                o.DestinationWidth = (uint)Math.Max(1, Math.Round(w / 96.0 * useDpi));
-                o.DestinationHeight = (uint)Math.Max(1, Math.Round(h / 96.0 * useDpi));
-                InMemoryRandomAccessStream ms = new InMemoryRandomAccessStream();
-                WinRt.Wait(p.RenderToStreamAsync(ms, o));
-                return WinRt.ReadAll(ms);
+                using (Windows.Data.Pdf.PdfPage p = d.GetPage((uint)index))
+                {
+                    double w = p.Size.Width, h = p.Size.Height;          // 1/96 inch (DIPs), not PDF points
+                    mm = new SizeF((float)(w / 96.0 * 25.4), (float)(h / 96.0 * 25.4));
+                    useDpi = SafeDpi(w, h, useDpi);
+                    Windows.Data.Pdf.PdfPageRenderOptions o = new Windows.Data.Pdf.PdfPageRenderOptions();
+                    o.DestinationWidth = (uint)Math.Max(1, Math.Round(w / 96.0 * useDpi));
+                    o.DestinationHeight = (uint)Math.Max(1, Math.Round(h / 96.0 * useDpi));
+                    using (InMemoryRandomAccessStream ms = new InMemoryRandomAccessStream())
+                    {
+                        WinRt.Wait(p.RenderToStreamAsync(ms, o));
+                        return WinRt.ReadAll(ms);
+                    }
+                }
             });
             dpi = useDpi;
             pageMm = mm;
@@ -236,11 +250,13 @@ namespace SnapMeasure
             {
                 Windows.Media.Ocr.OcrEngine eng = Windows.Media.Ocr.OcrEngine.TryCreateFromUserProfileLanguages();
                 if (eng == null) throw new InvalidOperationException("Windows has no text-recognition language installed (Settings → Time & language → Language).");
-                InMemoryRandomAccessStream s = WinRt.FromBytes(png);
-                Windows.Graphics.Imaging.BitmapDecoder dec = WinRt.Wait(Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(s));
-                Windows.Graphics.Imaging.SoftwareBitmap sb = WinRt.Wait(dec.GetSoftwareBitmapAsync(
-                    Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied));
-                return WinRt.Wait(eng.RecognizeAsync(sb));
+                using (InMemoryRandomAccessStream s = WinRt.FromBytes(png))
+                {
+                    Windows.Graphics.Imaging.BitmapDecoder dec = WinRt.Wait(Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(s));
+                    using (Windows.Graphics.Imaging.SoftwareBitmap sb = WinRt.Wait(dec.GetSoftwareBitmapAsync(
+                        Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied)))
+                        return WinRt.Wait(eng.RecognizeAsync(sb));
+                }
             });
             foreach (Windows.Media.Ocr.OcrLine line in ocr.Lines)
             {

@@ -7,7 +7,7 @@ The owner is new to git: explain every git/GitHub step plainly, one click at a t
 ## Where things stand (Windows 1.2)
 - `main` = **SnapMeasure 1.2** for Windows, released on the [Releases](../../releases) page. **Keep `main` and the 1.0 release untouched** until 2.0 is ready.
 - Built with C# 5 / Windows Forms on .NET Framework 4 (`build.cmd`, no SDK), a single portable `SnapMeasure.exe`.
-- `SnapMeasure.exe --selftest <folder>` runs 109 built-in checks. They are the reference behaviour for the port.
+- `SnapMeasure.exe --selftest <folder>` runs 111 built-in checks. They are the reference behaviour for the port.
 
 | File | What it holds | Reuse on Mac |
 |---|---|---|

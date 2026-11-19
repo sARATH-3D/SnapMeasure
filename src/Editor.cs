@@ -121,7 +121,13 @@ namespace SnapMeasure
 
             cv = new Canvas();
             cv.Dock = DockStyle.Fill;
-            cv.Image = img.PixelFormat == PixelFormat.Format32bppArgb ? img : Effects.To32(img);
+            if (img.PixelFormat == PixelFormat.Format32bppArgb) cv.Image = img;
+            else
+            {
+                cv.Image = Effects.To32(img);
+                img.Dispose();                // the editor owns the picture it is given: free the 24-bit original
+                img = cv.Image;
+            }
             cv.Dpi = k;
             if (Settings.GetBool("KeepScale", false))
             {
@@ -220,21 +226,6 @@ namespace SnapMeasure
             b.ToolTipText = tip;
             b.Click += h;
             ts.Items.Add(b);
-            return b;
-        }
-
-        Bitmap Swatch(Color c, int opacity)
-        {
-            int n = S(16);
-            Bitmap b = new Bitmap(n, n);
-            using (Graphics g = Graphics.FromImage(b))
-            {
-                g.Clear(Color.White);
-                using (SolidBrush br = new SolidBrush(Color.FromArgb(225, 225, 225)))
-                { g.FillRectangle(br, 0, 0, n / 2, n / 2); g.FillRectangle(br, n / 2, n / 2, n / 2, n / 2); }
-                using (SolidBrush br = new SolidBrush(Renderer.A(c, opacity))) g.FillRectangle(br, 0, 0, n, n);
-                g.DrawRectangle(Pens.DimGray, 0, 0, n - 1, n - 1);
-            }
             return b;
         }
 
@@ -483,7 +474,7 @@ namespace SnapMeasure
             c.Size = new Size(S(24), S(24));
             c.Margin = new Padding(0, 0, S(2), 0);
             c.TextAlign = ContentAlignment.MiddleCenter;
-            new ToolTip().SetToolTip(c, tip);
+            this.tip.SetToolTip(c, tip);       // the form's one tooltip (disposed with the form)
             return c;
         }
 
@@ -518,14 +509,12 @@ namespace SnapMeasure
             c.Width = S(64);
             c.DropDownWidth = S(150);
             for (int i = 0; i < Icons.HeadNames.Length; i++) c.Items.Add(Icons.HeadNames[i]);
-            Bitmap[] pics = new Bitmap[Icons.HeadNames.Length];
-            for (int i = 0; i < pics.Length; i++) pics[i] = Icons.HeadPreview(i, !start, S(18));
             c.DrawItem += (s, e) =>
             {
                 e.DrawBackground();
                 if (e.Index < 0) return;
                 bool inList = (e.State & DrawItemState.ComboBoxEdit) == 0;
-                int y = e.Bounds.Y + (e.Bounds.Height - pics[e.Index].Height) / 2;
+                int y = e.Bounds.Y + (e.Bounds.Height - S(18)) / 2;
                 // wide line picture so the end style is easy to see
                 using (Bitmap wide = Icons.HeadPreviewWide(e.Index, !start, S(40), S(18)))
                     e.Graphics.DrawImage(wide, e.Bounds.X + S(3), y);
@@ -1337,8 +1326,7 @@ namespace SnapMeasure
 
         void CopyMeasurements()
         {
-            try { Clipboard.SetText(Measure.ExcelText(cv.Shapes, cv.Scale)); }
-            catch (Exception ex) { Flash("Couldn't use the clipboard: " + ex.Message); return; }
+            if (!App.TrySetClipboardText(Measure.ExcelText(cv.Shapes, cv.Scale))) { Flash(ClipboardBusy); return; }
             Flash("Measurements, counts and labels copied – paste into Excel");
         }
 
@@ -1363,7 +1351,7 @@ namespace SnapMeasure
                 }
                 string t = TextRecognition.Read(cv.Image, r).Text;
                 if (t.Trim().Length == 0) { Flash("No text found there"); return; }
-                Clipboard.SetText(t);
+                if (!App.TrySetClipboardText(t)) { Flash(ClipboardBusy); return; }
                 string one = t.Replace("\r", "").Replace("\n", " · ");
                 Flash("Text copied (" + t.Length + " characters): " + (one.Length > 80 ? one.Substring(0, 80) + "…" : one));
             }
@@ -1441,9 +1429,19 @@ namespace SnapMeasure
         void CopyImage()
         {
             cv.EndTextEdit(true);
-            using (Bitmap b = cv.Flatten(Color.White)) Clipboard.SetImage(b);
+            bool ok;
+            using (Bitmap b = cv.Flatten(Color.White)) ok = App.TrySetClipboardImage(b);
+            if (!ok) { Flash(ClipboardBusy); return; }
             dirty = false;
             Flash("Copied to clipboard");
+        }
+
+        const string ClipboardBusy = "The clipboard is busy (another program has it open). Try again.";
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) tip.Dispose();
+            base.Dispose(disposing);
         }
 
         void Pin()

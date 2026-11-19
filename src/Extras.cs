@@ -101,12 +101,21 @@ namespace SnapMeasure
             }
         }
 
+        static System.Media.SoundPlayer player;
+
         public static void Play()
         {
             try
             {
-                if (wav == null) wav = Make();
-                using (System.Media.SoundPlayer p = new System.Media.SoundPlayer(new MemoryStream(wav))) p.Play();
+                // Play() is asynchronous, so the player must live on: keep one and reuse it
+                if (player == null)
+                {
+                    if (wav == null) wav = Make();
+                    System.Media.SoundPlayer p = new System.Media.SoundPlayer(new MemoryStream(wav));
+                    p.Load();
+                    player = p;
+                }
+                player.Play();
             }
             catch (Exception) { }
         }
@@ -183,6 +192,7 @@ namespace SnapMeasure
                     if (!owner.IsDisposed)
                         owner.BeginInvoke((Action)(() =>
                         {
+                            if (owner.IsDisposed) return;       // the window closed while GitHub was answering
                             report(msg);
                             if (newer && MessageBox.Show(owner, msg + "\n\nOpen the download page?", AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                                 AppInfo.OpenUrl(AppInfo.ReleasesUrl);

@@ -323,6 +323,7 @@ namespace SnapMeasure
             if ((before != null && ReferenceEquals(before.Image, b)) || (editBefore != null && ReferenceEquals(editBefore.Image, b))) return;
             foreach (DocState d in undo) if (ReferenceEquals(d.Image, b)) return;
             foreach (DocState d in redo) if (ReferenceEquals(d.Image, b)) return;
+            Renderer.ReleaseCache(b);
             b.Dispose();
         }
 
@@ -348,7 +349,7 @@ namespace SnapMeasure
                 if (editBefore != null) own(editBefore.Image);
                 undo.Clear(); redo.Clear(); before = null; editBefore = null;
                 Image = null;
-                foreach (Bitmap b in owned) b.Dispose();
+                foreach (Bitmap b in owned) { Renderer.ReleaseCache(b); b.Dispose(); }
             }
             base.Dispose(disposing);
         }
@@ -514,7 +515,7 @@ namespace SnapMeasure
             {
                 if (Clipboard.ContainsImage())
                     using (Image im = Clipboard.GetImage())
-                        if (im != null) { ProjectFile.CheckImageSize(im.Width, im.Height); b = Effects.To32(new Bitmap(im)); }
+                        if (im != null) { ProjectFile.CheckImageSize(im.Width, im.Height); b = Effects.To32(im); }
                 if (b == null && Clipboard.ContainsFileDropList())
                     foreach (string f in Clipboard.GetFileDropList())
                     {
@@ -539,7 +540,7 @@ namespace SnapMeasure
                 using (System.Drawing.Image im = System.Drawing.Image.FromStream(fs, false, true))
                 {
                     ProjectFile.CheckImageSize(im.Width, im.Height);
-                    return Effects.To32(new Bitmap(im));
+                    return Effects.To32(im);
                 }
             }
             catch (Exception) { return null; }

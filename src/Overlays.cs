@@ -160,6 +160,20 @@ namespace SnapMeasure
             }
             return m;
         }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && ContextMenuStrip != null)
+            {
+                // the menu and its font were made by BuildMenu for this overlay only
+                ContextMenuStrip m = ContextMenuStrip;
+                Font f = m.Font;
+                ContextMenuStrip = null;
+                m.Dispose();
+                if (f != null) f.Dispose();
+            }
+            base.Dispose(disposing);
+        }
     }
 
     internal static class Layered

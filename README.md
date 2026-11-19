@@ -100,7 +100,7 @@ Open them from the tray menu or the **Ruler** / **Protractor** buttons in the ed
 | Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
 | Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …) |
 | Perimeter | `Q` | Closed outline → perimeter only (P1, P2 …) |
-| Coordinates | `I` | The first click sets the origin 0,0; each further click shows the point's X / Y with **Y up, like CAD**. Drag the origin and every value updates. X and Y go to Excel. |
+| Coordinates | `I` | The first click sets the origin 0,0; every point after it shows X / Y (**Y up, like CAD**). Drag the origin, or right-click a point → *Make this point the origin*, and every value updates. X and Y go to Excel. |
 | Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
@@ -214,7 +214,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 109 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 111 built-in checks.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.
