@@ -9,12 +9,14 @@ One file, `SnapMeasure.exe` (~300 KB). No installer, no admin rights. It runs on
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
 **What's fixed in 1.2.1** (same features as 1.2):
+* A 2-point **open path** and a **custom stamp** are no longer lost or changed when you save or copy-paste them.
 * **W** starts a length (open path) and **Q** a closed perimeter, as documented; the live readout shows *Total* for an open path.
 * The capture delay no longer freezes SnapMeasure while it counts down.
-* A busy clipboard (another program holding it) shows a message instead of an error.
+* A busy clipboard (another program holding it) shows a message instead of an error – also for copy picture, copy text and copy measurements in the editor.
 * Settings are saved safely when several SnapMeasure windows are open; *Open folder* works with a folder ending in `\`.
-* The magnifier stays on screen in corners.
-* Long sessions use less memory: undo pictures, fonts and menu icons are freed when no longer needed.
+* The magnifier stays on screen in corners and near the edge when monitors have different sizes.
+* Long sessions use less memory: undo pictures, fonts, menu icons, effect caches and PDF / text-recognition resources are freed when no longer needed.
+* New app icon: a capture frame with a measuring arrow.
 
 **What's new in 1.2:**
 * **Settings window** with three tabs: **Capture** (what PrtSc does – open the editor, only copy, only save, or copy + save;
