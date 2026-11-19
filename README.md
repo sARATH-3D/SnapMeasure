@@ -1,4 +1,4 @@
-# SnapMeasure 1.2
+# SnapMeasure 1.2.1
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
@@ -7,6 +7,14 @@ One file, `SnapMeasure.exe` (~300 KB). No installer, no admin rights. It runs on
 (it uses the .NET Framework 4.x, the PDF reader and the text recognition that are built into Windows).
 **Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
+
+**What's fixed in 1.2.1** (same features as 1.2):
+* **W** starts a length (open path) and **Q** a closed perimeter, as documented; the live readout shows *Total* for an open path.
+* The capture delay no longer freezes SnapMeasure while it counts down.
+* A busy clipboard (another program holding it) shows a message instead of an error.
+* Settings are saved safely when several SnapMeasure windows are open; *Open folder* works with a folder ending in `\`.
+* The magnifier stays on screen in corners.
+* Long sessions use less memory: undo pictures, fonts and menu icons are freed when no longer needed.
 
 **What's new in 1.2:**
 * **Settings window** with three tabs: **Capture** (what PrtSc does – open the editor, only copy, only save, or copy + save;
