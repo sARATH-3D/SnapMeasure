@@ -2689,9 +2689,10 @@ namespace SnapMeasure
                     g.FillPolygon(yb, new PointF[] { p0, new PointF(b0.X + n.X * headW, b0.Y + n.Y * headW), new PointF(b0.X - n.X * headW, b0.Y - n.Y * headW) });
                     g.FillPolygon(yb, new PointF[] { p1, new PointF(b1.X + n.X * headW, b1.Y + n.Y * headW), new PointF(b1.X - n.X * headW, b1.Y - n.Y * headW) });
                 }
-                if (!small)
+                if (size >= 40)
                 {
                     // ruler ticks along the shaft so it reads as measuring, not resizing
+                    // (from 40 px up: at 32 px they fall between pixels and look like jagged edges)
                     using (Pen tick = new Pen(y, 1.6f))
                     {
                         tick.StartCap = tick.EndCap = LineCap.Round;
