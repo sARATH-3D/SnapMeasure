@@ -100,6 +100,7 @@ Open them from the tray menu or the **Ruler** / **Protractor** buttons in the ed
 | Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
 | Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …) |
 | Perimeter | `Q` | Closed outline → perimeter only (P1, P2 …) |
+| Coordinates | `I` | The first click sets the origin 0,0; each further click shows the point's X / Y with **Y up, like CAD**. Drag the origin and every value updates. X and Y go to Excel. |
 | Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
@@ -123,7 +124,7 @@ The same choices are on the style bar.
 
 **Labels and counts:** double-click a measurement to label it (e.g. *Spandrel L01*), or a marker to say what its series counts
 (e.g. *Blind panel*). Double-clicking a row in the list on the right does the same.
-*Copy measurements (for Excel)* gives one row per item: Name, Type, Value, Unit, Perimeter, Gross, Cut-outs, Label –
+*Copy measurements (for Excel)* gives one row per item: Name, Type, Value, Unit, Perimeter, Gross, Cut-outs, Label, X, Y –
 including the marker counts and the notes.
 
 **Markers:** *Start at* (style bar) continues a series. Changing the colour, size or shadow of one marker

@@ -2635,36 +2635,72 @@ namespace SnapMeasure
             using (Graphics g = Graphics.FromImage(b))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.ScaleTransform(size / 64f, size / 64f);
-                // Logo "M1": a snip (dashed selection) measured corner to corner with a dimension arrow
+                // Logo: a capture frame (viewfinder corners) measured corner to corner by a dimension arrow with ruler ticks.
+                // Drawn on a 64 × 64 grid; tray sizes (≤ 24 px) use bolder strokes and leave out the ticks.
                 bool small = size <= 24;
-                using (GraphicsPath path = new GraphicsPath())
+
+                // background: rounded square with a soft top-to-bottom gradient and a faint inner edge
+                using (GraphicsPath path = Squircle(2f, 60f, 28f))
+                using (LinearGradientBrush br = new LinearGradientBrush(new RectangleF(0, 2, 64, 60),
+                           Color.FromArgb(58, 58, 56), Color.FromArgb(34, 34, 32), LinearGradientMode.Vertical))
+                    g.FillPath(br, path);
+                using (GraphicsPath inner = Squircle(3f, 58f, 26f))
+                using (Pen edge = new Pen(Color.FromArgb(22, 255, 255, 255), 1.2f))
+                    g.DrawPath(edge, inner);
+
+                // viewfinder corner brackets framing (12,12)–(52,52)
+                const float a0 = 12f, a1 = 52f, arm = 10f;
+                using (Pen w = new Pen(Color.White, small ? 4.5f : 3.2f))
                 {
-                    float r = 28;
-                    path.AddArc(2, 2, r, r, 180, 90); path.AddArc(62 - r, 2, r, r, 270, 90);
-                    path.AddArc(62 - r, 62 - r, r, r, 0, 90); path.AddArc(2, 62 - r, r, r, 90, 90);
-                    path.CloseFigure();
-                    using (SolidBrush br = new SolidBrush(Color.FromArgb(44, 44, 42))) g.FillPath(br, path);
+                    w.StartCap = LineCap.Round; w.EndCap = LineCap.Round; w.LineJoin = LineJoin.Round;
+                    g.DrawLines(w, new PointF[] { new PointF(a0, a0 + arm), new PointF(a0, a0), new PointF(a0 + arm, a0) });
+                    g.DrawLines(w, new PointF[] { new PointF(a1 - arm, a0), new PointF(a1, a0), new PointF(a1, a0 + arm) });
+                    g.DrawLines(w, new PointF[] { new PointF(a1, a1 - arm), new PointF(a1, a1), new PointF(a1 - arm, a1) });
+                    g.DrawLines(w, new PointF[] { new PointF(a0 + arm, a1), new PointF(a0, a1), new PointF(a0, a1 - arm) });
                 }
-                using (Pen w = new Pen(Color.White, small ? 5f : 3f))
+
+                // amber double-headed dimension arrow from (18,46) to (46,18)
+                Color amber = Color.FromArgb(250, 199, 117);
+                PointF s = new PointF(18f, 46f), e = new PointF(46f, 18f);
+                float len = (float)Math.Sqrt((e.X - s.X) * (e.X - s.X) + (e.Y - s.Y) * (e.Y - s.Y));
+                float ux = (e.X - s.X) / len, uy = (e.Y - s.Y) / len;      // along the arrow
+                float nx = -uy, ny = ux;                                     // across it
+                float headL = small ? 13f : 9.5f, headW = small ? 7.5f : 5f;
+                Func<float, float, PointF> at = (t, off) => new PointF(s.X + ux * t + nx * off, s.Y + uy * t + ny * off);
+                using (Pen shaft = new Pen(amber, small ? 5f : 3.4f))
+                    g.DrawLine(shaft, at(headL - 1f, 0), at(len - headL + 1f, 0));
+                using (SolidBrush yb = new SolidBrush(amber))
                 {
-                    if (!small) w.DashPattern = new float[] { 2f, 1.33f };
-                    g.DrawRectangle(w, 14, 14, 36, 36);
-                }
-                Color y = Color.FromArgb(250, 199, 117);
-                using (Pen p = new Pen(y, small ? 7f : 4f))
-                {
-                    if (small) g.DrawLine(p, 14, 50, 50, 14);
-                    else g.DrawLine(p, 19, 45, 45, 19);
+                    g.FillPolygon(yb, new PointF[] { at(0, 0), at(headL, headW), at(headL, -headW) });
+                    g.FillPolygon(yb, new PointF[] { at(len, 0), at(len - headL, headW), at(len - headL, -headW) });
                 }
                 if (!small)
-                    using (SolidBrush yb = new SolidBrush(y))
+                    using (Pen tick = new Pen(amber, 2f))
                     {
-                        g.FillPolygon(yb, new PointF[] { new PointF(14, 50), new PointF(18, 39), new PointF(25, 46) });
-                        g.FillPolygon(yb, new PointF[] { new PointF(50, 14), new PointF(46, 25), new PointF(39, 18) });
+                        // three ruler ticks across the shaft; the middle one is longer, like a scale bar
+                        tick.StartCap = LineCap.Round; tick.EndCap = LineCap.Round;
+                        float[] pos = { 0.36f, 0.5f, 0.64f };
+                        for (int i = 0; i < pos.Length; i++)
+                        {
+                            float h = i == 1 ? 5f : 3.2f;
+                            g.DrawLine(tick, at(len * pos[i], -h), at(len * pos[i], h));
+                        }
                     }
             }
             return b;
+        }
+
+        /// <summary>Rounded square from (o,o) with side 'side' and corner diameter 'd' (64 × 64 grid).</summary>
+        static GraphicsPath Squircle(float o, float side, float d)
+        {
+            GraphicsPath path = new GraphicsPath();
+            float f = o + side;
+            path.AddArc(o, o, d, d, 180, 90); path.AddArc(f - d, o, d, d, 270, 90);
+            path.AddArc(f - d, f - d, d, d, 0, 90); path.AddArc(o, f - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
         }
 
         /// <summary>Write a multi-resolution .ico (PNG-compressed entries) for embedding in the exe.</summary>
