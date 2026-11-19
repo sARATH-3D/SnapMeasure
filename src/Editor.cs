@@ -36,9 +36,10 @@ namespace SnapMeasure
         NumericUpDown nWidth, nFont, nDec;
         TrackBar tSO, tFO;
         CheckBox cShadow, cKeepScale;
-        ComboBox cUnit, cHlMode, cHeads;
+        ComboBox cUnit, cHlMode, cHeadS, cHeadE, cStamp, cMarkup;
         TextBox tUpp, tMarkStart;
-        Panel rowHl, rowMarkStart, rowTextStyle, gLine, gFill, gFont, gHeads, gShadow, props;
+        Panel rowHl, rowMarkStart, rowTextStyle, gLine, gFill, gFont, gHeads, gShadow, props, rowStamp, rowMarkup;
+        public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
         CheckBox cBold, cItalic, cAlignL, cAlignC, cAlignR;
         ToolStripButton bRulers, bPanel;
@@ -69,6 +70,14 @@ namespace SnapMeasure
             { Tool.Crop, "Drag the area to keep · drag the handles or the frame to adjust · Enter = done · Delete = remove crop · Ctrl+Z = undo" },
             { Tool.Highlight, "Drag an area · mode on the right: text marker, spotlight (darken outside), grayscale outside, magnify" },
             { Tool.Bubble, "Drag (or click) to add a speech bubble, then type · drag the yellow handle to point the tail" },
+            { Tool.Polyline, "Click points along a run (sealant, gasket, coping) · total length · double-click / Enter = finish · Backspace = remove last" },
+            { Tool.Perimeter, "Click corners of an outline · perimeter only · double-click / Enter / click first point = finish" },
+            { Tool.Cutout, "Click the corners of an opening inside an area · it is subtracted from that area (net area) · double-click = finish" },
+            { Tool.Cloud, "Drag a revision cloud around a change · line width = size of the scallops" },
+            { Tool.Stamp, "Click (or drag) to place a stamp · pick Approved / Revise / For information / Rejected / Custom on the style bar · double-click to edit the text" },
+            { Tool.Note, "Click to add a note that is shown here only – it is left out of saved, copied and pinned pictures" },
+            { Tool.Markup, "Drag over a line of text in the picture · underline / strike out / highlight (style bar) · snaps to the words" },
+            { Tool.Ocr, "Drag over text to copy it (Windows text recognition) · a click copies all the text in the picture" },
         };
 
         public EditorForm(Bitmap img, string title)
@@ -112,7 +121,15 @@ namespace SnapMeasure
             cv.Scale.Decimals = Settings.GetInt("Decimals", 2);
             cv.ShowRulers = Settings.GetBool("ShowRulers", true);
             cv.AskText = (t, init) => Dialogs.Ask(this, t, init, false);
+            cv.AskNote = (t, init) => Dialogs.Ask(this, t, init, true);
             cv.AskCalibration = px => Dialogs.Calibrate(this, px, cv.Scale);
+            cv.Message = Flash;
+            cv.OcrArea = r => CopyText(r);
+            cv.FindWords = r =>
+            {
+                if (!TextRecognition.Available) return null;
+                return TextRecognition.Read(cv.Image, r).Boxes;
+            };
 
             BuildTopBar();
             BuildToolBar();
@@ -225,6 +242,7 @@ namespace SnapMeasure
             Ic(AddBtn(bar, "Save", "Save the picture (and an editable .snapm) to your save folder (Ctrl+S) – folder, name and format in Settings", (s, e) => QuickSave()), "save");
             Ic(AddBtn(bar, "Save as…", "PNG / JPG / BMP, or an editable .snapm project (Ctrl+Shift+S)", (s, e) => SaveAs()), "saveas");
             Ic(AddBtn(bar, "Copy", "Copy the annotated image to the clipboard (Ctrl+C with nothing selected)", (s, e) => CopyImage()), "copy");
+            IconOnly(AddBtn(bar, "Copy text", "Copy text: all the text in the picture (Windows text recognition) · to pick an area use the OCR tool (Shift+T)", (s, e) => CopyText(null)), "ocr");
             Ic(AddBtn(bar, "Pin", "Pin the image on screen, always on top (Ctrl+P)", (s, e) => Pin()), "pin");
             bar.Items.Add(new ToolStripSeparator());
             bUndo = Ic(AddBtn(bar, "Undo", "Undo (Ctrl+Z)", (s, e) => cv.Undo()), "undo");
@@ -313,28 +331,36 @@ namespace SnapMeasure
             toolBar.Width = S(44);
             toolBar.GripStyle = ToolStripGripStyle.Hidden;
             toolBar.LayoutStyle = ToolStripLayoutStyle.VerticalStackWithOverflow;
-            toolBar.ImageScalingSize = new Size(S(24), S(24));
-            toolBar.Padding = new Padding(S(2), S(4), S(2), S(4));
+            toolBar.ImageScalingSize = new Size(S(20), S(20));
+            toolBar.Padding = new Padding(S(2), S(3), S(2), S(3));
             toolBar.RenderMode = ToolStripRenderMode.System;
             AddTool(Tool.Select, "Select / move / rotate (V)");
             toolBar.Items.Add(new ToolStripSeparator());
             AddTool(Tool.Dimension, "Dimension (D)");
             AddTool(Tool.Area, "Area + perimeter (M)");
+            AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
+            AddTool(Tool.Polyline, "Path length: total length along several points (W)");
+            AddTool(Tool.Perimeter, "Perimeter only (Q)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
+            AddTool(Tool.Counter, "Number marker 1, 2, 3 … – counts (N)");
+            AddTool(Tool.Letter, "Letter marker A, B, C … – counts (Shift+N)");
             toolBar.Items.Add(new ToolStripSeparator());
             AddTool(Tool.Polygon, "Polygon highlight – any number of edges (P)");
             AddTool(Tool.Highlight, "Highlight: text marker / spotlight / grayscale / magnify (H)");
+            AddTool(Tool.Markup, "Text markup: underline / strike out / highlight text (Y)");
             AddTool(Tool.Rect, "Rectangle (R)");
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
+            AddTool(Tool.Cloud, "Revision cloud (U)");
             AddTool(Tool.Line, "Line (L)");
-            AddTool(Tool.Arrow, "Arrow (A)");
+            AddTool(Tool.Arrow, "Arrow (A) – right-click it for more line ends");
             AddTool(Tool.Freehand, "Freehand (F)");
             AddTool(Tool.Text, "Text – type directly (T)");
             AddTool(Tool.Bubble, "Speech bubble (S)");
-            AddTool(Tool.Counter, "Number marker 1, 2, 3 … (N)");
-            AddTool(Tool.Letter, "Letter marker A, B, C … (Shift+N)");
+            AddTool(Tool.Stamp, "Stamp: Approved / Revise / For information / Rejected (Z)");
+            AddTool(Tool.Note, "Note – shown here only, not printed (O)");
             toolBar.Items.Add(new ToolStripSeparator());
+            AddTool(Tool.Ocr, "Copy text from an area – text recognition (Shift+T)");
             AddTool(Tool.Pixelate, "Pixelate / hide (B)");
             AddTool(Tool.Crop, "Crop (C)");
         }
@@ -342,11 +368,11 @@ namespace SnapMeasure
         void AddTool(Tool t, string tip)
         {
             ToolStripButton b = new ToolStripButton();
-            b.Image = Icons.Make(t, S(24));
+            b.Image = Icons.Make(t, S(20));
             b.ImageScaling = ToolStripItemImageScaling.None;
             b.DisplayStyle = ToolStripItemDisplayStyle.Image;
             b.AutoSize = false;
-            b.Size = new Size(S(36), S(32));
+            b.Size = new Size(S(36), S(25));
             b.ToolTipText = tip;
             b.Margin = new Padding(0, S(1), 0, S(1));
             b.Click += (s, e) => { cv.CurrentTool = t; cv.Focus(); };
@@ -357,6 +383,7 @@ namespace SnapMeasure
         Label Header(string text)
         {
             Label l = new Label();
+            l.UseMnemonic = false;     // show "&" as a character
             l.Text = text;
             l.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
             l.ForeColor = Color.FromArgb(0, 90, 170);
@@ -456,6 +483,55 @@ namespace SnapMeasure
             return c;
         }
 
+        /// <summary>Drop-down of line ends drawn as small pictures.</summary>
+        ComboBox HeadCombo(bool start)
+        {
+            ComboBox c = new ComboBox();
+            c.DropDownStyle = ComboBoxStyle.DropDownList;
+            c.DrawMode = DrawMode.OwnerDrawFixed;
+            c.ItemHeight = S(20);
+            c.Width = S(64);
+            c.DropDownWidth = S(150);
+            for (int i = 0; i < Icons.HeadNames.Length; i++) c.Items.Add(Icons.HeadNames[i]);
+            Bitmap[] pics = new Bitmap[Icons.HeadNames.Length];
+            for (int i = 0; i < pics.Length; i++) pics[i] = Icons.HeadPreview(i, !start, S(18));
+            c.DrawItem += (s, e) =>
+            {
+                e.DrawBackground();
+                if (e.Index < 0) return;
+                bool inList = (e.State & DrawItemState.ComboBoxEdit) == 0;
+                int y = e.Bounds.Y + (e.Bounds.Height - pics[e.Index].Height) / 2;
+                // wide line picture so the end style is easy to see
+                using (Bitmap wide = Icons.HeadPreviewWide(e.Index, !start, S(40), S(18)))
+                    e.Graphics.DrawImage(wide, e.Bounds.X + S(3), y);
+                if (inList)
+                    using (SolidBrush b = new SolidBrush(e.ForeColor))
+                        e.Graphics.DrawString(Icons.HeadNames[e.Index], c.Font, b, e.Bounds.X + S(48), e.Bounds.Y + (e.Bounds.Height - c.Font.Height) / 2);
+            };
+            return c;
+        }
+
+        void StampModeChanged()
+        {
+            int m = cStamp.SelectedIndex;
+            if (loading || m < 0) return;
+            ApplyStyle(x =>
+            {
+                if (x.Kind != ShapeKind.Stamp) return;
+                x.Mode = m;
+                x.Stroke = Stamps.Colors[m];
+                if (m < Stamps.Names.Length - 1)
+                {
+                    // keep any lines the user added below the stamp word
+                    string[] lines = (x.Text ?? "").Replace("\r", "").Split('\n');
+                    lines[0] = Stamps.Names[m];
+                    x.Text = lines.Length > 1 ? string.Join("\n", lines) : Canvas.StampText(m, "");
+                }
+            });
+            if (m == Stamps.Names.Length - 1 && cv.Selected != null && cv.Selected.Kind == ShapeKind.Stamp) cv.EditLabel(cv.Selected);
+            LoadStyle();
+        }
+
         ComboBox Combo(int width, params string[] items)
         {
             ComboBox c = new ComboBox();
@@ -550,9 +626,17 @@ namespace SnapMeasure
             nFont.Minimum = 6; nFont.Maximum = 200; nFont.Width = S(52);
             nFont.ValueChanged += (s, e) => ApplyStyle(x => x.FontSize = (float)nFont.Value);
             tip.SetToolTip(nFont, "Text size");
-            cHeads = Combo(96, "No heads", "End  →", "Start  ←", "Both  ↔");
-            cHeads.SelectedIndexChanged += (s, e) => { int h = cHeads.SelectedIndex; ApplyStyle(x => { if (x.HasHeads) x.Heads = h; }); };
-            tip.SetToolTip(cHeads, "Arrowheads: none, at the end, at the start, or both");
+            cHeadS = HeadCombo(true);
+            cHeadE = HeadCombo(false);
+            cHeadS.SelectedIndexChanged += (s, e) => { int h = cHeadS.SelectedIndex; if (h >= 0) ApplyStyle(x => { if (x.HasHeads) x.HeadStart = h; }); };
+            cHeadE.SelectedIndexChanged += (s, e) => { int h = cHeadE.SelectedIndex; if (h >= 0) ApplyStyle(x => { if (x.HasHeads) x.HeadEnd = h; }); };
+            tip.SetToolTip(cHeadS, "Line end at the start point (also on the right-click menu)");
+            tip.SetToolTip(cHeadE, "Line end at the end point (also on the right-click menu)");
+            cStamp = Combo(130, Stamps.Names);
+            cStamp.SelectedIndexChanged += (s, e) => StampModeChanged();
+            tip.SetToolTip(cStamp, "Stamp type – sets the word and colour (double-click a stamp to edit its text)");
+            cMarkup = Combo(110, "Underline", "Strike out", "Highlight text");
+            cMarkup.SelectedIndexChanged += (s, e) => { int m = cMarkup.SelectedIndex; if (m >= 0) { ApplyStyle(x => { if (x.Kind == ShapeKind.Markup) x.Mode = m; }); LoadStyle(); } };
             cBold = StyleToggle("B", "Bold", FontStyle.Bold);
             cBold.CheckedChanged += (s, e) => ApplyStyle(x => x.Bold = cBold.Checked);
             cItalic = StyleToggle("I", "Italic", FontStyle.Italic);
@@ -587,11 +671,21 @@ namespace SnapMeasure
             gFill = Grp("Fill", bFill, tFO, lFO);
             gFont = Grp("Text", nFont);
             rowTextStyle = Grp("", cBold, cItalic, cAlignL, cAlignC, cAlignR);
-            gHeads = Grp("Heads", cHeads);
+            gHeads = Grp("Start", cHeadS);
+            Label lEnd = new Label();
+            lEnd.Text = "End";
+            lEnd.AutoSize = true;
+            lEnd.ForeColor = Color.FromArgb(80, 80, 80);
+            lEnd.Margin = new Padding(S(4), S(6), S(3), 0);
+            gHeads.Controls.Add(lEnd);
+            cHeadE.Margin = new Padding(0, S(2), S(3), 0);
+            gHeads.Controls.Add(cHeadE);
             rowHl = Grp("Mode", cHlMode);
             rowMarkStart = Grp("Start at", tMarkStart);
+            rowStamp = Grp("Stamp", cStamp);
+            rowMarkup = Grp("Mode", cMarkup);
             gShadow = Grp("", cShadow);
-            foreach (Control c in new Control[] { lStyleFor, gLine, gFill, gFont, rowTextStyle, gHeads, rowHl, rowMarkStart, gShadow, pal })
+            foreach (Control c in new Control[] { lStyleFor, gLine, gFill, gFont, rowTextStyle, gHeads, rowHl, rowStamp, rowMarkup, rowMarkStart, gShadow, pal })
                 styleBar.Controls.Add(c);
             ReturnFocusToCanvas(styleBar);
         }
@@ -648,22 +742,30 @@ namespace SnapMeasure
             cKeepScale.Checked = Settings.GetBool("KeepScale", false);
             cKeepScale.CheckedChanged += (s, e) => { Settings.Set("KeepScale", cKeepScale.Checked ? "1" : "0"); SaveScaleDefaults(); };
 
+            Button bPreset = new Button();
+            bPreset.Text = "Drawing scale (1:50 on A1 …) / saved scales…";
+            bPreset.Size = new Size(S(236), S(28));
+            bPreset.Click += (s, e) => ScalePresetDialog();
+
             f.Controls.Add(Row("Unit", cUnit));
             f.Controls.Add(Row("1 pixel =", tUpp));
             f.Controls.Add(Row("Decimals", nDec));
             f.Controls.Add(bCal);
+            f.Controls.Add(bPreset);
             f.Controls.Add(cKeepScale);
 
-            f.Controls.Add(Header("MEASUREMENTS"));
+            f.Controls.Add(Header("MEASUREMENTS & COUNTS"));
             lv = new ListView();
             lv.View = View.Details;
             lv.FullRowSelect = true;
             lv.HideSelection = false;
             lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-            lv.Size = new Size(S(236), S(180));
-            lv.Columns.Add("#", S(36));
-            lv.Columns.Add("Value", S(110));
-            lv.Columns.Add("Extra", S(86));
+            lv.Size = new Size(S(236), S(260));
+            lv.Columns.Add("#", S(40));
+            lv.Columns.Add("Value", S(96));
+            lv.Columns.Add("Label / extra", S(96));
+            lv.ShowItemToolTips = true;
+            lv.DoubleClick += (s, e) => { if (lv.SelectedItems.Count > 0) { Shape sh = lv.SelectedItems[0].Tag as Shape; if (sh != null) cv.EditLabel(sh); else LabelSeries(lv.SelectedItems[0].Text == "ΣA"); } };
             lv.SelectedIndexChanged += (s, e) =>
             {
                 if (loading || lv.SelectedItems.Count == 0) return;
@@ -725,6 +827,7 @@ namespace SnapMeasure
         {
             if (cv.EditingShape != null) return cv.EditingShape;
             if (cv.Selected != null) return cv.Selected;
+            if (cv.CurrentTool == Tool.Cutout) return null;
             Shape s;
             return cv.Styles.TryGetValue(cv.CurrentTool, out s) ? s : null;
         }
@@ -737,6 +840,11 @@ namespace SnapMeasure
                 case ShapeKind.Counter: return s.Mode == 1 ? "Letter marker" : "Number marker";
                 case ShapeKind.Bubble: return "Speech bubble";
                 case ShapeKind.Image: return "Picture";
+                case ShapeKind.Polyline: return "Path length";
+                case ShapeKind.Cloud: return "Revision cloud";
+                case ShapeKind.Note: return "Note (not printed)";
+                case ShapeKind.Markup: return "Text markup";
+                case ShapeKind.Area: return s.Holes != null ? "Area with cut-outs" : "Area";
                 default: return s.Kind.ToString();
             }
         }
@@ -748,19 +856,30 @@ namespace SnapMeasure
             foreach (Control c in styleBar.Controls) c.Enabled = s != null || c == lStyleFor;
             if (s == null)
             {
-                lStyleFor.Text = "Pick a tool or shape";
-                rowHl.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = false;
+                lStyleFor.Text = cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape";
+                rowHl.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
             }
             else
             {
                 string sel = cv.Sel.Count > 1 ? " (" + cv.Sel.Count + " selected)" : (cv.Selected != null ? " (selected)" : "");
                 lStyleFor.Text = KindName(s) + sel;
                 ShapeKind kd = s.Kind;
-                bool lineOnly = kd == ShapeKind.Line || kd == ShapeKind.Arrow || kd == ShapeKind.Freehand || kd == ShapeKind.Dimension || kd == ShapeKind.Angle;
-                gFill.Visible = !lineOnly;
-                gFont.Visible = s.HasTextStyle || kd == ShapeKind.Counter || kd == ShapeKind.Dimension || kd == ShapeKind.Area || kd == ShapeKind.Angle;
+                bool lineOnly = kd == ShapeKind.Line || kd == ShapeKind.Arrow || kd == ShapeKind.Freehand || kd == ShapeKind.Dimension || kd == ShapeKind.Angle ||
+                                kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter;
+                gFill.Visible = !lineOnly && kd != ShapeKind.Note;
+                gLine.Visible = kd != ShapeKind.Note;
+                gFont.Visible = s.HasTextStyle || kd == ShapeKind.Counter || kd == ShapeKind.Dimension || kd == ShapeKind.Area || kd == ShapeKind.Angle ||
+                                kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Note;
                 gHeads.Visible = s.HasHeads;
-                if (s.HasHeads) cHeads.SelectedIndex = Math.Max(0, Math.Min(3, s.Heads));
+                if (s.HasHeads)
+                {
+                    cHeadS.SelectedIndex = Math.Max(0, Math.Min(9, s.HeadStart));
+                    cHeadE.SelectedIndex = Math.Max(0, Math.Min(9, s.HeadEnd));
+                }
+                rowStamp.Visible = kd == ShapeKind.Stamp;
+                if (rowStamp.Visible) cStamp.SelectedIndex = Math.Max(0, Math.Min(Stamps.Names.Length - 1, s.Mode));
+                rowMarkup.Visible = kd == ShapeKind.Markup;
+                if (rowMarkup.Visible) cMarkup.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
                 gShadow.Visible = s.CanShadow;
                 SetColorButton(bStroke, s.Stroke);
                 SetColorButton(bFill, s.Fill);
@@ -937,20 +1056,15 @@ namespace SnapMeasure
             loading = true;
             lv.BeginUpdate();
             lv.Items.Clear();
-            Dictionary<Shape, string> names = Renderer.Labels(cv.Shapes, cv.Scale);
-            foreach (Shape s in cv.Shapes)
+            foreach (MeasureRow r in Measure.Rows(cv.Shapes, cv.Scale, false))
             {
-                if (s.Kind != ShapeKind.Dimension && s.Kind != ShapeKind.Area && !(s.Kind == ShapeKind.Angle && s.Pts.Count >= 3)) continue;
-                string n = names[s];
-                ListViewItem it;
-                if (s.Kind == ShapeKind.Dimension)
-                    it = new ListViewItem(new string[] { n, cv.Scale.Len(Geo.Dist(s.Pts[0], s.Pts[1])), s.Text });
-                else if (s.Kind == ShapeKind.Angle)
-                    it = new ListViewItem(new string[] { n, ScaleInfo.AngleText(Geo.AngleAt(s.Pts[0], s.Pts[1], s.Pts[2])), "" });
-                else
-                    it = new ListViewItem(new string[] { n, cv.Scale.Area(Math.Abs(Geo.SignedArea(s.Pts))), "P " + cv.Scale.Len(Geo.Perimeter(s.Pts, true)) });
-                it.Tag = s;
-                if (s == cv.Selected) it.Selected = true;
+                string extra = string.IsNullOrEmpty(r.Label) ? (r.Extra ?? "") : r.Label + (string.IsNullOrEmpty(r.Extra) ? "" : " · " + r.Extra);
+                string name = r.Shape != null ? r.Name : (r.Name == "Letters" ? "ΣA" : "Σ1");     // marker totals
+                ListViewItem it = new ListViewItem(new string[] { name, r.Display, extra });
+                it.ToolTipText = r.Shape == null ? r.Name + " markers – double-click to say what they count" : "Double-click to label";
+                it.Tag = r.Shape;
+                if (r.Shape == null) it.ForeColor = Color.FromArgb(0, 90, 170);
+                if (r.Shape != null && r.Shape == cv.Selected) it.Selected = true;
                 lv.Items.Add(it);
             }
             lv.EndUpdate();
@@ -968,23 +1082,53 @@ namespace SnapMeasure
 
         void CopyMeasurements()
         {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("Name\tType\tValue\tUnit\tPerimeter\tLabel");
-            Dictionary<Shape, string> names = Renderer.Labels(cv.Shapes, cv.Scale);
-            CultureInfo cc = CultureInfo.CurrentCulture;
-            string fmt = "F" + cv.Scale.Decimals;
-            foreach (Shape s in cv.Shapes)
+            try { Clipboard.SetText(Measure.ExcelText(cv.Shapes, cv.Scale)); }
+            catch (Exception ex) { Flash("Couldn't use the clipboard: " + ex.Message); return; }
+            Flash("Measurements, counts and labels copied – paste into Excel");
+        }
+
+        void LabelSeries(bool letters)
+        {
+            Shape m = cv.Shapes.Find(x => x.Kind == ShapeKind.Counter && x.IsLetterMarker == letters);
+            if (m != null) cv.EditLabel(m);
+        }
+
+        /// <summary>OCR: copies the text in 'area' of the picture (null = everything visible).</summary>
+        void CopyText(Rectangle? area)
+        {
+            cv.EndTextEdit(true);
+            Rectangle r = area.HasValue ? area.Value : (cv.CropRect.HasValue ? cv.CropRect.Value : new Rectangle(0, 0, cv.Image.Width, cv.Image.Height));
+            try
             {
-                if (s.Kind == ShapeKind.Dimension)
-                    sb.AppendLine(names[s] + "\tLength\t" + (Geo.Dist(s.Pts[0], s.Pts[1]) * cv.Scale.Upp).ToString(fmt, cc) + "\t" + cv.Scale.Unit + "\t\t" + s.Text);
-                else if (s.Kind == ShapeKind.Angle && s.Pts.Count >= 3)
-                    sb.AppendLine(names[s] + "\tAngle\t" + Geo.AngleAt(s.Pts[0], s.Pts[1], s.Pts[2]).ToString("F1", cc) + "\t°\t\t" + s.Text);
-                else if (s.Kind == ShapeKind.Area)
-                    sb.AppendLine(names[s] + "\tArea\t" + (Math.Abs(Geo.SignedArea(s.Pts)) * cv.Scale.Upp * cv.Scale.Upp).ToString(fmt, cc) + "\t" + cv.Scale.Unit + "²\t" +
-                                  (Geo.Perimeter(s.Pts, true) * cv.Scale.Upp).ToString(fmt, cc) + "\t" + s.Text);
+                if (!TextRecognition.Available)
+                {
+                    MessageBox.Show(this, "Windows has no text-recognition language installed.\n\nAdd one in Settings → Time & language → Language & region (e.g. English with “Optical character recognition”).",
+                        "Copy text", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                string t = TextRecognition.Read(cv.Image, r).Text;
+                if (t.Trim().Length == 0) { Flash("No text found there"); return; }
+                Clipboard.SetText(t);
+                string one = t.Replace("\r", "").Replace("\n", " · ");
+                Flash("Text copied (" + t.Length + " characters): " + (one.Length > 80 ? one.Substring(0, 80) + "…" : one));
             }
-            Clipboard.SetText(sb.ToString());
-            Flash("Measurements copied – paste into Excel");
+            catch (Exception ex) { Flash("Text recognition failed: " + ex.Message); }
+        }
+
+        void ScalePresetDialog()
+        {
+            int iw = cv.CropRect.HasValue ? cv.CropRect.Value.Width : cv.Image.Width;
+            ScaleInfo before = cv.Scale.Clone();
+            if (Dialogs.ScalePreset(this, cv.Scale, iw, PaperMmPerPx))
+            {
+                ScaleInfo after = cv.Scale.Clone();
+                cv.Scale.Upp = before.Upp; cv.Scale.Unit = before.Unit;
+                cv.PushUndo(cv.Snapshot());
+                cv.Scale.Upp = after.Upp; cv.Scale.Unit = after.Unit;
+                cv.NotifyDocChanged();
+                SaveScaleDefaults();
+                Flash(cv.Scale.Describe());
+            }
         }
 
         void UpdateZoom()
@@ -1033,7 +1177,7 @@ namespace SnapMeasure
         {
             using (OpenFileDialog d = new OpenFileDialog())
             {
-                d.Filter = "Images and projects|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.snapm|SnapMeasure project|*.snapm|All files|*.*";
+                d.Filter = "Images, PDF and projects|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.pdf;*.snapm|PDF drawing|*.pdf|SnapMeasure project|*.snapm|All files|*.*";
                 if (d.ShowDialog(this) == DialogResult.OK) App.OpenFile(d.FileName);
             }
         }

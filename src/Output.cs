@@ -20,7 +20,7 @@ namespace SnapMeasure
 
         public static string Version
         {
-            get { Version v = typeof(AppInfo).Assembly.GetName().Version; return v.Major + "." + v.Minor; }
+            get { Version v = typeof(AppInfo).Assembly.GetName().Version; return v.Major + "." + v.Minor + (v.Build > 0 ? "." + v.Build : ""); }
         }
 
         /// <summary>Opens one of the fixed project web pages in the default browser.</summary>
@@ -299,7 +299,17 @@ namespace SnapMeasure
             rel.Text = "Check for updates";
             rel.AutoSize = true;
             rel.Location = new Point(S(102), S(120));
-            rel.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.ReleasesUrl);
+            Label upd = new Label();
+            upd.AutoSize = true;
+            upd.ForeColor = Color.FromArgb(90, 90, 90);
+            upd.Location = new Point(S(102), S(140));
+            Controls.Add(upd);
+            rel.LinkClicked += (s, e) =>
+            {
+                // asks GitHub for the latest release – the only time SnapMeasure goes online
+                upd.Text = "Checking GitHub…";
+                UpdateCheck.Start(this, m => upd.Text = m);
+            };
             Controls.Add(rel);
 
             LinkLabel iss = new LinkLabel();
@@ -316,7 +326,7 @@ namespace SnapMeasure
             keys.BackColor = Color.FromArgb(247, 248, 250);
             keys.Font = Native.UiFont("Consolas", 8.5f, k);
             keys.Text = shortcuts.Replace("\r\n", "\n").Replace("\n", "\r\n");
-            keys.SetBounds(S(20), S(152), S(480), S(260));
+            keys.SetBounds(S(20), S(164), S(480), S(248));
             Controls.Add(keys);
 
             Button ok = new Button();

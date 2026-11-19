@@ -11,11 +11,26 @@ using System.Xml;
 
 namespace SnapMeasure
 {
-    public enum ShapeKind { Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Counter, Pixelate, Highlight, Bubble, Angle, Image }
+    // new kinds are only ever added at the end (names are stored in .snapm files)
+    public enum ShapeKind { Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Counter, Pixelate, Highlight, Bubble, Angle, Image,
+                            Cloud, Stamp, Note, Markup, Polyline, Perimeter }
 
-    public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle }
+    public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle,
+                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr }
 
     public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3 }
+
+    /// <summary>Line ends for arrows, lines and dimensions.</summary>
+    public enum HeadStyle { None = 0, Filled = 1, Open = 2, Hollow = 3, Slash = 4, Tick = 5, Dot = 6, Circle = 7, Diamond = 8, Square = 9 }
+
+    /// <summary>Text markup: drag over a line of text in the picture.</summary>
+    public enum MarkupMode { Underline = 0, StrikeOut = 1, HighlightText = 2 }
+
+    public static class Stamps
+    {
+        public static readonly string[] Names = { "APPROVED", "REVISE", "FOR INFORMATION", "REJECTED", "Custom…" };
+        public static readonly Color[] Colors = { Color.FromArgb(30, 140, 60), Color.FromArgb(225, 115, 0), Color.FromArgb(0, 100, 200), Color.FromArgb(210, 30, 30), Color.FromArgb(90, 40, 160) };
+    }
 
     public class Shape
     {
@@ -33,8 +48,21 @@ namespace SnapMeasure
         public int Mode;             // HighlightMode for Highlight shapes; 0 = numbers, 1 = letters for markers
         public bool Bold, Italic;    // Text and speech bubble
         public int Align;            // 0 left, 1 centre, 2 right (Text, speech bubble)
-        public int Heads = 1;        // Line / Arrow: 0 none, 1 end, 2 start, 3 both
+        public int HeadStart;        // Line / Arrow / Dimension: HeadStyle at the first point
+        public int HeadEnd = 1;      // … and at the second point
         public Bitmap Img;           // Image shapes: the pasted picture (shared between undo copies, never modified)
+        public List<List<PointF>> Holes;   // Area: cut-outs (openings) subtracted from the area; null = none
+
+        /// <summary>Old on/off heads (1 = end, 2 = start), kept for files from 1.0.</summary>
+        public int Heads
+        {
+            get { return (HeadEnd > 0 ? 1 : 0) | (HeadStart > 0 ? 2 : 0); }
+            set
+            {
+                HeadEnd = (value & 1) != 0 ? (HeadEnd > 0 ? HeadEnd : (int)HeadStyle.Filled) : 0;
+                HeadStart = (value & 2) != 0 ? (HeadStart > 0 ? HeadStart : (int)HeadStyle.Filled) : 0;
+            }
+        }
 
         public FontStyle Style { get { return (Bold ? FontStyle.Bold : FontStyle.Regular) | (Italic ? FontStyle.Italic : FontStyle.Regular); } }
         public bool HasTextStyle { get { return Kind == ShapeKind.Text || Kind == ShapeKind.Bubble; } }
@@ -48,19 +76,49 @@ namespace SnapMeasure
         {
             Shape s = (Shape)MemberwiseClone();
             s.Pts = new List<PointF>(Pts);
+            if (Holes != null) s.Holes = Holes.ConvertAll(h => new List<PointF>(h));
             return s;
         }
 
         public void Offset(float dx, float dy)
         {
             for (int i = 0; i < Pts.Count; i++) Pts[i] = new PointF(Pts[i].X + dx, Pts[i].Y + dy);
+            if (Holes != null)
+                foreach (List<PointF> h in Holes)
+                    for (int i = 0; i < h.Count; i++) h[i] = new PointF(h[i].X + dx, h[i].Y + dy);
         }
 
-        public bool IsPoly { get { return Kind == ShapeKind.Polygon || Kind == ShapeKind.Area; } }
-        public bool IsBox { get { return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Pixelate || Kind == ShapeKind.Highlight || Kind == ShapeKind.Bubble || Kind == ShapeKind.Image; } }
-        public bool Rotatable { get { return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image; } }
-        public bool HasHeads { get { return Kind == ShapeKind.Line || Kind == ShapeKind.Arrow; } }
-        public bool CanShadow { get { return Kind != ShapeKind.Dimension && Kind != ShapeKind.Area && Kind != ShapeKind.Pixelate && Kind != ShapeKind.Highlight; } }
+        /// <summary>Applies a point mapping to the outline and any cut-outs.</summary>
+        public void MapPoints(Func<PointF, PointF> map)
+        {
+            for (int i = 0; i < Pts.Count; i++) Pts[i] = map(Pts[i]);
+            if (Holes != null)
+                foreach (List<PointF> h in Holes)
+                    for (int i = 0; i < h.Count; i++) h[i] = map(h[i]);
+        }
+
+        /// <summary>Shapes built by clicking corners one after the other.</summary>
+        public bool IsPoly { get { return Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter; } }
+        public bool IsOpenPath { get { return Kind == ShapeKind.Polyline; } }
+        public bool IsBox
+        {
+            get
+            {
+                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Pixelate || Kind == ShapeKind.Highlight || Kind == ShapeKind.Bubble ||
+                       Kind == ShapeKind.Image || Kind == ShapeKind.Cloud || Kind == ShapeKind.Stamp || Kind == ShapeKind.Markup;
+            }
+        }
+        public bool Rotatable { get { return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp; } }
+        public bool HasHeads { get { return Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Dimension; } }
+        public bool IsMeasure { get { return Kind == ShapeKind.Dimension || Kind == ShapeKind.Area || Kind == ShapeKind.Angle || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter; } }
+        public bool CanShadow
+        {
+            get
+            {
+                return Kind != ShapeKind.Dimension && Kind != ShapeKind.Area && Kind != ShapeKind.Pixelate && Kind != ShapeKind.Highlight &&
+                       Kind != ShapeKind.Note && Kind != ShapeKind.Markup && Kind != ShapeKind.Polyline && Kind != ShapeKind.Perimeter;
+            }
+        }
     }
 
     /// <summary>Document-level settings: measuring scale and marker numbering.</summary>
@@ -71,6 +129,7 @@ namespace SnapMeasure
         public int Decimals = 2;
         public int MarkerStart = 1;   // first number of the number-marker series
         public int LetterStart = 1;   // first letter of the letter-marker series (1 = A)
+        public string NumberLabel = "", LetterLabel = "";   // what each marker series counts, e.g. "Blind panel"
 
         public ScaleInfo Clone() { return (ScaleInfo)MemberwiseClone(); }
         public bool Calibrated { get { return !(Unit == "px" && Math.Abs(Upp - 1.0) < 1e-12); } }
@@ -248,6 +307,141 @@ namespace SnapMeasure
         }
     }
 
+    /// <summary>One line of the measurements list / Excel export.</summary>
+    public class MeasureRow
+    {
+        public Shape Shape;          // null for marker counts
+        public string Name, Type, Unit, Label;
+        public double Value;         // in real units (or degrees / count)
+        public double? Perimeter, Gross, Cutouts;
+        public string Display, Extra;
+    }
+
+    /// <summary>Quantities: net areas with cut-outs, path lengths, marker counts, and the rows for the panel and Excel.</summary>
+    public static class Measure
+    {
+        public static double HolesArea(Shape s)
+        {
+            double a = 0;
+            if (s.Holes != null) foreach (List<PointF> h in s.Holes) if (h.Count >= 3) a += Math.Abs(Geo.SignedArea(h));
+            return a;
+        }
+
+        public static double GrossArea(Shape s) { return Math.Abs(Geo.SignedArea(s.Pts)); }
+        public static double NetArea(Shape s) { return Math.Max(0, GrossArea(s) - HolesArea(s)); }
+
+        public static int Count(List<Shape> shapes, bool letters)
+        {
+            int n = 0;
+            foreach (Shape s in shapes) if (s.Kind == ShapeKind.Counter && s.IsLetterMarker == letters) n++;
+            return n;
+        }
+
+        public static List<MeasureRow> Rows(List<Shape> shapes, ScaleInfo sc, bool withNotes)
+        {
+            List<MeasureRow> rows = new List<MeasureRow>();
+            Dictionary<Shape, string> names = Renderer.Labels(shapes, sc);
+            double u = sc.Upp;
+            foreach (Shape s in shapes)
+            {
+                MeasureRow r = new MeasureRow();
+                r.Shape = s;
+                r.Label = s.Text ?? "";
+                string n;
+                names.TryGetValue(s, out n);
+                r.Name = n ?? "";
+                switch (s.Kind)
+                {
+                    case ShapeKind.Dimension:
+                        if (s.Pts.Count < 2) continue;
+                        r.Type = "Length"; r.Unit = sc.Unit;
+                        r.Value = Geo.Dist(s.Pts[0], s.Pts[1]) * u;
+                        r.Display = sc.Len(Geo.Dist(s.Pts[0], s.Pts[1]));
+                        break;
+                    case ShapeKind.Polyline:
+                        if (s.Pts.Count < 2) continue;
+                        r.Type = "Path length"; r.Unit = sc.Unit;
+                        r.Value = Geo.Perimeter(s.Pts, false) * u;
+                        r.Display = sc.Len(Geo.Perimeter(s.Pts, false));
+                        r.Extra = (s.Pts.Count - 1) + " segments";
+                        break;
+                    case ShapeKind.Perimeter:
+                        if (s.Pts.Count < 3) continue;
+                        r.Type = "Perimeter"; r.Unit = sc.Unit;
+                        r.Value = Geo.Perimeter(s.Pts, true) * u;
+                        r.Display = sc.Len(Geo.Perimeter(s.Pts, true));
+                        break;
+                    case ShapeKind.Angle:
+                        if (s.Pts.Count < 3) continue;
+                        r.Type = "Angle"; r.Unit = "°";
+                        r.Value = Geo.AngleAt(s.Pts[0], s.Pts[1], s.Pts[2]);
+                        r.Display = ScaleInfo.AngleText(r.Value);
+                        break;
+                    case ShapeKind.Area:
+                        {
+                            if (s.Pts.Count < 3) continue;
+                            r.Type = "Area"; r.Unit = sc.Unit + "²";
+                            double net = NetArea(s), holes = HolesArea(s);
+                            r.Value = net * u * u;
+                            r.Display = sc.Area(net);
+                            r.Perimeter = Geo.Perimeter(s.Pts, true) * u;
+                            r.Extra = "P " + sc.Len(Geo.Perimeter(s.Pts, true));
+                            if (holes > 0)
+                            {
+                                r.Gross = GrossArea(s) * u * u;
+                                r.Cutouts = holes * u * u;
+                                r.Type = "Area (net)";
+                                r.Extra = "gross " + sc.Area(GrossArea(s));
+                            }
+                            break;
+                        }
+                    case ShapeKind.Note:
+                        if (!withNotes) continue;
+                        r.Type = "Note"; r.Unit = ""; r.Name = "Note";
+                        r.Display = "";
+                        break;
+                    default:
+                        continue;
+                }
+                rows.Add(r);
+            }
+            // marker series totals
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool letters = pass == 1;
+                int c = Count(shapes, letters);
+                if (c == 0) continue;
+                MeasureRow r = new MeasureRow();
+                r.Name = letters ? "Letters" : "Numbers";
+                r.Type = "Count"; r.Unit = "nr";
+                r.Value = c;
+                r.Display = c + " nr";
+                r.Label = letters ? sc.LetterLabel : sc.NumberLabel;
+                r.Extra = letters ? sc.MarkerLabel(0, true) + "–" + sc.MarkerLabel(c - 1, true)
+                                  : sc.MarkerLabel(0, false) + "–" + sc.MarkerLabel(c - 1, false);
+                rows.Add(r);
+            }
+            return rows;
+        }
+
+        /// <summary>Tab-separated text for Excel: one row per measurement, count and (optionally) note.</summary>
+        public static string ExcelText(List<Shape> shapes, ScaleInfo sc)
+        {
+            CultureInfo cc = CultureInfo.CurrentCulture;
+            string fmt = "F" + sc.Decimals;
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("Name\tType\tValue\tUnit\tPerimeter\tGross\tCut-outs\tLabel");
+            foreach (MeasureRow r in Rows(shapes, sc, true))
+            {
+                string val = r.Type == "Note" ? "" : (r.Type == "Count" ? r.Value.ToString("F0", cc) : r.Type == "Angle" ? r.Value.ToString("F1", cc) : r.Value.ToString(fmt, cc));
+                Func<double?, string> o = v => v.HasValue ? v.Value.ToString(fmt, cc) : "";
+                string label = (r.Label ?? "").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+                sb.AppendLine(r.Name + "\t" + r.Type + "\t" + val + "\t" + r.Unit + "\t" + o(r.Perimeter) + "\t" + o(r.Gross) + "\t" + o(r.Cutouts) + "\t" + label);
+            }
+            return sb.ToString();
+        }
+    }
+
     public static class Renderer
     {
         static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
@@ -297,12 +491,14 @@ namespace SnapMeasure
         public static Dictionary<Shape, string> Labels(List<Shape> shapes, ScaleInfo sc)
         {
             Dictionary<Shape, string> d = new Dictionary<Shape, string>();
-            int nd = 0, na = 0, nm = 0, nl = 0, ng = 0;
+            int nd = 0, na = 0, nm = 0, nl = 0, ng = 0, npl = 0, npm = 0;
             foreach (Shape s in shapes)
             {
                 if (s.Kind == ShapeKind.Dimension) d[s] = "D" + (++nd);
                 else if (s.Kind == ShapeKind.Area) d[s] = "A" + (++na);
                 else if (s.Kind == ShapeKind.Angle) d[s] = "∠" + (++ng);
+                else if (s.Kind == ShapeKind.Polyline) d[s] = "L" + (++npl);
+                else if (s.Kind == ShapeKind.Perimeter) d[s] = "P" + (++npm);
                 else if (s.Kind == ShapeKind.Counter) d[s] = s.IsLetterMarker ? sc.MarkerLabel(nl++, true) : sc.MarkerLabel(nm++, false);
             }
             return d;
@@ -310,11 +506,18 @@ namespace SnapMeasure
 
         public static void DrawAll(Graphics g, List<Shape> shapes, Bitmap img, ScaleInfo sc, Shape skip)
         {
+            DrawAll(g, shapes, img, sc, skip, false);
+        }
+
+        /// <summary>export = true for saved / copied / pinned pictures: non-printing notes are left out.</summary>
+        public static void DrawAll(Graphics g, List<Shape> shapes, Bitmap img, ScaleInfo sc, Shape skip, bool export)
+        {
             DrawGlobalHighlights(g, shapes, img);
             Dictionary<Shape, string> names = Labels(shapes, sc);
             foreach (Shape s in shapes)
             {
                 if (s == skip) continue;
+                if (export && s.Kind == ShapeKind.Note) continue;
                 string n;
                 names.TryGetValue(s, out n);
                 // one bad shape must never stop the rest of the picture from drawing
@@ -384,26 +587,24 @@ namespace SnapMeasure
                         if (s.Pts.Count < 2 || !stroke) return;
                         PointF a = s.Pts[0], b = s.Pts[1];
                         float L = Geo.Dist(a, b);
-                        bool hs = (s.Heads & 2) != 0, he = (s.Heads & 1) != 0;   // start / end heads
+                        int hs = s.HeadStart, he = s.HeadEnd;
                         using (Pen p = new Pen(sCol, w))
                         {
                             p.StartCap = LineCap.Round;
                             p.EndCap = LineCap.Round;
-                            if ((hs || he) && L > 0.5f)
+                            if ((hs > 0 || he > 0) && L > 0.5f)
                             {
-                                // solid heads that grow with the line width; the shaft stops inside each head
+                                // heads grow with the line width; the shaft stops where each head needs it to
                                 float hl, hw;
-                                Geo.HeadSize(w, L * (hs && he ? 0.45f : 0.5f), out hl, out hw);
-                                PointF u = new PointF((b.X - a.X) / L, (b.Y - a.Y) / L);
-                                PointF s0 = a, s1 = b;
-                                if (hs) { p.StartCap = LineCap.Flat; s0 = new PointF(a.X + u.X * hl * 0.85f, a.Y + u.Y * hl * 0.85f); }
-                                if (he) { p.EndCap = LineCap.Flat; s1 = new PointF(b.X - u.X * hl * 0.85f, b.Y - u.Y * hl * 0.85f); }
-                                g.DrawLine(p, s0, s1);
-                                using (SolidBrush br = new SolidBrush(sCol))
-                                {
-                                    if (he) g.FillPolygon(br, Head(b, u, hl, hw));
-                                    if (hs) g.FillPolygon(br, Head(a, new PointF(-u.X, -u.Y), hl, hw));
-                                }
+                                Geo.HeadSize(w, L * (hs > 0 && he > 0 ? 0.45f : 0.5f), out hl, out hw);
+                                PointF u = new PointF((b.X - a.X) / L, (b.Y - a.Y) / L), nu = new PointF(-u.X, -u.Y);
+                                float b0 = HeadBack(hs, w, hl, hw), b1 = HeadBack(he, w, hl, hw);
+                                if (hs > 0) p.StartCap = LineCap.Flat;
+                                if (he > 0) p.EndCap = LineCap.Flat;
+                                PointF s0 = new PointF(a.X + u.X * b0, a.Y + u.Y * b0), s1 = new PointF(b.X - u.X * b1, b.Y - u.Y * b1);
+                                if (Geo.Dist(a, s0) + Geo.Dist(b, s1) < L) g.DrawLine(p, s0, s1);
+                                DrawHead(g, a, nu, hs, sCol, w, hl, hw);
+                                DrawHead(g, b, u, he, sCol, w, hl, hw);
                             }
                             else g.DrawLine(p, a, b);
                         }
@@ -439,22 +640,103 @@ namespace SnapMeasure
                 case ShapeKind.Area:
                     {
                         PointF[] pts = s.Pts.ToArray();
+                        bool holes = s.Holes != null && s.Holes.Count > 0;
                         if (pts.Length >= 3 && fill)
-                            using (SolidBrush b = new SolidBrush(fCol)) g.FillPolygon(b, pts);
+                            using (SolidBrush b = new SolidBrush(fCol))
+                            {
+                                if (!holes) g.FillPolygon(b, pts);
+                                else
+                                    using (GraphicsPath gp = new GraphicsPath(FillMode.Alternate))
+                                    {
+                                        gp.AddPolygon(pts);
+                                        foreach (List<PointF> h in s.Holes) if (h.Count >= 3) gp.AddPolygon(h.ToArray());
+                                        g.FillPath(b, gp);
+                                    }
+                            }
                         if (stroke && pts.Length >= 2)
                             using (Pen p = new Pen(sCol, w))
                             {
                                 p.LineJoin = LineJoin.Round;
                                 if (pts.Length >= 3) g.DrawPolygon(p, pts); else g.DrawLines(p, pts);
+                                if (holes)
+                                    using (Pen hp = new Pen(sCol, Math.Max(1f, w * 0.8f)))
+                                    {
+                                        hp.DashStyle = DashStyle.Dash;
+                                        foreach (List<PointF> h in s.Holes) if (h.Count >= 3) g.DrawPolygon(hp, h.ToArray());
+                                    }
                             }
                         if (s.Kind == ShapeKind.Area && pts.Length >= 3)
                         {
-                            double area = Math.Abs(Geo.SignedArea(s.Pts));
                             double per = Geo.Perimeter(s.Pts, true);
-                            string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n")
-                                       + "A = " + sc.Area(area) + "\nP = " + sc.Len(per);
+                            string head = string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n";
+                            string t = holes
+                                ? head + "Gross " + sc.Area(Measure.GrossArea(s)) + "\nCut-outs −" + sc.Area(Measure.HolesArea(s)) + "\nNet A = " + sc.Area(Measure.NetArea(s)) + "\nP = " + sc.Len(per)
+                                : head + "A = " + sc.Area(Measure.GrossArea(s)) + "\nP = " + sc.Len(per);
                             DrawBox(g, t, Geo.Centroid(s.Pts), GetFont(s.FontSize, false), A(s.Stroke, 100));
                         }
+                        break;
+                    }
+                case ShapeKind.Polyline:
+                    {
+                        if (!stroke || s.Pts.Count < 2) return;
+                        using (Pen p = new Pen(sCol, w))
+                        {
+                            p.LineJoin = LineJoin.Round; p.StartCap = p.EndCap = LineCap.Round;
+                            g.DrawLines(p, s.Pts.ToArray());
+                        }
+                        using (SolidBrush b = new SolidBrush(sCol))
+                            foreach (PointF q in s.Pts) g.FillEllipse(b, q.X - w * 1.3f, q.Y - w * 1.3f, w * 2.6f, w * 2.6f);
+                        string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n") + "L = " + sc.Len(Geo.Perimeter(s.Pts, false));
+                        DrawBox(g, t, PathMiddle(s.Pts), GetFont(s.FontSize, false), A(s.Stroke, 100));
+                        break;
+                    }
+                case ShapeKind.Perimeter:
+                    {
+                        if (s.Pts.Count < 2) return;
+                        if (stroke)
+                            using (Pen p = new Pen(sCol, w))
+                            {
+                                p.LineJoin = LineJoin.Round;
+                                if (s.Pts.Count >= 3) g.DrawPolygon(p, s.Pts.ToArray()); else g.DrawLines(p, s.Pts.ToArray());
+                            }
+                        if (s.Pts.Count >= 3)
+                        {
+                            string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n") + "P = " + sc.Len(Geo.Perimeter(s.Pts, true));
+                            DrawBox(g, t, Geo.Centroid(s.Pts), GetFont(s.FontSize, false), A(s.Stroke, 100));
+                        }
+                        break;
+                    }
+                case ShapeKind.Cloud:
+                    {
+                        if (s.Pts.Count < 2) return;
+                        RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+                        using (GraphicsPath gp = CloudPath(r, w))
+                        {
+                            if (fill) using (SolidBrush b = new SolidBrush(fCol)) g.FillPath(b, gp);
+                            if (stroke) using (Pen p = new Pen(sCol, w)) { p.LineJoin = LineJoin.Round; g.DrawPath(p, gp); }
+                        }
+                        break;
+                    }
+                case ShapeKind.Stamp:
+                    DrawStamp(g, s, sCol, fCol, fill, w);
+                    break;
+                case ShapeKind.Note:
+                    DrawNoteIcon(g, s);
+                    break;
+                case ShapeKind.Markup:
+                    {
+                        if (s.Pts.Count < 2) return;
+                        RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+                        if (s.Mode == (int)MarkupMode.HighlightText)
+                        {
+                            using (SolidBrush b = new SolidBrush(A(s.Fill, Math.Max(15, s.FillOpacity)))) g.FillRectangle(b, r);
+                        }
+                        else if (stroke)
+                            using (Pen p = new Pen(sCol, w))
+                            {
+                                float y = s.Mode == (int)MarkupMode.StrikeOut ? r.Y + r.Height * 0.55f : r.Bottom - w / 2f;
+                                g.DrawLine(p, r.X, y, r.Right, y);
+                            }
                         break;
                     }
                 case ShapeKind.Dimension:
@@ -563,6 +845,214 @@ namespace SnapMeasure
             PointF n = new PointF(-u.Y, u.X);
             PointF bse = new PointF(tip.X - u.X * len, tip.Y - u.Y * len);
             return new PointF[] { tip, new PointF(bse.X + n.X * half, bse.Y + n.Y * half), new PointF(bse.X - n.X * half, bse.Y - n.Y * half) };
+        }
+
+        static float DotRadius(float w, float half) { return Math.Max(w * 1.4f, half * 0.55f); }
+
+        /// <summary>How far back from the tip the line has to stop for this head style.</summary>
+        public static float HeadBack(int style, float w, float len, float half)
+        {
+            switch ((HeadStyle)style)
+            {
+                case HeadStyle.Filled: return len * 0.85f;
+                case HeadStyle.Hollow: return len;
+                case HeadStyle.Circle: return DotRadius(w, half);
+                default: return 0f;
+            }
+        }
+
+        /// <summary>Draws one line end. tip = end point, u = direction pointing out of the line.</summary>
+        public static void DrawHead(Graphics g, PointF tip, PointF u, int style, Color col, float w, float len, float half)
+        {
+            if (style <= 0) return;
+            PointF n = new PointF(-u.Y, u.X);
+            using (SolidBrush br = new SolidBrush(col))
+            using (Pen p = new Pen(col, Math.Max(1f, w)))
+            {
+                p.LineJoin = LineJoin.Miter; p.StartCap = p.EndCap = LineCap.Round;
+                switch ((HeadStyle)style)
+                {
+                    case HeadStyle.Filled:
+                        g.FillPolygon(br, Head(tip, u, len, half));
+                        break;
+                    case HeadStyle.Open:
+                        {
+                            PointF[] h = Head(tip, u, len * 0.95f, half);
+                            g.DrawLines(p, new PointF[] { h[1], tip, h[2] });
+                            break;
+                        }
+                    case HeadStyle.Hollow:
+                        using (Pen hp = new Pen(col, Math.Max(1f, w * 0.85f))) { hp.LineJoin = LineJoin.Miter; g.DrawPolygon(hp, Head(tip, u, len, half)); }
+                        break;
+                    case HeadStyle.Slash:
+                        {
+                            // architectural tick: a short stroke at 45° through the end point
+                            float k = half * 0.85f;
+                            PointF d = new PointF((u.X + n.X) * 0.7071f * k, (u.Y + n.Y) * 0.7071f * k);
+                            using (Pen sp = new Pen(col, Math.Max(1.5f, w * 1.4f))) g.DrawLine(sp, tip.X - d.X, tip.Y - d.Y, tip.X + d.X, tip.Y + d.Y);
+                            break;
+                        }
+                    case HeadStyle.Tick:
+                        using (Pen tp = new Pen(col, Math.Max(1.5f, w * 1.2f)))
+                            g.DrawLine(tp, tip.X - n.X * half, tip.Y - n.Y * half, tip.X + n.X * half, tip.Y + n.Y * half);
+                        break;
+                    case HeadStyle.Dot:
+                        {
+                            float r = DotRadius(w, half);
+                            g.FillEllipse(br, tip.X - r, tip.Y - r, 2 * r, 2 * r);
+                            break;
+                        }
+                    case HeadStyle.Circle:
+                        {
+                            float r = DotRadius(w, half);
+                            using (Pen cp = new Pen(col, Math.Max(1f, w * 0.85f))) g.DrawEllipse(cp, tip.X - r, tip.Y - r, 2 * r, 2 * r);
+                            break;
+                        }
+                    case HeadStyle.Diamond:
+                        {
+                            float r = DotRadius(w, half) * 1.35f;
+                            g.FillPolygon(br, new PointF[] {
+                                new PointF(tip.X + u.X * r, tip.Y + u.Y * r), new PointF(tip.X + n.X * r * 0.7f, tip.Y + n.Y * r * 0.7f),
+                                new PointF(tip.X - u.X * r, tip.Y - u.Y * r), new PointF(tip.X - n.X * r * 0.7f, tip.Y - n.Y * r * 0.7f) });
+                            break;
+                        }
+                    case HeadStyle.Square:
+                        {
+                            float r = DotRadius(w, half) * 0.95f;
+                            g.FillPolygon(br, new PointF[] {
+                                new PointF(tip.X + (u.X + n.X) * r, tip.Y + (u.Y + n.Y) * r), new PointF(tip.X + (-u.X + n.X) * r, tip.Y + (-u.Y + n.Y) * r),
+                                new PointF(tip.X + (-u.X - n.X) * r, tip.Y + (-u.Y - n.Y) * r), new PointF(tip.X + (u.X - n.X) * r, tip.Y + (u.Y - n.Y) * r) });
+                            break;
+                        }
+                }
+            }
+        }
+
+        /// <summary>The point halfway along an open path (for its label).</summary>
+        public static PointF PathMiddle(IList<PointF> p)
+        {
+            double total = Geo.Perimeter(p, false), half = total / 2, run = 0;
+            for (int i = 0; i + 1 < p.Count; i++)
+            {
+                double d = Geo.Dist(p[i], p[i + 1]);
+                if (run + d >= half && d > 0)
+                {
+                    float t = (float)((half - run) / d);
+                    return new PointF(p[i].X + (p[i + 1].X - p[i].X) * t, p[i].Y + (p[i + 1].Y - p[i].Y) * t);
+                }
+                run += d;
+            }
+            return p.Count > 0 ? p[p.Count - 1] : PointF.Empty;
+        }
+
+        /// <summary>Revision cloud: scallops all round the rectangle, bulging outwards.</summary>
+        public static GraphicsPath CloudPath(RectangleF r, float w)
+        {
+            GraphicsPath gp = new GraphicsPath();
+            float target = Math.Max(10f, Math.Min(60f, 9f + w * 5f));
+            if (r.Width < 2 || r.Height < 2) { gp.AddRectangle(r); return gp; }
+            Action<PointF, PointF, float> edge = (a, b, start) =>
+            {
+                float len = Geo.Dist(a, b);
+                int n = Math.Max(1, (int)Math.Round(len / target));
+                for (int i = 0; i < n; i++)
+                {
+                    float t0 = (float)i / n, t1 = (float)(i + 1) / n;
+                    PointF p0 = new PointF(a.X + (b.X - a.X) * t0, a.Y + (b.Y - a.Y) * t0), p1 = new PointF(a.X + (b.X - a.X) * t1, a.Y + (b.Y - a.Y) * t1);
+                    PointF m = Geo.Mid(p0, p1);
+                    float d = Math.Max(0.5f, Geo.Dist(p0, p1));
+                    gp.AddArc(m.X - d / 2f, m.Y - d / 2f, d, d, start, 180f);
+                }
+            };
+            edge(new PointF(r.X, r.Y), new PointF(r.Right, r.Y), 180f);            // top, bulging up
+            edge(new PointF(r.Right, r.Y), new PointF(r.Right, r.Bottom), 270f);   // right, bulging right
+            edge(new PointF(r.Right, r.Bottom), new PointF(r.X, r.Bottom), 0f);    // bottom, bulging down
+            edge(new PointF(r.X, r.Bottom), new PointF(r.X, r.Y), 90f);            // left, bulging left
+            gp.CloseFigure();
+            return gp;
+        }
+
+        static void DrawStamp(Graphics g, Shape s, Color col, Color fCol, bool fill, float w)
+        {
+            if (s.Pts.Count < 2) return;
+            RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+            if (r.Width < 4 || r.Height < 4) return;
+            string[] lines = (s.Text ?? "").Replace("\r", "").Split('\n');
+            string main = lines.Length > 0 ? lines[0] : "";
+            string sub = lines.Length > 1 ? string.Join("\n", lines, 1, lines.Length - 1) : "";
+            float bw = Math.Max(1.5f, w);
+            float rad = Math.Min(r.Height * 0.18f, 14f);
+            using (GraphicsPath gp = RoundRect(r, rad))
+            {
+                if (fill) using (SolidBrush b = new SolidBrush(fCol)) g.FillPath(b, gp);
+                using (Pen p = new Pen(col, bw)) g.DrawPath(p, gp);
+            }
+            RectangleF inner = RectangleF.Inflate(r, -bw * 2.2f, -bw * 2.2f);
+            if (inner.Width > 4 && inner.Height > 4)
+                using (GraphicsPath gp = RoundRect(inner, Math.Max(1f, rad - bw * 2f)))
+                using (Pen p = new Pen(col, Math.Max(1f, bw * 0.5f))) g.DrawPath(p, gp);
+            RectangleF tr = RectangleF.Inflate(inner, -bw * 2f, -bw);
+            bool hasSub = sub.Trim().Length > 0;
+            RectangleF mainR = hasSub ? new RectangleF(tr.X, tr.Y, tr.Width, tr.Height * 0.62f) : tr;
+            RectangleF subR = new RectangleF(tr.X, tr.Y + tr.Height * 0.6f, tr.Width, tr.Height * 0.4f);
+            using (SolidBrush b = new SolidBrush(col))
+            using (StringFormat sf = new StringFormat())
+            {
+                sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
+                sf.FormatFlags = StringFormatFlags.NoWrap;
+                // the main word fills the stamp: shrink until it fits the width
+                float fs = Math.Max(6f, mainR.Height * 0.62f);
+                Font f = GetFont(fs, true);
+                SizeF sz = g.MeasureString(main.Length > 0 ? main : " ", f);
+                if (sz.Width > mainR.Width) { fs = Math.Max(6f, fs * mainR.Width / sz.Width); f = GetFont(fs, true); }
+                g.DrawString(main, f, b, mainR, sf);
+                if (hasSub)
+                {
+                    float ss = Math.Max(5f, Math.Min(fs * 0.55f, subR.Height * 0.85f));
+                    Font f2 = GetFont(ss, false);
+                    SizeF s2 = g.MeasureString(sub, f2);
+                    if (s2.Width > subR.Width) f2 = GetFont(Math.Max(5f, ss * subR.Width / s2.Width), false);
+                    g.DrawString(sub, f2, b, subR, sf);
+                }
+            }
+        }
+
+        public static GraphicsPath RoundRect(RectangleF r, float rad)
+        {
+            GraphicsPath p = new GraphicsPath();
+            float d = Math.Max(0.5f, Math.Min(rad * 2f, Math.Min(r.Width, r.Height)));
+            p.AddArc(r.X, r.Y, d, d, 180, 90);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
+        }
+
+        /// <summary>Size of a non-printing note's icon, in image pixels.</summary>
+        public static float NoteSize(Shape s) { return Math.Max(14f, s.FontSize * 1.5f); }
+
+        public static RectangleF NoteRect(Shape s)
+        {
+            float n = NoteSize(s);
+            return new RectangleF(s.Pts[0].X, s.Pts[0].Y, n, n);
+        }
+
+        static void DrawNoteIcon(Graphics g, Shape s)
+        {
+            RectangleF r = NoteRect(s);
+            float fold = r.Width * 0.3f;
+            PointF[] body = { new PointF(r.X, r.Y), new PointF(r.Right, r.Y), new PointF(r.Right, r.Bottom - fold), new PointF(r.Right - fold, r.Bottom), new PointF(r.X, r.Bottom) };
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(235, 255, 214, 64))) g.FillPolygon(b, body);
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(235, 214, 160, 20)))
+                g.FillPolygon(b, new PointF[] { new PointF(r.Right, r.Bottom - fold), new PointF(r.Right - fold, r.Bottom - fold), new PointF(r.Right - fold, r.Bottom) });
+            using (Pen p = new Pen(Color.FromArgb(150, 110, 0), Math.Max(1f, r.Width / 18f))) { p.LineJoin = LineJoin.Round; g.DrawPolygon(p, body); }
+            using (Pen p = new Pen(Color.FromArgb(150, 110, 0), Math.Max(0.8f, r.Width / 22f)))
+                for (int i = 1; i <= 3; i++)
+                {
+                    float y = r.Y + r.Height * (0.22f + i * 0.17f);
+                    g.DrawLine(p, r.X + r.Width * 0.2f, y, r.Right - r.Width * (i == 3 ? 0.45f : 0.2f), y);
+                }
         }
 
         static void DrawAngle(Graphics g, Shape s, Color col, float w, string name)
@@ -709,7 +1199,7 @@ namespace SnapMeasure
                 g.DrawLine(pen, a.X - n.X * tick, a.Y - n.Y * tick, a.X + n.X * tick, a.Y + n.Y * tick);
                 g.DrawLine(pen, b.X - n.X * tick, b.Y - n.Y * tick, b.X + n.X * tick, b.Y + n.Y * tick);
                 // shaft between the heads, with a gap in the middle for the value when it fits
-                float s0 = hl * 0.85f, s1 = L - hl * 0.85f;
+                float s0 = HeadBack(s.HeadStart, w, hl, hw), s1 = L - HeadBack(s.HeadEnd, w, hl, hw);
                 float gapHalf = tsz.Width / 2f + 4f + w;
                 bool inline = s1 - s0 > 2f * gapHalf + 6f;
                 if (s1 > s0)
@@ -722,11 +1212,8 @@ namespace SnapMeasure
                     }
                     else g.DrawLine(pen, a.X + u.X * s0, a.Y + u.Y * s0, a.X + u.X * s1, a.Y + u.Y * s1);
                 }
-                using (SolidBrush br = new SolidBrush(col))
-                {
-                    g.FillPolygon(br, Head(a, new PointF(-u.X, -u.Y), hl, hw));
-                    g.FillPolygon(br, Head(b, u, hl, hw));
-                }
+                DrawHead(g, a, new PointF(-u.X, -u.Y), s.HeadStart, col, w, hl, hw);
+                DrawHead(g, b, u, s.HeadEnd, col, w, hl, hw);
                 if (inline) DrawRotLabel(g, t, Geo.Mid(a, b), ang, f, tcol, 0f, true);
                 else DrawRotLabel(g, t, Geo.Mid(a, b), ang, f, tcol, hw + 2f, false);
             }
@@ -820,7 +1307,7 @@ namespace SnapMeasure
                 g.DrawImage(img, new Rectangle(0, 0, img.Width, img.Height), new Rectangle(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = TextRenderingHint.AntiAlias;
-                DrawAll(g, shapes, img, sc, null);
+                DrawAll(g, shapes, img, sc, null, true);
             }
             return b;
         }
@@ -850,7 +1337,8 @@ namespace SnapMeasure
             if (s.Pts.Count == 0) return PointF.Empty;
             if (s.Kind == ShapeKind.Text || s.IsBox) return Geo.Center(LocalRect(s));
             if (s.Kind == ShapeKind.Counter) return s.Pts[0];
-            if (s.IsPoly && s.Pts.Count >= 3) return Geo.Centroid(s.Pts);
+            if (s.Kind == ShapeKind.Note) return Geo.Center(Renderer.NoteRect(s));
+            if (s.IsPoly && !s.IsOpenPath && s.Pts.Count >= 3) return Geo.Centroid(s.Pts);
             RectangleF b = RawBounds(s.Pts);
             return Geo.Center(b);
         }
@@ -913,6 +1401,8 @@ namespace SnapMeasure
                     break;
                 case ShapeKind.Polygon:
                 case ShapeKind.Area:
+                case ShapeKind.Polyline:
+                case ShapeKind.Perimeter:
                 case ShapeKind.Freehand:
                     {
                         if (s.Kind != ShapeKind.Freehand)
@@ -929,6 +1419,7 @@ namespace SnapMeasure
                         break;
                     }
                 case ShapeKind.Counter:
+                case ShapeKind.Note:
                     break;
                 default: // box shapes
                     {
@@ -971,7 +1462,12 @@ namespace SnapMeasure
                         ang = Geo.NormAngle(ang);
                         if (orig.Rotatable) s.Angle = ang;
                         else
+                        {
                             for (int i = 0; i < s.Pts.Count; i++) s.Pts[i] = Geo.Rot(orig.Pts[i], c, ang);
+                            if (orig.Holes != null && s.Holes != null)
+                                for (int h2 = 0; h2 < orig.Holes.Count && h2 < s.Holes.Count; h2++)
+                                    for (int i = 0; i < orig.Holes[h2].Count && i < s.Holes[h2].Count; i++) s.Holes[h2][i] = Geo.Rot(orig.Holes[h2][i], c, ang);
+                        }
                         break;
                     }
                 case HKind.Box:
@@ -1015,6 +1511,7 @@ namespace SnapMeasure
                 float r = Math.Max(8f, s.FontSize * 0.9f);
                 return new RectangleF(s.Pts[0].X - r, s.Pts[0].Y - r, 2 * r, 2 * r);
             }
+            if (s.Kind == ShapeKind.Note) return Renderer.NoteRect(s);
             List<PointF> pts = new List<PointF>();
             if (s.Kind == ShapeKind.Text || s.IsBox) pts.AddRange(Outline(s));
             else pts.AddRange(s.Pts);
@@ -1050,6 +1547,9 @@ namespace SnapMeasure
                 case ShapeKind.Pixelate:
                 case ShapeKind.Highlight:
                 case ShapeKind.Image:
+                case ShapeKind.Cloud:
+                case ShapeKind.Stamp:
+                case ShapeKind.Markup:
                     {
                         if (s.Pts.Count < 2) return false;
                         RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
@@ -1090,10 +1590,17 @@ namespace SnapMeasure
                         return r.Contains(p);
                     }
                 case ShapeKind.Counter:
+                case ShapeKind.Note:
                     {
                         RectangleF r = Bounds(s); r.Inflate(tol, tol);
                         return r.Contains(p);
                     }
+                case ShapeKind.Polyline:
+                    for (int i = 0; i + 1 < s.Pts.Count; i++) if (Geo.SegDist(p, s.Pts[i], s.Pts[i + 1]) <= t) return true;
+                    return s.Pts.Count >= 2 && Geo.Dist(p, Renderer.PathMiddle(s.Pts)) <= s.FontSize * 1.5f + tol;
+                case ShapeKind.Perimeter:
+                    for (int i = 0; i < s.Pts.Count; i++) if (Geo.SegDist(p, s.Pts[i], s.Pts[(i + 1) % s.Pts.Count]) <= t) return true;
+                    return s.Pts.Count >= 3 && Geo.Dist(p, Geo.Centroid(s.Pts)) <= s.FontSize * 1.5f + tol;
                 case ShapeKind.Polygon:
                 case ShapeKind.Area:
                     {
@@ -1127,7 +1634,7 @@ namespace SnapMeasure
                 if (s.Pts.Count > 1) s.Pts[1] = new PointF(c.X + r.Width / 2f, c.Y + r.Height / 2f);
                 return;
             }
-            for (int i = 0; i < s.Pts.Count; i++) s.Pts[i] = map(s.Pts[i]);
+            s.MapPoints(map);
             if (s.IsBox && s.Pts.Count >= 2)
             {
                 RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
@@ -1277,8 +1784,23 @@ namespace SnapMeasure
             w.WriteAttributeString("bold", s.Bold ? "1" : "0");
             w.WriteAttributeString("italic", s.Italic ? "1" : "0");
             w.WriteAttributeString("align", s.Align.ToString(Inv));
-            w.WriteAttributeString("heads", s.Heads.ToString(Inv));
+            w.WriteAttributeString("heads", s.Heads.ToString(Inv));          // for SnapMeasure 1.0
+            w.WriteAttributeString("headStart", s.HeadStart.ToString(Inv));
+            w.WriteAttributeString("headEnd", s.HeadEnd.ToString(Inv));
             w.WriteAttributeString("text", s.Text ?? "");
+            if (s.Holes != null)
+                foreach (List<PointF> h in s.Holes)
+                {
+                    w.WriteStartElement("hole");
+                    foreach (PointF p in h)
+                    {
+                        w.WriteStartElement("p");
+                        w.WriteAttributeString("x", F(p.X));
+                        w.WriteAttributeString("y", F(p.Y));
+                        w.WriteEndElement();
+                    }
+                    w.WriteEndElement();
+                }
             if (s.Kind == ShapeKind.Image && s.Img != null)
             {
                 w.WriteStartElement("img");
@@ -1336,6 +1858,8 @@ namespace SnapMeasure
                 throw new InvalidDataException("The image is too large (" + w + " × " + h + " px).");
         }
 
+        static string Trunc(string s, int max) { s = s ?? ""; return s.Length > max ? s.Substring(0, max) : s; }
+
         static float Finite(float v, float def, float lo, float hi)
         {
             if (float.IsNaN(v) || float.IsInfinity(v)) return def;
@@ -1343,21 +1867,36 @@ namespace SnapMeasure
         }
 
         /// <summary>Repairs or rejects a loaded shape so bad data can't crash drawing. Returns false to drop it.</summary>
+        static bool CleanPoints(List<PointF> pts)
+        {
+            if (pts.Count > MaxPoints) return false;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                PointF p = pts[i];
+                if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsInfinity(p.X) || float.IsInfinity(p.Y)) return false;
+                pts[i] = new PointF(Math.Max(-MaxCoord, Math.Min(MaxCoord, p.X)), Math.Max(-MaxCoord, Math.Min(MaxCoord, p.Y)));
+            }
+            return true;
+        }
+
         public static bool Sanitize(Shape s)
         {
             if (!Enum.IsDefined(typeof(ShapeKind), s.Kind)) return false;
-            if (s.Pts.Count > MaxPoints) return false;
-            for (int i = 0; i < s.Pts.Count; i++)
+            if (!CleanPoints(s.Pts)) return false;
+            if (s.Holes != null)
             {
-                PointF p = s.Pts[i];
-                if (float.IsNaN(p.X) || float.IsNaN(p.Y) || float.IsInfinity(p.X) || float.IsInfinity(p.Y)) return false;
-                s.Pts[i] = new PointF(Math.Max(-MaxCoord, Math.Min(MaxCoord, p.X)), Math.Max(-MaxCoord, Math.Min(MaxCoord, p.Y)));
+                if (s.Kind != ShapeKind.Area || s.Holes.Count > 1000) s.Holes = null;
+                else
+                {
+                    s.Holes.RemoveAll(h => h == null || h.Count < 3 || !CleanPoints(h));
+                    if (s.Holes.Count == 0) s.Holes = null;
+                }
             }
             int need;
             switch (s.Kind)
             {
-                case ShapeKind.Text: case ShapeKind.Counter: case ShapeKind.Freehand: need = 1; break;
-                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Angle: need = 3; break;
+                case ShapeKind.Text: case ShapeKind.Counter: case ShapeKind.Freehand: case ShapeKind.Note: need = 1; break;
+                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Angle: case ShapeKind.Perimeter: need = 3; break;
                 default: need = 2; break;
             }
             if (s.Pts.Count < need) return false;
@@ -1368,7 +1907,9 @@ namespace SnapMeasure
             s.StrokeOpacity = Math.Max(0, Math.Min(100, s.StrokeOpacity));
             s.FillOpacity = Math.Max(0, Math.Min(100, s.FillOpacity));
             s.Align = Math.Max(0, Math.Min(2, s.Align));
-            s.Heads = Math.Max(0, Math.Min(3, s.Heads));
+            s.HeadStart = Math.Max(0, Math.Min(9, s.HeadStart));
+            s.HeadEnd = Math.Max(0, Math.Min(9, s.HeadEnd));
+            s.Mode = Math.Max(0, Math.Min(10, s.Mode));
             if (s.Text != null && s.Text.Length > 100000) s.Text = s.Text.Substring(0, 100000);
             return true;
         }
@@ -1393,8 +1934,34 @@ namespace SnapMeasure
             s.Bold = e.GetAttribute("bold") == "1";
             s.Italic = e.GetAttribute("italic") == "1";
             s.Align = PI(e.GetAttribute("align"), s.Kind == ShapeKind.Bubble ? 1 : 0);
-            s.Heads = PI(e.GetAttribute("heads"), s.Kind == ShapeKind.Arrow ? 1 : 0);
+            if (e.HasAttribute("headEnd"))
+            {
+                s.HeadStart = PI(e.GetAttribute("headStart"), 0);
+                s.HeadEnd = PI(e.GetAttribute("headEnd"), 0);
+            }
+            else if (s.Kind == ShapeKind.Dimension) { s.HeadStart = s.HeadEnd = (int)HeadStyle.Filled; }   // 1.0 dimensions
+            else
+            {
+                s.HeadStart = 0; s.HeadEnd = 0;
+                s.Heads = PI(e.GetAttribute("heads"), s.Kind == ShapeKind.Arrow ? 1 : 0);
+            }
             s.Text = e.GetAttribute("text");
+            XmlNodeList holes = e.SelectNodes("hole");
+            if (holes.Count > 0)
+            {
+                if (holes.Count > 1000) return null;
+                s.Holes = new List<List<PointF>>();
+                foreach (XmlElement he in holes)
+                {
+                    List<PointF> h = new List<PointF>();
+                    foreach (XmlElement p in he.SelectNodes("p"))
+                    {
+                        if (h.Count > MaxPoints) return null;
+                        h.Add(new PointF(PF(p.GetAttribute("x"), 0f), PF(p.GetAttribute("y"), 0f)));
+                    }
+                    s.Holes.Add(h);
+                }
+            }
             if (s.Kind == ShapeKind.Image)
             {
                 XmlNode im = e.SelectSingleNode("img");
@@ -1431,6 +1998,8 @@ namespace SnapMeasure
                 w.WriteAttributeString("decimals", sc.Decimals.ToString(Inv));
                 w.WriteAttributeString("markerStart", sc.MarkerStart.ToString(Inv));
                 w.WriteAttributeString("letterStart", sc.LetterStart.ToString(Inv));
+                w.WriteAttributeString("numberLabel", sc.NumberLabel ?? "");
+                w.WriteAttributeString("letterLabel", sc.LetterLabel ?? "");
                 if (ex.Crop.HasValue)
                 {
                     Rectangle r = ex.Crop.Value;
@@ -1470,6 +2039,8 @@ namespace SnapMeasure
             sc.Decimals = PI(root.GetAttribute("decimals"), 2);
             sc.MarkerStart = PI(root.GetAttribute("markerStart"), 1);
             sc.LetterStart = PI(root.GetAttribute("letterStart"), 1);
+            sc.NumberLabel = Trunc(root.GetAttribute("numberLabel"), 500);
+            sc.LetterLabel = Trunc(root.GetAttribute("letterLabel"), 500);
             bool oldLetters = root.GetAttribute("markerLetters") == "1";     // v2: one series, either numbers or letters
             if (oldLetters) { sc.LetterStart = Math.Max(1, sc.MarkerStart); sc.MarkerStart = 1; }
             string[] cp = root.GetAttribute("crop").Split(',');

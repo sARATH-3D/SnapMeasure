@@ -1,22 +1,32 @@
-# SnapMeasure 1.0.1
+# SnapMeasure 1.1
 
-Portable screenshot tool with **dimensions, area, angles, scale, polygon highlighting, rulers & guides, rotation, effects and speech bubbles**,
+Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
+drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
 plus an **on-screen ruler and protractor** that float over any app.
-One file, `SnapMeasure.exe` (~230 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
-(it uses the .NET Framework 4.x that's built into Windows).
+One file, `SnapMeasure.exe` (~300 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
+(it uses the .NET Framework 4.x, the PDF reader and the text recognition that are built into Windows).
 **Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
-**What's new in 1.0.1** (bug fixes):
-* Icons, text and menus are now the right size on every monitor, including a mix of 100 % and 200 % screens
-  (before, they could come out double or half size).
-* On-screen ruler: the "Set scale" box opens beside the ruler instead of underneath it,
-  and the right-click menu now also opens straight after dragging the ruler.
+**What's new in 1.1:**
+* **Quantities:** area **minus cut-outs** (gross / cut-outs / net), **path length** (sealant runs, gaskets), **perimeter**,
+  **counts** per marker series, and **labels** on every measurement. *Copy measurements* puts all of it into Excel.
+* **Drawing scales:** 1:50 on an A1 sheet, 1:100 at 300 dpi, the exact size of a PDF page, or scales you save yourself.
+* **Open PDF pages** directly (Windows' own PDF reader) – the paper size makes the scale exact.
+* **Mark-up:** 10 line ends for arrows, lines and dimensions (right-click), **revision cloud**, **stamps**
+  (Approved / Revise / For information / Rejected / custom, with date), **text markup** (underline, strike out, highlight –
+  snaps to the words), and **notes** that are shown in the editor but never printed.
+* **OCR:** copy text out of a picture or straight off the screen (`Ctrl+Shift+6`).
+* **Scrolling capture** of long pages (`Ctrl+Shift+5`).
+* **Check for updates** in the About window (only when you click it).
+* Fixes from 1.0.1: right-sized icons, text and menus on every monitor (mixed 100 % / 200 % screens);
+  the ruler's *Set scale* box opens beside the ruler, and its right-click menu also works straight after a drag.
 
 **Highlights:**
-* Measuring: dimensions, area / perimeter, 3-point angle, scale calibration, rulers & guides, Excel export.
-* Annotating: a style bar above the canvas, arrows (heads at the start / end / both), text, speech bubbles,
-  markers, highlights, pixelate, and pasted pictures.
+* Measuring: dimensions, areas with cut-outs, path length, perimeter, 3-point angle, counts, scale calibration and presets,
+  rulers & guides, Excel export with labels.
+* Annotating: a style bar above the canvas, arrows and lines with 10 end styles, text, speech bubbles, clouds, stamps,
+  text markup, notes, markers, highlights, pixelate, and pasted pictures.
 * Helpers: adjustable crop, a blank canvas, a pin you can resize and crop, and an on-screen ruler (calibratable) and protractor.
 * **Ctrl+S** saves the picture **and** an editable `.snapm` project, named like Greenshot after the app you captured
   (e.g. `2026-11-18 11_34_09-Autodesk AutoCAD LT 2026 - [plan.dwg].png`).
@@ -33,6 +43,11 @@ Settings are saved in `SnapMeasure.ini` **next to the exe**, so you can carry it
 | Active window | `Alt+PrtSc` or `Ctrl+Shift+2` |
 | Screen under mouse | `Ctrl+PrtSc` or `Ctrl+Shift+3` |
 | Last region again | `Shift+PrtSc` or `Ctrl+Shift+4` |
+| **Scrolling capture** (long page): pick the area, SnapMeasure scrolls it and joins the pieces; `Esc` stops | `Ctrl+Shift+5` |
+| **Capture text (OCR)**: pick an area, its text goes to the clipboard | `Ctrl+Shift+6` |
+
+**PDF drawings:** *Open…* (editor or tray) also opens PDFs. Pick the page and the sharpness (100–300 dpi);
+SnapMeasure remembers the page's real paper size, so *Drawing scale → PDF page (exact)* gives the right scale straight away.
 
 If Windows Snipping Tool owns `PrtSc`, SnapMeasure says so at start-up. Use the `Ctrl+Shift` keys instead,
 or turn off *Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"*.
@@ -55,24 +70,40 @@ Open them from the tray menu or the **Ruler** / **Protractor** buttons in the ed
 |---|---|---|
 | Dimension | `D` | CAD-style dimension: solid arrowheads that grow with the line width, end ticks, and the value **in the middle of the line**. Drag the yellow handle to offset it. Double-click to add a prefix. |
 | Area | `M` | Click corners → area + perimeter label (A1, A2 …) |
+| Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
+| Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …) |
+| Perimeter | `Q` | Closed outline → perimeter only (P1, P2 …) |
 | Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
+| Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
+| Letter marker | `Shift+N` | A, B, C … is **its own series**, separate from the numbers, also counted |
 | Polygon | `P` | Highlight with any number of edges, with fill colour and opacity |
 | Highlight | `H` | Text marker, spotlight, grayscale outside, magnify ×2 |
+| Text markup | `Y` | Drag over a line of text in the picture: **underline, strike out or highlight**. Snaps to the words (Windows text recognition). |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |
-| Line / Arrow / Freehand | `L` `A` `F` | Arrowheads keep a good shape at any line width |
-| Text | `T` | Type straight onto the image. **Bold, italic, left / centre / right** buttons are in the right-hand panel. |
+| Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops |
+| Line / Arrow / Freehand | `L` `A` `F` | **10 line ends** (none, filled / open / hollow arrow, slash, tick, dot, circle, diamond, square) for the start and the end |
+| Text | `T` | Type straight onto the image. **Bold, italic, left / centre / right** on the style bar. |
 | Speech bubble | `S` | Drag or click, then type. Bold / italic / alignment as for Text. Drag the yellow handle to point the tail. |
-| Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted |
-| Letter marker | `Shift+N` | A, B, C … is **its own series**, separate from the numbers |
+| Stamp | `Z` | Click to place **APPROVED / REVISE / FOR INFORMATION / REJECTED** or your own text, with today's date. Double-click to edit. |
+| Note | `O` | A sticky note shown in the editor only – **left out of saved, copied and pinned pictures** (listed in the Excel export) |
+| Copy text (OCR) | `Shift+T` | Drag over text to copy it; a click copies all the text. The **Copy text** button copies the whole picture. |
 | Pixelate | `B` | Hide sensitive information |
 | Crop | `C` | **Adjustable crop** (see below) |
 
-**Markers:** *Start at* (right panel) continues a series. Changing the colour, size or shadow of one marker
+**Line ends:** right-click a line, arrow or dimension → *Start head* / *End head* (with pictures), or *Swap start / end heads*.
+The same choices are on the style bar.
+
+**Labels and counts:** double-click a measurement to label it (e.g. *Spandrel L01*), or a marker to say what its series counts
+(e.g. *Blind panel*). Double-clicking a row in the list on the right does the same.
+*Copy measurements (for Excel)* gives one row per item: Name, Type, Value, Unit, Perimeter, Gross, Cut-outs, Label –
+including the marker counts and the notes.
+
+**Markers:** *Start at* (style bar) continues a series. Changing the colour, size or shadow of one marker
 changes **every marker in that series**.
 
 **Style bar** (right above the canvas): line colour, opacity and width; fill colour and opacity; text size; B / I / alignment;
-arrowheads (none / end / start / both); highlight mode; marker *Start at*; shadow; and a quick palette.
+start / end line ends; highlight, text-markup and stamp type; marker *Start at*; shadow; and a quick palette.
 In the palette, click a colour for the line and right-click it for the fill.
 The **Scale panel** button (or `F4`) shows or hides the scale & measurements panel on the right.
 
@@ -113,8 +144,10 @@ Drag a guide to move it, or drag it back onto the ruler to delete it. `Ctrl+R` o
 * **Effects:** border, drop shadow, torn edge, grayscale, invert (`Ctrl+Z` to undo).
 * `Home` (or `0`, or double-click the middle mouse button) fits and centres the image. `Ctrl+wheel` zooms; `Space`+drag pans.
 
-**Scale:** set the unit and *1 pixel = …* in the right panel. The **Measurements** list (dimensions, areas, angles) →
-*Copy measurements* pastes straight into Excel.
+**Scale:** set the unit and *1 pixel = …* in the right panel, calibrate from a known length (`K`), or use
+**Drawing scale…**: 1:N with the picture's resolution (e.g. 1:100 at 300 dpi), the sheet it shows (e.g. 1:50 on A1 landscape),
+or the exact size of a PDF page. Scales you use often can be saved by name and picked again.
+The **Measurements & counts** list → *Copy measurements* pastes straight into Excel.
 
 **Save:** `Ctrl+S` saves to *Pictures\SnapMeasure* (or the folder you choose in **Settings**). `Ctrl+Shift+S` saves as PNG, JPG, BMP, GIF, TIFF, PDF or ICO,
 or as **.snapm**, which stays fully editable and keeps the crop and guides.
@@ -132,7 +165,9 @@ or as **.snapm**, which stays fully editable and keeps the crop and guides.
   * images over 30 000 px or 250 MP are refused.
 * DLLs are loaded only from System32, never from the exe's folder (DLL planting).
   The build uses ASLR (high-entropy), DEP and an asInvoker manifest, so no admin rights are needed.
-* There's no network access, telemetry or installer, and nothing is written outside the exe folder or the chosen save folder.
+* No telemetry and no installer. The only time SnapMeasure goes online is when you click *Check for updates* in the About window
+  (it asks GitHub for the latest release number). Nothing is written outside the exe folder or the chosen save folder.
+* PDF pages and text recognition use the components built into Windows 10/11; nothing is downloaded.
 
 ## Greenshot weak spots and what SnapMeasure does instead
 | Greenshot | SnapMeasure |
@@ -143,12 +178,15 @@ or as **.snapm**, which stays fully editable and keeps the crop and guides.
 | Crop is final | Adjustable crop that can be removed later |
 | Reported scaling bugs with mixed-DPI / multiple monitors | Per-monitor-DPI aware: captures in true physical pixels |
 | Annotations flattened once exported | `.snapm` project keeps everything editable |
+| Scrolling capture unreliable | Scrolls the window, lines the pieces up even when the app scrolls by fractions of a pixel, and keeps sticky headers once |
+| No OCR built in | Copy text from pictures or the screen with Windows' own text recognition |
 
-Not included (yet): scrolling capture, OCR, upload plugins.
+Not included (yet): upload plugins.
 
 ## Build from source
-Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 68 built-in checks.
+Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
+`C:\Windows\System32\WinMetadata`, so nothing needs installing.
+`SnapMeasure.exe --selftest <folder>` runs the 94 built-in checks.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.

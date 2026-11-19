@@ -43,7 +43,11 @@ namespace SnapMeasure
         public readonly List<float> HGuides = new List<float>(), VGuides = new List<float>();
 
         public Func<string, string, string> AskText;     // (title, initial) -> text, null = cancelled (used for dimension/area labels)
+        public Func<string, string, string> AskNote;     // same, several lines (notes, stamps)
         public Func<double, bool> AskCalibration;        // (pixel length) -> true if scale was changed
+        public Action<string> Message;                   // short status-bar message
+        public Action<Rectangle> OcrArea;                // OCR tool: copy the text inside this image rectangle
+        public Func<Rectangle, List<Rectangle>> FindWords;   // text recognition for snapping text markup (may be null)
         public event EventHandler DocChanged, SelectionChanged, ViewChanged, ToolChanged;
         public Action<PointF> CursorMoved;
 
@@ -117,6 +121,15 @@ namespace SnapMeasure
             d[Tool.Text] = St(ShapeKind.Text, red, 2, Color.White, 0, 20);
             d[Tool.Polygon] = St(ShapeKind.Polygon, amber, 2, Color.Yellow, 35, 16);
             d[Tool.Dimension] = St(ShapeKind.Dimension, red, 1.5f, Color.White, 0, 15);
+            d[Tool.Dimension].HeadStart = d[Tool.Dimension].HeadEnd = (int)HeadStyle.Filled;
+            Color purple = Color.FromArgb(130, 60, 200), green = Color.FromArgb(30, 140, 60);
+            d[Tool.Polyline] = St(ShapeKind.Polyline, purple, 2.5f, Color.White, 0, 15);
+            d[Tool.Perimeter] = St(ShapeKind.Perimeter, green, 2.5f, Color.White, 0, 15);
+            d[Tool.Cutout] = St(ShapeKind.Polygon, red, 2, red, 15, 15);
+            d[Tool.Cloud] = St(ShapeKind.Cloud, red, 2.5f, Color.Yellow, 0, 16);
+            d[Tool.Stamp] = St(ShapeKind.Stamp, Stamps.Colors[0], 3, Color.White, 0, 16);
+            d[Tool.Note] = St(ShapeKind.Note, Color.FromArgb(150, 110, 0), 1, Color.FromArgb(255, 214, 64), 100, 16);
+            d[Tool.Markup] = St(ShapeKind.Markup, red, 2, Color.Yellow, 45, 16);
             d[Tool.Area] = St(ShapeKind.Area, blue, 2, blue, 22, 15);
             d[Tool.Angle] = St(ShapeKind.Angle, blue, 2, Color.White, 0, 15);
             d[Tool.Counter] = St(ShapeKind.Counter, Color.White, 2.5f, red, 100, 18);
@@ -154,6 +167,12 @@ namespace SnapMeasure
                 case ShapeKind.Counter: return Tool.Counter;
                 case ShapeKind.Highlight: return Tool.Highlight;
                 case ShapeKind.Bubble: return Tool.Bubble;
+                case ShapeKind.Cloud: return Tool.Cloud;
+                case ShapeKind.Stamp: return Tool.Stamp;
+                case ShapeKind.Note: return Tool.Note;
+                case ShapeKind.Markup: return Tool.Markup;
+                case ShapeKind.Polyline: return Tool.Polyline;
+                case ShapeKind.Perimeter: return Tool.Perimeter;
                 default: return Tool.Pixelate;
             }
         }
@@ -180,12 +199,21 @@ namespace SnapMeasure
         {
             Shape s;
             if (Styles.ContainsKey(t)) s = Styles[t].Clone();
-            else { s = new Shape(); s.Kind = t == Tool.Crop ? ShapeKind.Rect : ShapeKind.Line; s.Width = 1; }
+            else { s = new Shape(); s.Kind = (t == Tool.Crop || t == Tool.Ocr) ? ShapeKind.Rect : ShapeKind.Line; s.Width = 1; }
             s.Pts.Clear();
+            s.Holes = null;
             s.Text = "";
             s.Angle = 0;
             s.Pts.Add(p);
+            if (s.Kind == ShapeKind.Stamp) s.Text = StampText(s.Mode, "");
             return s;
+        }
+
+        /// <summary>Stamp text: the stamp word, then the date (and anything the user adds below).</summary>
+        public static string StampText(int mode, string custom)
+        {
+            string main = mode >= 0 && mode < Stamps.Names.Length - 1 ? Stamps.Names[mode] : (string.IsNullOrEmpty(custom) ? "CHECKED" : custom);
+            return main + "\n" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         }
 
         // ---------- coordinates & view ----------
@@ -662,7 +690,21 @@ namespace SnapMeasure
         }
 
         // ---------- snapping ----------
-        bool SnapTool { get { return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow || tool == Tool.Select || tool == Tool.Angle; } }
+        bool SnapTool
+        {
+            get
+            {
+                return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
+                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout;
+            }
+        }
+
+        static bool PolyTool(Tool t) { return t == Tool.Polygon || t == Tool.Area || t == Tool.Polyline || t == Tool.Perimeter || t == Tool.Cutout; }
+        static bool BoxTool(Tool t)
+        {
+            return t == Tool.Rect || t == Tool.Ellipse || t == Tool.Pixelate || t == Tool.Crop || t == Tool.Highlight || t == Tool.Bubble ||
+                   t == Tool.Cloud || t == Tool.Stamp || t == Tool.Markup || t == Tool.Ocr;
+        }
 
         PointF Snap(PointF ip)
         {
@@ -687,7 +729,7 @@ namespace SnapMeasure
                         if (d < best) { best = d; found = c; }
                     }
                 }
-                if (creating != null && creating.IsPoly && creating.Pts.Count > 3)
+                if (creating != null && creating.IsPoly && !creating.IsOpenPath && creating.Pts.Count > 3)
                 {
                     float d = Geo.Dist(creating.Pts[0], ip);
                     if (d < best) { best = d; found = creating.Pts[0]; }
@@ -754,11 +796,130 @@ namespace SnapMeasure
             List<PointF> pts = c.Pts;
             if (pts.Count > 0) pts.RemoveAt(pts.Count - 1);        // rubber-band point
             while (pts.Count >= 2 && Geo.Dist(pts[pts.Count - 1], pts[pts.Count - 2]) < 0.5f) pts.RemoveAt(pts.Count - 1);
+            if (c.IsOpenPath)
+            {
+                if (pts.Count >= 2) AddShape(c); else Invalidate();
+                return;
+            }
             if (pts.Count >= 2 && Geo.Dist(pts[pts.Count - 1], pts[0]) < 0.5f) pts.RemoveAt(pts.Count - 1);
-            if (pts.Count >= 3) AddShape(c); else Invalidate();
+            if (pts.Count < 3) { Invalidate(); return; }
+            if (tool == Tool.Cutout) { AttachCutout(pts); return; }
+            AddShape(c);
+        }
+
+        /// <summary>Cut-out tool: the outline becomes an opening in the area it was drawn in.</summary>
+        void AttachCutout(List<PointF> pts)
+        {
+            PointF c = Geo.Centroid(pts);
+            Shape target = null;
+            if (Selected != null && Selected.Kind == ShapeKind.Area && Geo.InPolygon(c, Selected.Pts)) target = Selected;
+            for (int i = Shapes.Count - 1; i >= 0 && target == null; i--)
+                if (Shapes[i].Kind == ShapeKind.Area && Shapes[i].Pts.Count >= 3 && Geo.InPolygon(c, Shapes[i].Pts)) target = Shapes[i];
+            if (target == null)
+            {
+                if (Message != null) Message("Draw the cut-out inside an area (measure the area first with M)");
+                Invalidate();
+                return;
+            }
+            PushUndo(Snapshot());
+            if (target.Holes == null) target.Holes = new List<List<PointF>>();
+            target.Holes.Add(new List<PointF>(pts));
+            Selected = target;
+            FireDoc(); FireSel(); Invalidate();
+            if (Message != null) Message("Cut-out subtracted: net area " + Scale.Area(Measure.NetArea(target)));
+        }
+
+        /// <summary>Removes the cut-outs of the selected area.</summary>
+        public void ClearCutouts()
+        {
+            Shape s = Selected;
+            if (s == null || s.Holes == null) return;
+            PushUndo(Snapshot());
+            s.Holes = null;
+            FireDoc(); Invalidate();
+        }
+
+        /// <summary>Line ends of the selected lines / arrows / dimensions. start: true = first point.</summary>
+        public void SetHeads(bool start, int style)
+        {
+            List<Shape> t = Sel.FindAll(x => x.HasHeads);
+            if (t.Count == 0) return;
+            PushUndo(Snapshot());
+            foreach (Shape s in t) { if (start) s.HeadStart = style; else s.HeadEnd = style; }
+            Shape tmpl;
+            foreach (Shape s in t) if (Styles.TryGetValue(ToolFor(s), out tmpl)) { if (start) tmpl.HeadStart = style; else tmpl.HeadEnd = style; }
+            FireDoc(); FireSel(); Invalidate();
+        }
+
+        public void SwapHeads()
+        {
+            List<Shape> t = Sel.FindAll(x => x.HasHeads);
+            if (t.Count == 0) return;
+            PushUndo(Snapshot());
+            foreach (Shape s in t) { int h = s.HeadStart; s.HeadStart = s.HeadEnd; s.HeadEnd = h; }
+            FireDoc(); FireSel(); Invalidate();
+        }
+
+        /// <summary>Asks for a label (measurements, notes, stamps) or the marker series name.</summary>
+        public void EditLabel(Shape s)
+        {
+            if (s == null) return;
+            if (s.Kind == ShapeKind.Counter)
+            {
+                bool letters = s.IsLetterMarker;
+                string cur = letters ? Scale.LetterLabel : Scale.NumberLabel;
+                string t = AskText != null ? AskText((letters ? "Letter" : "Number") + " markers count… (e.g. Blind panel)", cur) : null;
+                if (t != null && t != cur) { PushUndo(Snapshot()); if (letters) Scale.LetterLabel = t; else Scale.NumberLabel = t; FireDoc(); Invalidate(); }
+                return;
+            }
+            string title;
+            bool multi = false;
+            switch (s.Kind)
+            {
+                case ShapeKind.Dimension: title = "Dimension label prefix (e.g. W =)"; break;
+                case ShapeKind.Area: title = "Area label (e.g. Spandrel L01)"; break;
+                case ShapeKind.Polyline: title = "Length label (e.g. Sealant run)"; break;
+                case ShapeKind.Perimeter: title = "Perimeter label (e.g. Gasket W12)"; break;
+                case ShapeKind.Angle: title = "Angle label (e.g. Roof pitch)"; break;
+                case ShapeKind.Note: title = "Note (shown here only – not on saved pictures)"; multi = true; break;
+                case ShapeKind.Stamp: title = "Stamp text: first line = stamp word, then date / name"; multi = true; break;
+                default: return;
+            }
+            Func<string, string, string> ask = multi ? AskNote : AskText;
+            string v = ask != null ? ask(title, s.Text) : null;
+            if (v == null || v == s.Text) return;
+            if (s.Kind == ShapeKind.Note && v.Trim().Length == 0) return;
+            PushUndo(Snapshot());
+            s.Text = v;
+            FireDoc(); Invalidate();
         }
 
         bool ClickBuilt(Shape s) { return s != null && (s.IsPoly || s.Kind == ShapeKind.Angle); }
+
+        /// <summary>Text markup: tighten the dragged box to the words found under it (Windows text recognition).</summary>
+        RectangleF SnapToText(RectangleF r)
+        {
+            if (FindWords == null || Image == null) return r;
+            Rectangle look = Rectangle.Round(RectangleF.Inflate(r, r.Height * 0.8f + 8f, r.Height * 0.8f + 8f));
+            look.Intersect(new Rectangle(0, 0, Image.Width, Image.Height));
+            if (look.Width < 4 || look.Height < 4) return r;
+            List<Rectangle> words;
+            try { words = FindWords(look); } catch (Exception) { return r; }
+            if (words == null || words.Count == 0) return r;
+            float y0 = r.Y - r.Height * 0.5f, y1 = r.Bottom + r.Height * 0.5f;
+            RectangleF u = RectangleF.Empty;
+            bool any = false;
+            foreach (Rectangle w in words)
+            {
+                float cy = w.Y + w.Height / 2f;
+                if (cy < y0 || cy > y1 || w.Right <= r.X || w.X >= r.Right) continue;
+                u = any ? RectangleF.Union(u, w) : w;
+                any = true;
+            }
+            if (!any) return r;
+            u.Inflate(1.5f, 1.5f);
+            return u;
+        }
 
         // ---------- inline text editing ----------
         public bool IsEditingText { get { return editBox != null; } }
@@ -894,6 +1055,42 @@ namespace SnapMeasure
             add("Paste picture here", ClipboardHasShapes ? "" : "Ctrl+V", ClipboardHasImage, () => PasteImage(ip));
             add("Duplicate", "Ctrl+D", any, DuplicateSelection);
             add("Delete", "Del", any, DeleteSelected);
+            Shape one = Sel.Count == 1 ? Selected : null;
+            if (Sel.Exists(x => x.HasHeads))
+            {
+                m.Items.Add(new ToolStripSeparator());
+                int curS = Sel.Find(x => x.HasHeads).HeadStart, curE = Sel.Find(x => x.HasHeads).HeadEnd;
+                for (int end = 0; end < 2; end++)
+                {
+                    bool start = end == 0;
+                    ToolStripMenuItem sub = new ToolStripMenuItem(start ? "Start head" : "End head");
+                    sub.Image = Icons.HeadPreview(start ? curS : curE, !start, (int)(16 * Dpi));
+                    sub.DropDown.Font = m.Font;
+                    for (int hsty = 0; hsty <= 9; hsty++)
+                    {
+                        int st = hsty;
+                        ToolStripMenuItem it = new ToolStripMenuItem(Icons.HeadNames[st]);
+                        it.Image = Icons.HeadPreview(st, !start, (int)(16 * Dpi));
+                        it.Checked = (start ? curS : curE) == st;
+                        it.Click += (s, e) => SetHeads(start, st);
+                        sub.DropDownItems.Add(it);
+                    }
+                    m.Items.Add(sub);
+                }
+                add("Swap start / end heads", "", true, SwapHeads);
+            }
+            if (one != null && (one.IsMeasure || one.Kind == ShapeKind.Counter || one.Kind == ShapeKind.Note || one.Kind == ShapeKind.Stamp))
+            {
+                m.Items.Add(new ToolStripSeparator());
+                string what = one.Kind == ShapeKind.Counter ? (one.IsLetterMarker ? "Label the letter series…" : "Label the number series…")
+                            : one.Kind == ShapeKind.Note ? "Edit note…" : one.Kind == ShapeKind.Stamp ? "Edit stamp text…" : "Label…";
+                add(what, "double-click", true, () => EditLabel(one));
+                if (one.Kind == ShapeKind.Area)
+                {
+                    add("Add a cut-out (opening)", "X", true, () => CurrentTool = Tool.Cutout);
+                    if (one.Holes != null) add("Remove cut-outs", "", true, ClearCutouts);
+                }
+            }
             m.Items.Add(new ToolStripSeparator());
             add("Bring to front", "Ctrl+Shift+]", any, () => Order(0));
             add("Bring forward", "Ctrl+]", any, () => Order(1));
@@ -1023,6 +1220,17 @@ namespace SnapMeasure
                 case Tool.Letter:
                     AddShape(NewShape(tool, ip));
                     break;
+                case Tool.Note:
+                    {
+                        Shape hit = HitShape(ip);
+                        if (hit != null && hit.Kind == ShapeKind.Note) { Selected = hit; FireSel(); EditLabel(hit); break; }
+                        string t = AskNote != null ? AskNote("Note (shown here only – not on saved pictures)", "") : null;
+                        if (t == null || t.Trim().Length == 0) break;
+                        Shape n = NewShape(Tool.Note, ip);
+                        n.Text = t;
+                        AddShape(n);
+                        break;
+                    }
                 case Tool.Crop:
                     {
                         int hi = CropHandleAt(e.Location);
@@ -1066,10 +1274,14 @@ namespace SnapMeasure
                     }
                 case Tool.Polygon:
                 case Tool.Area:
+                case Tool.Polyline:
+                case Tool.Perimeter:
+                case Tool.Cutout:
                     {
                         if (creating == null)
                         {
-                            Sel.Clear(); FireSel();
+                            // the cut-out tool keeps the area selected, so the opening goes into that one
+                            if (tool != Tool.Cutout) { Sel.Clear(); FireSel(); }
                             creating = NewShape(tool, sp);
                             creating.Pts.Add(sp);
                         }
@@ -1079,7 +1291,7 @@ namespace SnapMeasure
                             int n = creating.Pts.Count;
                             PointF p = sp;
                             if (shift && !snapPt.HasValue && n >= 2) p = Geo.SnapAngle(creating.Pts[n - 2], sp, 15);
-                            if (n > 3 && Geo.Dist(p, creating.Pts[0]) < 9f * Dpi / Zoom) { FinishPoly(); return; }
+                            if (n > 3 && !creating.IsOpenPath && Geo.Dist(p, creating.Pts[0]) < 9f * Dpi / Zoom) { FinishPoly(); return; }
                             creating.Pts[n - 1] = p;
                             creating.Pts.Add(p);
                         }
@@ -1105,17 +1317,11 @@ namespace SnapMeasure
             if (s == null) return;
             Selected = s; FireSel();
             if (s.Kind == ShapeKind.Text || s.Kind == ShapeKind.Bubble) { BeginTextEdit(s, false); return; }
-            if (s.Kind == ShapeKind.Dimension || s.Kind == ShapeKind.Area)
-            {
-                string title = s.Kind == ShapeKind.Dimension ? "Dimension label prefix (e.g. W =)" : "Area label (e.g. Room 1)";
-                string t = AskText != null ? AskText(title, s.Text) : null;
-                if (t != null && t != s.Text) { PushUndo(Snapshot()); s.Text = t; FireDoc(); Invalidate(); }
-                return;
-            }
             if (s.IsPoly)
             {
                 // double-click on an edge inserts a new vertex there
-                for (int i = 0; i < s.Pts.Count; i++)
+                int segs = s.IsOpenPath ? s.Pts.Count - 1 : s.Pts.Count;
+                for (int i = 0; i < segs; i++)
                 {
                     PointF a = s.Pts[i], b = s.Pts[(i + 1) % s.Pts.Count];
                     if (Geo.SegDist(ip, a, b) <= Tol + s.Width)
@@ -1127,6 +1333,7 @@ namespace SnapMeasure
                     }
                 }
             }
+            if (s.IsMeasure || s.Kind == ShapeKind.Note || s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Counter) EditLabel(s);
         }
 
         void InvalidateRulers()
@@ -1197,7 +1404,7 @@ namespace SnapMeasure
 
             if (creating != null)
             {
-                PointF sp = tool == Tool.Freehand || tool == Tool.Crop ? ip : Snap(ip);
+                PointF sp = tool == Tool.Freehand || tool == Tool.Crop || tool == Tool.Ocr || tool == Tool.Markup ? ip : Snap(ip);
                 int n = creating.Pts.Count;
                 PointF p0 = creating.Pts[0];
                 switch (tool)
@@ -1208,6 +1415,9 @@ namespace SnapMeasure
                     case Tool.Polygon:
                     case Tool.Area:
                     case Tool.Angle:
+                    case Tool.Polyline:
+                    case Tool.Perimeter:
+                    case Tool.Cutout:
                         creating.Pts[n - 1] = (shift && !snapPt.HasValue && n >= 2) ? Geo.SnapAngle(creating.Pts[n - 2], sp, 15) : sp;
                         break;
                     case Tool.Rect:
@@ -1216,6 +1426,10 @@ namespace SnapMeasure
                     case Tool.Crop:
                     case Tool.Highlight:
                     case Tool.Bubble:
+                    case Tool.Cloud:
+                    case Tool.Stamp:
+                    case Tool.Markup:
+                    case Tool.Ocr:
                         {
                             PointF p = sp;
                             if (shift)
@@ -1347,6 +1561,42 @@ namespace SnapMeasure
                     case Tool.Crop:
                         if (c.Pts.Count >= 2) DoCrop(Geo.Rect(c.Pts[0], c.Pts[1]));
                         break;
+                    case Tool.Ocr:
+                        {
+                            Rectangle r = c.Pts.Count >= 2 ? Rectangle.Round(Geo.Rect(c.Pts[0], c.Pts[1])) : Rectangle.Empty;
+                            if (r.Width * Zoom < 6 || r.Height * Zoom < 6) r = Rectangle.Round(ViewRect);     // a click reads the whole picture
+                            r.Intersect(new Rectangle(0, 0, Image.Width, Image.Height));
+                            Invalidate();
+                            if (r.Width > 2 && r.Height > 2 && OcrArea != null) OcrArea(r);
+                            return;
+                        }
+                    case Tool.Stamp:
+                        {
+                            RectangleF r = Geo.Rect(c.Pts[0], c.Pts[1]);
+                            if (r.Width * Zoom < 12 || r.Height * Zoom < 12)
+                                r = new RectangleF(c.Pts[0].X, c.Pts[0].Y, 230f * Dpi / Zoom, 84f * Dpi / Zoom);   // a click makes a default-size stamp
+                            c.Pts[0] = r.Location;
+                            c.Pts[1] = new PointF(r.Right, r.Bottom);
+                            if (c.Mode == Stamps.Names.Length - 1)
+                            {
+                                string t = AskNote != null ? AskNote("Stamp text: first line = stamp word, then date / name", c.Text) : null;
+                                if (t == null || t.Trim().Length == 0) { Invalidate(); return; }
+                                c.Text = t;
+                            }
+                            AddShape(c);
+                            break;
+                        }
+                    case Tool.Markup:
+                        {
+                            RectangleF r = Geo.Rect(c.Pts[0], c.Pts[1]);
+                            if (r.Width * Zoom < 4) break;
+                            if (r.Height * Zoom < 4) r = new RectangleF(r.X, r.Y - 8f / Zoom, r.Width, 16f / Zoom);   // a flat drag: look around the line
+                            RectangleF snapped = SnapToText(r);
+                            c.Pts[0] = snapped.Location;
+                            c.Pts[1] = new PointF(snapped.Right, snapped.Bottom);
+                            AddShape(c);
+                            break;
+                        }
                     case Tool.Calibrate:
                         {
                             float L = c.Pts.Count >= 2 ? Geo.Dist(c.Pts[0], c.Pts[1]) : 0;
@@ -1466,7 +1716,14 @@ namespace SnapMeasure
                 case Keys.L: CurrentTool = Tool.Line; break;
                 case Keys.A: CurrentTool = Tool.Arrow; break;
                 case Keys.F: CurrentTool = Tool.Freehand; break;
-                case Keys.T: CurrentTool = Tool.Text; break;
+                case Keys.T: CurrentTool = e.Shift ? Tool.Ocr : Tool.Text; break;
+                case Keys.W: CurrentTool = Tool.Polyline; break;
+                case Keys.Q: CurrentTool = Tool.Perimeter; break;
+                case Keys.X: CurrentTool = Tool.Cutout; break;
+                case Keys.U: CurrentTool = Tool.Cloud; break;
+                case Keys.Z: CurrentTool = Tool.Stamp; break;
+                case Keys.Y: CurrentTool = Tool.Markup; break;
+                case Keys.O: CurrentTool = Tool.Note; break;
                 case Keys.P: CurrentTool = Tool.Polygon; break;
                 case Keys.D: CurrentTool = Tool.Dimension; break;
                 case Keys.M: CurrentTool = Tool.Area; break;
@@ -1561,7 +1818,23 @@ namespace SnapMeasure
                 else
                 {
                     if (creating.Shadow && creating.CanShadow) Renderer.DrawShadow(g, creating, Image, Scale, null);
-                    Renderer.Draw(g, creating, Image, Scale, creating.Kind == ShapeKind.Area ? "A" + (CountKind(ShapeKind.Area) + 1) : null);
+                    string nm = creating.Kind == ShapeKind.Area ? "A" + (CountKind(ShapeKind.Area) + 1)
+                              : creating.Kind == ShapeKind.Polyline ? "L" + (CountKind(ShapeKind.Polyline) + 1)
+                              : creating.Kind == ShapeKind.Perimeter ? "P" + (CountKind(ShapeKind.Perimeter) + 1) : null;
+                    if (tool == Tool.Cutout || tool == Tool.Ocr)
+                        using (Pen p = new Pen(tool == Tool.Ocr ? Color.FromArgb(0, 120, 215) : Color.FromArgb(220, 30, 30), 1.5f / Zoom))
+                        using (SolidBrush b = new SolidBrush(tool == Tool.Ocr ? Color.FromArgb(30, 0, 120, 215) : Color.FromArgb(40, 220, 30, 30)))
+                        {
+                            p.DashStyle = DashStyle.Dash;
+                            if (tool == Tool.Ocr && creating.Pts.Count >= 2)
+                            {
+                                RectangleF r = Geo.Rect(creating.Pts[0], creating.Pts[1]);
+                                g.FillRectangle(b, r); g.DrawRectangle(p, r.X, r.Y, r.Width, r.Height);
+                            }
+                            else if (creating.Pts.Count >= 3) { g.FillPolygon(b, creating.Pts.ToArray()); g.DrawPolygon(p, creating.Pts.ToArray()); }
+                            else if (creating.Pts.Count == 2) g.DrawLines(p, creating.Pts.ToArray());
+                        }
+                    else Renderer.Draw(g, creating, Image, Scale, nm);
                 }
             }
             g.Restore(st);
@@ -1573,6 +1846,7 @@ namespace SnapMeasure
             if (creating != null && (creating.Kind == ShapeKind.Ellipse || creating.Kind == ShapeKind.Rect) && creating.Pts.Count >= 2 && tool != Tool.Crop)
                 DrawCenterMark(g, ToScr(Geo.Center(Geo.Rect(creating.Pts[0], creating.Pts[1]))));
             if (Sel.Count > 0 && editBox == null) DrawSelection(g);
+            if (Sel.Count == 1 && Selected.Kind == ShapeKind.Note && editBox == null) DrawNotePopup(g, Selected);
             if (marquee)
             {
                 PointF a = ToScr(marqA), b = ToScr(marqB);
@@ -1828,6 +2102,27 @@ namespace SnapMeasure
             }
         }
 
+        /// <summary>The text of the selected non-printing note, shown next to its icon (screen only).</summary>
+        void DrawNotePopup(Graphics g, Shape s)
+        {
+            RectangleF nr = Renderer.NoteRect(s);
+            PointF a = ToScr(new PointF(nr.Right, nr.Y));
+            Font f = Renderer.GetFont(12f * Dpi, false);
+            string t = string.IsNullOrEmpty(s.Text) ? "(empty note)" : s.Text;
+            SizeF sz = g.MeasureString(t, f, (int)(320 * Dpi));
+            float x = a.X + 8 * Dpi, y = a.Y;
+            if (x + sz.Width + 16 > Width) x = ToScr(nr.Location).X - sz.Width - 24 * Dpi;
+            if (y + sz.Height + 30 > Height) y = Math.Max(0, Height - sz.Height - 30 * Dpi);
+            RectangleF box = new RectangleF(x, y, sz.Width + 14, sz.Height + 26 * Dpi);
+            using (SolidBrush b = new SolidBrush(Color.FromArgb(250, 255, 247, 200))) g.FillRectangle(b, box);
+            using (Pen p = new Pen(Color.FromArgb(200, 160, 30), 1f)) g.DrawRectangle(p, box.X, box.Y, box.Width, box.Height);
+            using (SolidBrush ink = new SolidBrush(Color.FromArgb(60, 50, 10)))
+            {
+                g.DrawString(t, f, ink, new RectangleF(x + 7, y + 5, sz.Width + 2, sz.Height + 2));
+                g.DrawString("Note – not printed · double-click to edit", Renderer.GetFont(9.5f * Dpi, false), Brushes.Gray, x + 7, y + sz.Height + 8);
+            }
+        }
+
         void ReadoutBox(Graphics g, string t)
         {
             PointF sp = ToScr(mouseImg);
@@ -1887,11 +2182,32 @@ namespace SnapMeasure
                     break;
                 case Tool.Polygon:
                 case Tool.Area:
+                case Tool.Cutout:
                     if (p.Count >= 2)
                     {
                         t = "Segment " + Scale.Len(Geo.Dist(p[p.Count - 2], p[p.Count - 1]));
-                        if (p.Count >= 3) t += "\nArea " + Scale.Area(Math.Abs(Geo.SignedArea(p)));
+                        if (p.Count >= 3) t += "\n" + (tool == Tool.Cutout ? "Cut-out " : "Area ") + Scale.Area(Math.Abs(Geo.SignedArea(p)));
                         t += "\nDouble-click / Enter = finish · Backspace = undo point";
+                    }
+                    break;
+                case Tool.Polyline:
+                    if (p.Count >= 2)
+                        t = "Segment " + Scale.Len(Geo.Dist(p[p.Count - 2], p[p.Count - 1])) + "\nTotal " + Scale.Len(Geo.Perimeter(p, false)) +
+                            "\nDouble-click / Enter = finish · Backspace = undo point";
+                    break;
+                case Tool.Perimeter:
+                    if (p.Count >= 2)
+                        t = "Segment " + Scale.Len(Geo.Dist(p[p.Count - 2], p[p.Count - 1])) + "\nPerimeter " + Scale.Len(Geo.Perimeter(p, true)) +
+                            "\nDouble-click / Enter = finish · Backspace = undo point";
+                    break;
+                case Tool.Cloud:
+                case Tool.Stamp:
+                case Tool.Markup:
+                case Tool.Ocr:
+                    if (p.Count >= 2)
+                    {
+                        RectangleF r = Geo.Rect(p[0], p[1]);
+                        t = tool == Tool.Ocr ? "Release to copy the text inside" : Math.Round(r.Width) + " × " + Math.Round(r.Height) + " px";
                     }
                     break;
             }

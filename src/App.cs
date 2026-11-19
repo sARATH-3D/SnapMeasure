@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.0.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -86,6 +86,176 @@ namespace SnapMeasure
         }
 
         public static StringBuilder log = new StringBuilder();
+
+        /// <summary>Checks for the 1.1 features: line ends, quantities, cut-outs, counts, presets, notes, stitching, PDF, OCR, update check.</summary>
+        static void V11(Canvas cv, string dir, Action<string, string, string> check)
+        {
+            CultureInfo cc = CultureInfo.CurrentCulture, inv = CultureInfo.InvariantCulture;
+            List<Shape> saved = new List<Shape>(cv.Shapes);
+            ScaleInfo sc = cv.Scale;      // 100 px = 1 m
+
+            // line ends
+            Shape ar = Mk(cv, Tool.Arrow, 20, 20, 300, 20);
+            ar.HeadStart = (int)HeadStyle.Slash; ar.HeadEnd = (int)HeadStyle.Dot;
+            Shape dm = Mk(cv, Tool.Dimension, 20, 60, 300, 60, 160, 50);
+            dm.HeadStart = dm.HeadEnd = (int)HeadStyle.Tick;
+            List<Shape> rt = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { ar, dm }));
+            check("Line ends round-trip", rt[0].HeadStart + "/" + rt[0].HeadEnd + "|" + rt[1].HeadStart + "/" + rt[1].HeadEnd, "4/6|5/5");
+            List<Shape> old = ProjectFile.ShapesFromXml("<shapes><shape kind=\"Arrow\" stroke=\"FFFF0000\" fill=\"FFFFFF00\" heads=\"3\"><p x=\"1\" y=\"1\"/><p x=\"50\" y=\"1\"/></shape>" +
+                                                         "<shape kind=\"Dimension\" stroke=\"FFFF0000\" fill=\"FFFFFF00\"><p x=\"1\" y=\"1\"/><p x=\"50\" y=\"1\"/></shape></shapes>");
+            check("1.0 files: heads kept", old[0].HeadStart + "/" + old[0].HeadEnd + "|" + old[1].HeadStart + "/" + old[1].HeadEnd, "1/1|1/1");
+            // every end style draws without trouble
+            string bad = "";
+            using (Bitmap b = new Bitmap(200, 40))
+            using (Graphics g = Graphics.FromImage(b))
+                for (int st = 0; st <= 9; st++)
+                    try { Renderer.DrawHead(g, new PointF(100, 20), new PointF(1, 0), st, Color.Red, 3, 30, 16); } catch (Exception ex) { bad += st + ":" + ex.GetType().Name + " "; }
+            check("All 10 line ends draw", bad == "" ? "ok" : bad, "ok");
+
+            // path length, perimeter
+            Shape pl = Mk(cv, Tool.Polyline, 100, 380, 400, 380, 400, 780);
+            check("Path length (3 + 4 m)", sc.Len(Geo.Perimeter(pl.Pts, false)), (7.0).ToString("N2", cc) + " m");
+            Shape pm = Mk(cv, Tool.Perimeter, 600, 100, 700, 100, 700, 200, 600, 200);
+            check("Perimeter (4 × 1 m)", sc.Len(Geo.Perimeter(pm.Pts, true)), (4.0).ToString("N2", cc) + " m");
+            Dictionary<Shape, string> names = Renderer.Labels(cv.Shapes, sc);
+            check("Path / perimeter names", names[pl] + "|" + names[pm], "L1|P1");
+
+            // area with a cut-out: 4 × 2.5 m minus 1 × 1 m
+            Shape area = Mk(cv, Tool.Area, 100, 100, 500, 100, 500, 350, 100, 350);
+            area.Text = "Spandrel";
+            area.Holes = new List<List<PointF>> { new List<PointF> { new PointF(200, 150), new PointF(300, 150), new PointF(300, 250), new PointF(200, 250) } };
+            check("Net area with cut-out", sc.Area(Measure.NetArea(area)) + "|" + sc.Area(Measure.GrossArea(area)) + "|" + sc.Area(Measure.HolesArea(area)),
+                  (9.0).ToString("N2", cc) + " m²|" + (10.0).ToString("N2", cc) + " m²|" + (1.0).ToString("N2", cc) + " m²");
+            Shape moved = area.Clone(); moved.Offset(10, 5);
+            check("Cut-out moves with the area", P(moved.Holes[0][0]) + "|" + P(area.Holes[0][0]), "210.00,155.00|200.00,150.00");
+            List<Shape> rta = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { area }));
+            check("Cut-out round-trip", rta.Count + "|" + (rta[0].Holes != null ? rta[0].Holes.Count + "|" + sc.Area(Measure.NetArea(rta[0])) : "none"), "1|1|" + (9.0).ToString("N2", cc) + " m²");
+
+            // counts, labels and the Excel export
+            int numbers = Measure.Count(cv.Shapes, false);
+            sc.NumberLabel = "Blind panel";
+            List<MeasureRow> rows = Measure.Rows(cv.Shapes, sc, true);
+            MeasureRow cnt = rows.Find(r => r.Type == "Count");
+            check("Marker count row", cnt != null ? cnt.Name + "|" + cnt.Value + "|" + cnt.Label : "none", "Numbers|" + numbers + "|Blind panel");
+            string xl = Measure.ExcelText(cv.Shapes, sc);
+            string netTxt = (9.0).ToString("F2", cc), grossTxt = (10.0).ToString("F2", cc), cutTxt = (1.0).ToString("F2", cc);
+            check("Excel: header, net area, counts",
+                  xl.StartsWith("Name\tType\tValue\tUnit\tPerimeter\tGross\tCut-outs\tLabel").ToString() + "|" +
+                  xl.Contains("\tArea (net)\t" + netTxt + "\tm²\t") + "|" + xl.Contains("\t" + grossTxt + "\t" + cutTxt + "\tSpandrel") + "|" +
+                  xl.Contains("Numbers\tCount\t" + numbers + "\tnr\t\t\t\tBlind panel") + "|" + xl.Contains("L1\tPath length\t" + (7.0).ToString("F2", cc)),
+                  "True|True|True|True|True");
+            ScaleInfo sc3 = new ScaleInfo();
+            string p3 = Path.Combine(dir, "selftest_v11.snapm");
+            ProjectFile.Save(p3, cv.Image, cv.Shapes, sc);
+            using (Bitmap i3 = ProjectFile.Load(p3, new List<Shape>(), sc3)) { }
+            check("Series label saved", sc3.NumberLabel, "Blind panel");
+            sc.NumberLabel = "";
+
+            // non-printing note
+            Shape note = Mk(cv, Tool.Note, 820, 520);
+            note.Text = "Check bracket type with the engineer";
+            RectangleF nr = Renderer.NoteRect(note);
+            Point nc = Point.Round(Geo.Center(nr));
+            Color with, without;
+            using (Bitmap f1 = cv.Flatten(Color.White)) with = f1.GetPixel(nc.X, nc.Y);
+            cv.Shapes.Remove(note);
+            using (Bitmap f2 = cv.Flatten(Color.White)) without = f2.GetPixel(nc.X, nc.Y);
+            cv.Shapes.Add(note);
+            check("Note left out of saved pictures", (with.ToArgb() == without.ToArgb()).ToString(), "True");
+            check("Note in the Excel export", Measure.ExcelText(cv.Shapes, sc).Contains("Note\tNote\t\t\t\t\t\tCheck bracket type with the engineer").ToString(), "True");
+
+            // markup, cloud, stamp
+            Shape cl = Mk(cv, Tool.Cloud, 560, 300, 860, 460);
+            Shape stp = Mk(cv, Tool.Stamp, 600, 480, 830, 560); stp.Text = Canvas.StampText(1, "");
+            Shape mk1 = Mk(cv, Tool.Markup, 108, 515, 330, 545);
+            Shape mk2 = Mk(cv, Tool.Markup, 108, 465, 330, 500); mk2.Mode = (int)MarkupMode.StrikeOut;
+            check("Stamp text", stp.Text.Split('\n')[0] + "|" + stp.Text.Split('\n')[1].Length, "REVISE|10");
+            string err = "ok";
+            try { using (Bitmap f3 = cv.Flatten(null)) f3.Save(Path.Combine(dir, "selftest_v11.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
+            check("Cloud / stamp / markup / path draw", err, "ok");
+            check("Stamp and cloud hit test", ShapeOps.Hit(stp, new PointF(700, 520), 2) + "|" + ShapeOps.Hit(cl, new PointF(700, 380), 2), "True|True");
+
+            // drawing-scale presets
+            check("1:50, A1 landscape across 841 px", ScalePresets.Upp(ScalePresets.SheetWidthMm(1, true) / 841.0, 50, "m").ToString("G6", inv), "0.05");
+            check("1:100 at 300 dpi (mm per px)", ScalePresets.Upp(25.4 / 300, 100, "mm").ToString("F4", inv), "8.4667");
+            check("1:20 PDF at 150 dpi (m per px)", ScalePresets.Upp(25.4 / 150, 20, "m").ToString("G6", inv), "0.00338667");
+
+            // update check (offline parts)
+            check("Release tag", UpdateCheck.ParseTag("v1.1") + "|" + UpdateCheck.ParseTag("1.0.2") + "|" + (UpdateCheck.ParseTag("latest") == null), "1.1.0|1.0.2|True");
+            check("Newer?", UpdateCheck.IsNewer(new Version(1, 1, 0), new Version(1, 0, 1, 0)) + "|" + UpdateCheck.IsNewer(new Version(1, 1, 0), new Version(1, 1, 0, 0)), "True|False");
+            check("Tag from GitHub answer", UpdateCheck.TagFromJson("{\"url\":\"x\",\"tag_name\":\"v1.2\",\"name\":\"SnapMeasure 1.2\"}"), "v1.2");
+
+            // scrolling capture: frames cut from a tall page, with a sticky header, join back together
+            using (Bitmap page = new Bitmap(320, 1400, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(page))
+                {
+                    g.Clear(Color.White);
+                    Random rnd = new Random(7);
+                    for (int y = 0; y < 1400; y += 7)
+                        using (SolidBrush b = new SolidBrush(Color.FromArgb(rnd.Next(256), rnd.Next(256), rnd.Next(256)))) g.FillRectangle(b, rnd.Next(0, 200), y, rnd.Next(20, 120), 5);
+                }
+                List<Bitmap> frames = new List<Bitmap>();
+                foreach (int top in new int[] { 0, 260, 520, 780 })
+                {
+                    Bitmap fr = new Bitmap(320, 400, PixelFormat.Format32bppArgb);
+                    using (Graphics g = Graphics.FromImage(fr))
+                    {
+                        g.DrawImage(page, new Rectangle(0, 0, 320, 400), new Rectangle(0, top, 320, 400), GraphicsUnit.Pixel);
+                        g.FillRectangle(Brushes.SteelBlue, 0, 0, 320, 30);      // sticky header bar
+                    }
+                    frames.Add(fr);
+                }
+                using (Bitmap st = ScrollCapture.Stitch(frames))
+                {
+                    bool same = true;
+                    for (int y = 40; y < st.Height && same; y += 13)
+                        for (int x = 0; x < 320; x += 17)
+                            if (st.GetPixel(x, y).ToArgb() != page.GetPixel(x, y).ToArgb()) { same = false; break; }
+                    check("Scrolling capture stitch", st.Width + "x" + st.Height + "|" + same, "320x1180|True");
+                }
+                foreach (Bitmap fr in frames) fr.Dispose();
+            }
+
+            // PDF page import (Windows PDF renderer) – the PDF written by the export check above: 675 × 450 pt
+            string pdfPath = Path.Combine(dir, "export.pdf");
+            if (File.Exists(pdfPath))
+            {
+                string res;
+                try
+                {
+                    PdfImport.Info info = PdfImport.Read(pdfPath);
+                    double dpi = 72;
+                    SizeF mm;
+                    using (Bitmap pg = PdfImport.Render(pdfPath, 0, ref dpi, out mm))
+                        res = info.Pages + "|" + pg.Width + "x" + pg.Height + "|" + mm.Width.ToString("F1", inv) + "x" + mm.Height.ToString("F1", inv);
+                }
+                catch (Exception ex) { res = ex.GetType().Name + ": " + ex.Message; }
+                check("PDF page import", res, "1|675x450|238.1x158.8");
+            }
+
+            // OCR (needs a Windows text-recognition language – there is one on every normal install)
+            if (TextRecognition.Available)
+                using (Bitmap tb = new Bitmap(700, 120, PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(tb))
+                    {
+                        g.Clear(Color.White);
+                        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                        g.DrawString("Blind panel BP-14 RAL 7016", new Font("Segoe UI", 34, FontStyle.Regular, GraphicsUnit.Pixel), Brushes.Black, 20, 30);
+                    }
+                    string t;
+                    int words;
+                    try { TextRecognition.Result r = TextRecognition.Read(tb, null); t = r.Text; words = r.Boxes.Count; }
+                    catch (Exception ex) { t = "error " + ex.Message; words = 0; }
+                    check("OCR reads text", (t.Contains("Blind panel") && t.Contains("7016")) + "|" + (words >= 4), "True|True");
+                }
+            else check("OCR reads text", "no OCR language installed", "no OCR language installed");
+
+            cv.Shapes.Clear();
+            cv.Shapes.AddRange(saved);
+            cv.Selected = null;
+        }
 
         static string P(PointF p) { return p.X.ToString("F2", CultureInfo.InvariantCulture) + "," + p.Y.ToString("F2", CultureInfo.InvariantCulture); }
 
@@ -321,7 +491,7 @@ namespace SnapMeasure
                     "</shapes>";
                 List<Shape> got = ProjectFile.ShapesFromXml(bad);
                 check("Damaged shapes skipped, rest clamped", got.Count + "|" + (got.Count > 0 ? got[0].Width + "|" + got[0].Heads + "|" + got[0].Pts[0].X : ""),
-                      "1|200|3|1000000");
+                      "1|200|1|1000000");
                 string err;
                 try { ProjectFile.CheckImageSize(40000, 10); err = "accepted"; } catch (InvalidDataException) { err = "rejected"; }
                 check("Oversized image rejected", err, "rejected");
@@ -380,6 +550,8 @@ namespace SnapMeasure
                 string pdf = File.ReadAllText(bx + ".pdf", Encoding.ASCII);
                 check("PDF export", (pdf.StartsWith("%PDF-1.4") && pdf.Contains("/MediaBox [0 0 675 450]") && pdf.TrimEnd().EndsWith("%%EOF")).ToString(), "True");
             }
+
+            V11(cv, dir, check);
 
             // ---- adjustable crop ----
             {
@@ -574,11 +746,68 @@ namespace SnapMeasure
             f.Activate();
         }
 
+        /// <summary>Opens one page of a PDF (Windows' own PDF renderer). The page's paper size makes drawing scales exact.</summary>
+        static Form LoadPdf(string path)
+        {
+            PdfImport.Info info = PdfImport.Read(path);
+            if (info.Pages < 1) throw new InvalidDataException("The PDF has no pages.");
+            int page, dpi;
+            if (!Dialogs.PdfPage(null, path, info.Pages, out page, out dpi)) return null;
+            double useDpi = dpi;
+            SizeF mm;
+            Bitmap b = PdfImport.Render(path, page - 1, ref useDpi, out mm);
+            string title = Path.GetFileNameWithoutExtension(path) + (info.Pages > 1 ? " – page " + page : "");
+            EditorForm f = new EditorForm(b, title);
+            f.PaperMmPerPx = 25.4 / useDpi;
+            return f;
+        }
+
+        /// <summary>Scrolling capture: pick the area, then SnapMeasure scrolls it and joins the pieces.</summary>
+        public static void CaptureScrolling()
+        {
+            Guard(() =>
+            {
+                Rectangle r;
+                string title;
+                Bitmap sel = ScreenCapture.SelectRegion(out r, out title);
+                if (sel == null) return;
+                sel.Dispose();
+                Thread.Sleep(150);
+                Bitmap b = ScrollCapture.Capture(r);
+                if (b == null) return;
+                Deliver(b, Named(title, "Scrolling " + b.Width + "×" + b.Height));
+            });
+        }
+
+        /// <summary>Capture text: pick an area of the screen, the text in it goes to the clipboard. Returns a status message.</summary>
+        public static string CaptureText()
+        {
+            string msg = null;
+            Guard(() =>
+            {
+                Rectangle r;
+                string title;
+                Bitmap b = ScreenCapture.SelectRegion(out r, out title);
+                if (b == null) return;
+                using (b)
+                {
+                    if (!TextRecognition.Available) { msg = "Windows has no text-recognition language installed (Settings → Time & language → Language)."; return; }
+                    string t = TextRecognition.Read(b, null).Text;
+                    if (t.Trim().Length == 0) { msg = "No text found in that area."; return; }
+                    Clipboard.SetText(t);
+                    string one = t.Replace("\r", "").Replace("\n", " · ");
+                    msg = "Text copied: " + (one.Length > 120 ? one.Substring(0, 120) + "…" : one);
+                }
+            });
+            return msg;
+        }
+
         public static Form LoadEditor(string path)
         {
             try
             {
                 if (Path.GetExtension(path).ToLowerInvariant() == ".snapm") return EditorForm.FromProject(path);
+                if (Path.GetExtension(path).ToLowerInvariant() == ".pdf") return LoadPdf(path);
                 Bitmap b;
                 using (FileStream fs = File.OpenRead(path))
                 using (Image tmp = Image.FromStream(fs, false, true))
@@ -653,9 +882,11 @@ namespace SnapMeasure
             Item(menu, "Capture all screens", "", () => App.CaptureAllScreens()).Image = Icons.Cmd("allscreens", 16);
             Item(menu, "Capture last region again", "Shift+PrtSc", () => App.CaptureLastRegion()).Image = Icons.Cmd("lastregion", 16);
             Item(menu, "Capture region in 3 seconds", "", () => App.Later(3000, App.CaptureRegion)).Image = Icons.Cmd("timer", 16);
+            Item(menu, "Scrolling capture (long page)", "Ctrl+Shift+5", () => App.CaptureScrolling()).Image = Icons.Cmd("scroll", 16);
+            Item(menu, "Capture text (OCR) to clipboard", "Ctrl+Shift+6", CaptureTextNow).Image = Icons.Cmd("textcap", 16);
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "New blank canvas…", "", () => App.NewBlankCanvas(null), false).Image = Icons.Cmd("blank", 16);
-            Item(menu, "Open image or project…", "", OpenDialog, false).Image = Icons.Cmd("open", 16);
+            Item(menu, "Open image, PDF or project…", "", OpenDialog, false).Image = Icons.Cmd("open", 16);
             Item(menu, "Open image from clipboard", "", () => App.OpenFromClipboard(), false).Image = Icons.Cmd("clipboard", 16);
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "On-screen ruler", "", Overlays.ShowRuler, false).Image = Icons.Cmd("ruler", 16);
@@ -684,6 +915,8 @@ namespace SnapMeasure
             Reg(6, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D2, "Ctrl+Shift+2", App.CaptureActiveWindow);
             Reg(7, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D3, "Ctrl+Shift+3", App.CaptureScreenUnderCursor);
             Reg(8, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D4, "Ctrl+Shift+4", App.CaptureLastRegion);
+            Reg(9, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D5, "Ctrl+Shift+5", App.CaptureScrolling);
+            Reg(10, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D6, "Ctrl+Shift+6", CaptureTextNow);
 
             string msg = failedKeys.Count == 0
                 ? "Press Print Screen (or Ctrl+Shift+1) to capture. Right-click this icon for more."
@@ -708,11 +941,17 @@ namespace SnapMeasure
             if (hk.Register(id, mods, key)) okKeys.Add(name); else failedKeys.Add(name);
         }
 
+        void CaptureTextNow()
+        {
+            string msg = App.CaptureText();
+            if (!string.IsNullOrEmpty(msg)) ni.ShowBalloonTip(4000, "SnapMeasure – text", msg, ToolTipIcon.Info);
+        }
+
         void OpenDialog()
         {
             using (OpenFileDialog d = new OpenFileDialog())
             {
-                d.Filter = "Images and projects|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.snapm|All files|*.*";
+                d.Filter = "Images, PDF and projects|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.pdf;*.snapm|All files|*.*";
                 if (d.ShowDialog() == DialogResult.OK) App.OpenFile(d.FileName);
             }
         }
@@ -755,14 +994,21 @@ namespace SnapMeasure
             sb.AppendLine("  Alt+PrtSc / Ctrl+Shift+2\tActive window");
             sb.AppendLine("  Ctrl+PrtSc / Ctrl+Shift+3\tScreen under mouse");
             sb.AppendLine("  Shift+PrtSc / Ctrl+Shift+4\tLast region again");
+            sb.AppendLine("  Ctrl+Shift+5\t\t\tScrolling capture (Esc = stop)");
+            sb.AppendLine("  Ctrl+Shift+6\t\t\tCapture text (OCR) to the clipboard");
             if (!string.IsNullOrEmpty(failed)) sb.AppendLine("  Not available (used by another app): " + failed);
             sb.AppendLine();
-            sb.AppendLine("EDITOR TOOLS");
-            sb.AppendLine("  V Select   D Dimension   M Area   K Calibrate scale");
-            sb.AppendLine("  P Polygon   H Highlight   R Rectangle   E Ellipse   L Line");
-            sb.AppendLine("  A Arrow   F Freehand   T Text   S Speech bubble   G Angle");
-            sb.AppendLine("  N Number marker   Shift+N Letter marker");
-            sb.AppendLine("  B Pixelate   C Crop (adjustable; Delete = remove crop)");
+            sb.AppendLine("MEASURE & QUANTIFY");
+            sb.AppendLine("  D Dimension   M Area   X Cut-out (opening in an area)   W Path length");
+            sb.AppendLine("  Q Perimeter   G Angle   K Calibrate scale   N / Shift+N count markers");
+            sb.AppendLine("  Double-click a measurement or marker = label it · panel → Copy measurements (Excel)");
+            sb.AppendLine();
+            sb.AppendLine("MARK UP");
+            sb.AppendLine("  P Polygon   H Highlight   Y Text markup (underline / strike / highlight)");
+            sb.AppendLine("  R Rectangle   E Ellipse   U Revision cloud   L Line   A Arrow   F Freehand");
+            sb.AppendLine("  T Text   S Speech bubble   Z Stamp   O Note (not printed)");
+            sb.AppendLine("  Right-click a line / arrow / dimension = start & end heads");
+            sb.AppendLine("  Shift+T Copy text from an area (OCR)   B Pixelate   C Crop (Delete = remove)");
             sb.AppendLine();
             sb.AppendLine("  Ctrl+A select all   Ctrl+C/X/V copy, cut, paste shapes   Ctrl+D duplicate");
             sb.AppendLine("  Ctrl+] / Ctrl+[ forward / backward   (+Shift = front / back)   Ctrl+R rulers");
@@ -1303,6 +1549,185 @@ namespace SnapMeasure
                 return false;
             }
         }
+
+        /// <summary>
+        /// Drawing-scale presets: "1:50 on an A1 sheet", "1:100 at 300 dpi", the exact size of a PDF page,
+        /// or a scale saved earlier. imgWidth = picture width in px. Returns true if sc was changed.
+        /// </summary>
+        public static bool ScalePreset(IWin32Window owner, ScaleInfo sc, int imgWidth, double? pdfMmPerPx)
+        {
+            float k = K(owner);
+            Func<float, int> S = v => (int)Math.Round(v * k);
+            using (Form f = Base("Drawing scale", k, 470, 330))
+            {
+                Func<string, int, int, Label> lab = (t, x, y) =>
+                {
+                    Label l = new Label(); l.Text = t; l.AutoSize = true; l.Location = new Point(S(x), S(y + 4)); f.Controls.Add(l); return l;
+                };
+                lab("Drawing scale   1 :", 12, 12);
+                ComboBox ratio = new ComboBox();
+                foreach (int r in ScalePresets.Ratios) ratio.Items.Add(r.ToString(CultureInfo.InvariantCulture));
+                ratio.SetBounds(S(140), S(12), S(90), S(26));
+                ratio.Text = Settings.Get("PresetRatio", "50");
+                lab("Units", 250, 12);
+                ComboBox unit = new ComboBox(); unit.DropDownStyle = ComboBoxStyle.DropDownList;
+                unit.Items.AddRange(new string[] { "mm", "cm", "m", "in", "ft" });
+                unit.SetBounds(S(300), S(12), S(70), S(26));
+                unit.SelectedItem = Settings.Get("PresetUnit", "m");
+                if (unit.SelectedIndex < 0) unit.SelectedIndex = 2;
+
+                RadioButton rPdf = new RadioButton(), rDpi = new RadioButton(), rSheet = new RadioButton();
+                rPdf.Text = "PDF page (exact – SnapMeasure knows the paper size)";
+                rDpi.Text = "Picture resolution";
+                rSheet.Text = "The picture shows the whole sheet width of";
+                rPdf.AutoSize = rDpi.AutoSize = rSheet.AutoSize = true;
+                rPdf.Location = new Point(S(12), S(54));
+                rDpi.Location = new Point(S(12), S(84));
+                rSheet.Location = new Point(S(12), S(114));
+                rPdf.Enabled = pdfMmPerPx.HasValue;
+                NumericUpDown dpi = new NumericUpDown(); dpi.Minimum = 10; dpi.Maximum = 2400;
+                dpi.Value = Math.Max(10, Math.Min(2400, Settings.GetInt("PresetDpi", 300)));
+                dpi.SetBounds(S(160), S(82), S(70), S(26));
+                lab("dpi", 236, 84);
+                ComboBox sheet = new ComboBox(); sheet.DropDownStyle = ComboBoxStyle.DropDownList;
+                sheet.Items.AddRange(ScalePresets.Sheets);
+                sheet.SelectedIndex = Math.Max(0, Math.Min(4, Settings.GetInt("PresetSheet", 1)));
+                sheet.SetBounds(S(300), S(112), S(56), S(26));
+                ComboBox orient = new ComboBox(); orient.DropDownStyle = ComboBoxStyle.DropDownList;
+                orient.Items.AddRange(new string[] { "landscape", "portrait" });
+                orient.SelectedIndex = Settings.GetInt("PresetPortrait", 0) == 1 ? 1 : 0;
+                orient.SetBounds(S(362), S(112), S(96), S(26));
+                if (pdfMmPerPx.HasValue) rPdf.Checked = true;
+                else if (Settings.GetInt("PresetMode", 1) == 2) rSheet.Checked = true;
+                else rDpi.Checked = true;
+
+                Label result = new Label();
+                result.AutoSize = true;
+                result.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
+                result.ForeColor = Color.FromArgb(0, 90, 170);
+                result.Location = new Point(S(12), S(150));
+
+                // saved scales
+                Label sep = new Label(); sep.BorderStyle = BorderStyle.Fixed3D; sep.SetBounds(S(12), S(182), S(446), 2);
+                lab("Saved scales", 12, 194);
+                ComboBox saved = new ComboBox(); saved.DropDownStyle = ComboBoxStyle.DropDownList;
+                saved.SetBounds(S(110), S(194), S(200), S(26));
+                Button bUse = new Button(), bSave = new Button(), bDel = new Button();
+                bUse.Text = "Use"; bSave.Text = "Save current scale as…"; bDel.Text = "Delete";
+                bUse.SetBounds(S(316), S(193), S(64), S(28));
+                bDel.SetBounds(S(386), S(193), S(72), S(28));
+                bSave.SetBounds(S(110), S(228), S(200), S(28));
+                List<ScalePresets.Saved> list = ScalePresets.Load();
+                Action fill = () =>
+                {
+                    saved.Items.Clear();
+                    foreach (ScalePresets.Saved p in list) saved.Items.Add(p.Name + "   (1 px = " + p.Upp.ToString("G5", CultureInfo.CurrentCulture) + " " + p.Unit + ")");
+                    if (saved.Items.Count > 0) saved.SelectedIndex = 0;
+                    bUse.Enabled = bDel.Enabled = saved.Items.Count > 0;
+                };
+                fill();
+
+                double upp = 0;
+                Func<bool> compute = () =>
+                {
+                    double r;
+                    if (!double.TryParse(ratio.Text.Replace("1:", "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out r) || r <= 0 || r > 1e6)
+                    { result.Text = "Type the scale, e.g. 50 for 1:50"; return false; }
+                    double mmPerPx;
+                    if (rPdf.Checked && pdfMmPerPx.HasValue) mmPerPx = pdfMmPerPx.Value;
+                    else if (rDpi.Checked) mmPerPx = 25.4 / (double)dpi.Value;
+                    else mmPerPx = ScalePresets.SheetWidthMm(sheet.SelectedIndex, orient.SelectedIndex == 0) / Math.Max(1, imgWidth);
+                    string u = (string)unit.SelectedItem;
+                    upp = ScalePresets.Upp(mmPerPx, r, u);
+                    result.Text = "1:" + r.ToString("G", CultureInfo.InvariantCulture) + "  →  1 pixel = " + upp.ToString("G5", CultureInfo.CurrentCulture) + " " + u +
+                                  "   (picture width = " + (imgWidth * upp).ToString("N2", CultureInfo.CurrentCulture) + " " + u + ")";
+                    return true;
+                };
+                EventHandler re = (s, e) => compute();
+                ratio.TextChanged += re; unit.SelectedIndexChanged += re; dpi.ValueChanged += re; sheet.SelectedIndexChanged += re; orient.SelectedIndexChanged += re;
+                rPdf.CheckedChanged += re; rDpi.CheckedChanged += re; rSheet.CheckedChanged += re;
+                compute();
+
+                bool changed = false;
+                bUse.Click += (s, e) =>
+                {
+                    if (saved.SelectedIndex < 0) return;
+                    ScalePresets.Saved p = list[saved.SelectedIndex];
+                    sc.Unit = p.Unit; sc.Upp = p.Upp;
+                    changed = true;
+                    f.DialogResult = DialogResult.Cancel;   // done – the scale is set already
+                    f.Close();
+                };
+                bDel.Click += (s, e) =>
+                {
+                    if (saved.SelectedIndex < 0) return;
+                    list.RemoveAt(saved.SelectedIndex);
+                    ScalePresets.Store(list);
+                    fill();
+                };
+                bSave.Click += (s, e) =>
+                {
+                    if (!sc.Calibrated) { MessageBox.Show(f, "Set a scale first (calibrate, or pick a drawing scale above and press OK).", "Saved scales"); return; }
+                    string n = Ask(f, "Name for this scale (e.g. Project X – 1:20)", "", false);
+                    if (string.IsNullOrEmpty(n) || n.Trim().Length == 0) return;
+                    ScalePresets.Saved p = new ScalePresets.Saved();
+                    p.Name = n.Trim(); p.Unit = sc.Unit; p.Upp = sc.Upp;
+                    list.RemoveAll(x => x.Name == p.Name);
+                    list.Add(p);
+                    ScalePresets.Store(list);
+                    fill();
+                };
+
+                foreach (Control c in new Control[] { ratio, unit, rPdf, rDpi, rSheet, dpi, sheet, orient, result, sep, saved, bUse, bDel, bSave }) f.Controls.Add(c);
+                Buttons(f, k);
+                f.Shown += (s, e) => { ratio.Focus(); ratio.SelectAll(); };
+                while (f.ShowDialog(owner) == DialogResult.OK)
+                {
+                    if (!compute()) continue;
+                    sc.Unit = (string)unit.SelectedItem;
+                    sc.Upp = upp;
+                    Settings.Set("PresetRatio", ratio.Text.Trim());
+                    Settings.Set("PresetUnit", sc.Unit);
+                    Settings.Set("PresetDpi", ((int)dpi.Value).ToString(CultureInfo.InvariantCulture));
+                    Settings.Set("PresetSheet", sheet.SelectedIndex.ToString(CultureInfo.InvariantCulture));
+                    Settings.Set("PresetPortrait", orient.SelectedIndex.ToString(CultureInfo.InvariantCulture));
+                    Settings.Set("PresetMode", rSheet.Checked ? "2" : "1");
+                    return true;
+                }
+                return changed;
+            }
+        }
+
+        /// <summary>Which page of a PDF to open, and how sharp. Returns false if cancelled.</summary>
+        public static bool PdfPage(IWin32Window owner, string file, int pages, out int page, out int dpi)
+        {
+            page = 1; dpi = 150;
+            float k = K(owner);
+            Func<float, int> S = v => (int)Math.Round(v * k);
+            using (Form f = Base("Open PDF page", k, 380, 150))
+            {
+                Label l1 = new Label(); l1.AutoSize = true; l1.UseMnemonic = false;
+                l1.Text = System.IO.Path.GetFileName(file) + "  –  " + pages + " page" + (pages == 1 ? "" : "s");
+                l1.MaximumSize = new Size(S(356), 0);
+                l1.Location = new Point(S(12), S(12));
+                Label l2 = new Label(); l2.AutoSize = true; l2.Text = "Page"; l2.Location = new Point(S(12), S(48));
+                NumericUpDown np = new NumericUpDown(); np.Minimum = 1; np.Maximum = Math.Max(1, pages); np.Value = 1;
+                np.SetBounds(S(70), S(46), S(70), S(26));
+                Label l3 = new Label(); l3.AutoSize = true; l3.Text = "Sharpness"; l3.Location = new Point(S(160), S(48));
+                ComboBox q = new ComboBox(); q.DropDownStyle = ComboBoxStyle.DropDownList;
+                int[] dpis = { 100, 150, 200, 300 };
+                q.Items.AddRange(new string[] { "100 dpi (fast)", "150 dpi", "200 dpi", "300 dpi (sharp)" });
+                q.SelectedIndex = Math.Max(0, Array.IndexOf(dpis, Settings.GetInt("PdfDpi", 150)));
+                q.SetBounds(S(236), S(46), S(130), S(26));
+                f.Controls.Add(l1); f.Controls.Add(l2); f.Controls.Add(np); f.Controls.Add(l3); f.Controls.Add(q);
+                Buttons(f, k);
+                if (f.ShowDialog(owner) != DialogResult.OK) return false;
+                page = (int)np.Value;
+                dpi = dpis[Math.Max(0, q.SelectedIndex)];
+                Settings.Set("PdfDpi", dpi.ToString(CultureInfo.InvariantCulture));
+                return true;
+            }
+        }
     }
 
     internal static class Icons
@@ -1448,6 +1873,66 @@ namespace SnapMeasure
                                 using (Pen pp = new Pen(ink, 1.8f)) { pp.LineJoin = LineJoin.Round; g.DrawPath(pp, gp); }
                             }
                             using (Pen pp = new Pen(ink, 1.6f)) { g.DrawLine(pp, 8, 10, 24, 10); g.DrawLine(pp, 8, 15, 19, 15); }
+                            break;
+                        case Tool.Polyline:
+                            {
+                                Color purple = Color.FromArgb(130, 60, 200);
+                                PointF[] a = { new PointF(4, 24), new PointF(12, 10), new PointF(20, 20), new PointF(28, 6) };
+                                using (Pen pp = new Pen(purple, 2.4f)) { pp.LineJoin = LineJoin.Round; pp.StartCap = pp.EndCap = LineCap.Round; g.DrawLines(pp, a); }
+                                using (SolidBrush pb2 = new SolidBrush(purple)) foreach (PointF q in a) g.FillEllipse(pb2, q.X - 2.6f, q.Y - 2.6f, 5.2f, 5.2f);
+                                break;
+                            }
+                        case Tool.Perimeter:
+                            {
+                                Color green = Color.FromArgb(30, 140, 60);
+                                PointF[] a = { new PointF(5, 9), new PointF(24, 5), new PointF(28, 22), new PointF(9, 27) };
+                                using (Pen pp = new Pen(green, 2.4f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
+                                using (SolidBrush gb = new SolidBrush(green))
+                                    g.DrawString("P", new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel), gb, new RectangleF(0, 1, 33, 32), sf);
+                                break;
+                            }
+                        case Tool.Cutout:
+                            {
+                                using (SolidBrush f = new SolidBrush(Color.FromArgb(70, 0, 110, 210))) g.FillRectangle(f, 3, 4, 26, 24);
+                                g.DrawRectangle(pb, 3, 4, 26, 24);
+                                g.FillRectangle(Brushes.White, 11, 11, 11, 10);
+                                using (Pen dp = new Pen(red, 1.8f)) { dp.DashStyle = DashStyle.Dash; g.DrawRectangle(dp, 11, 11, 11, 10); }
+                                break;
+                            }
+                        case Tool.Cloud:
+                            using (GraphicsPath gp = Renderer.CloudPath(new RectangleF(6, 8, 20, 16), 0.2f))
+                            using (Pen pp = new Pen(red, 2f)) { pp.LineJoin = LineJoin.Round; g.DrawPath(pp, gp); }
+                            break;
+                        case Tool.Stamp:
+                            {
+                                Color sg = Color.FromArgb(30, 140, 60);
+                                using (GraphicsPath gp = Renderer.RoundRect(new RectangleF(2, 8, 28, 16), 3))
+                                using (Pen pp = new Pen(sg, 2f)) g.DrawPath(pp, gp);
+                                using (SolidBrush sb = new SolidBrush(sg))
+                                    g.DrawString("OK", new Font("Segoe UI", 10, FontStyle.Bold, GraphicsUnit.Pixel), sb, new RectangleF(2, 8, 28, 16.5f), sf);
+                                break;
+                            }
+                        case Tool.Note:
+                            {
+                                PointF[] body = { new PointF(5, 4), new PointF(27, 4), new PointF(27, 20), new PointF(20, 28), new PointF(5, 28) };
+                                using (SolidBrush yb = new SolidBrush(Color.FromArgb(255, 214, 64))) g.FillPolygon(yb, body);
+                                using (Pen pp = new Pen(Color.FromArgb(150, 110, 0), 1.6f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, body); g.DrawLines(pp, new PointF[] { new PointF(27, 20), new PointF(20, 20), new PointF(20, 28) }); }
+                                using (Pen pp = new Pen(Color.FromArgb(150, 110, 0), 1.4f)) { g.DrawLine(pp, 9, 11, 23, 11); g.DrawLine(pp, 9, 16, 21, 16); }
+                                break;
+                            }
+                        case Tool.Markup:
+                            g.DrawString("ab", new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel), bi, new RectangleF(0, -2, 32, 28), sf);
+                            using (Pen up = new Pen(red, 2.4f)) g.DrawLine(up, 5, 25, 27, 25);
+                            break;
+                        case Tool.Ocr:
+                            using (Pen cp = new Pen(blue, 2.2f))
+                            {
+                                g.DrawLines(cp, new PointF[] { new PointF(3, 10), new PointF(3, 3), new PointF(10, 3) });
+                                g.DrawLines(cp, new PointF[] { new PointF(22, 3), new PointF(29, 3), new PointF(29, 10) });
+                                g.DrawLines(cp, new PointF[] { new PointF(29, 22), new PointF(29, 29), new PointF(22, 29) });
+                                g.DrawLines(cp, new PointF[] { new PointF(10, 29), new PointF(3, 29), new PointF(3, 22) });
+                            }
+                            g.DrawString("T", new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel), bi, new RectangleF(0, 0, 32, 32), sf);
                             break;
                     }
                 }
@@ -1674,8 +2159,67 @@ namespace SnapMeasure
                                 }
                                 break;
                             }
+                        case "ocr":         // text lines inside scan corners
+                            using (Pen cp = new Pen(blue, 1.4f))
+                            {
+                                g.DrawLines(cp, new PointF[] { new PointF(1, 5), new PointF(1, 1), new PointF(5, 1) });
+                                g.DrawLines(cp, new PointF[] { new PointF(11, 1), new PointF(15, 1), new PointF(15, 5) });
+                                g.DrawLines(cp, new PointF[] { new PointF(15, 11), new PointF(15, 15), new PointF(11, 15) });
+                                g.DrawLines(cp, new PointF[] { new PointF(5, 15), new PointF(1, 15), new PointF(1, 11) });
+                            }
+                            g.FillRectangle(bi, 4, 4.5f, 8, 1.6f); g.FillRectangle(bi, 4, 7.5f, 8, 1.6f); g.FillRectangle(bi, 4, 10.5f, 5, 1.6f);
+                            break;
+                        case "scroll":      // long page with a down arrow
+                            g.FillRectangle(Brushes.White, 2.5f, 0.5f, 8, 15); g.DrawRectangle(p, 2.5f, 0.5f, 8, 15);
+                            using (Pen ap = new Pen(blue, 1.6f)) { ap.StartCap = ap.EndCap = LineCap.Round; g.DrawLine(ap, 13.5f, 3, 13.5f, 12); g.DrawLine(ap, 11.5f, 10, 13.5f, 12.5f); g.DrawLine(ap, 15.5f, 10, 13.5f, 12.5f); }
+                            break;
+                        case "textcap":     // capture frame with "T"
+                            using (Pen d = new Pen(ink, 1.2f)) { d.DashStyle = DashStyle.Dash; g.DrawRectangle(d, 1.5f, 1.5f, 13, 13); }
+                            using (Font f = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel))
+                            using (StringFormat sf = new StringFormat())
+                            {
+                                sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
+                                g.DrawString("T", f, bb, new RectangleF(1.5f, 1.5f, 13, 13.5f), sf);
+                            }
+                            break;
+                        case "scale":       // 1:50 ruler
+                            using (SolidBrush f = new SolidBrush(Color.FromArgb(255, 225, 120))) g.FillRectangle(f, 1, 8, 14, 6);
+                            g.DrawRectangle(p, 1, 8, 14, 6);
+                            for (int i = 0; i < 5; i++) g.DrawLine(p, 3 + i * 2.6f, 8, 3 + i * 2.6f, i % 2 == 0 ? 11 : 10);
+                            using (Font f = new Font("Segoe UI", 6.5f, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("1:50", f, bb, -0.5f, -0.5f);
+                            break;
                     }
                 }
+            }
+            return b;
+        }
+
+        public static readonly string[] HeadNames = { "None", "Arrow (filled)", "Arrow (open)", "Arrow (hollow)", "Slash", "Tick", "Dot", "Circle", "Diamond", "Square" };
+
+        /// <summary>A short line with the given end style, for menus. atEnd = the head is on the right.</summary>
+        public static Bitmap HeadPreview(int style, bool atEnd, int size) { return HeadPreviewWide(style, atEnd, size, size); }
+
+        public static Bitmap HeadPreviewWide(int style, bool atEnd, int w, int h)
+        {
+            Bitmap b = new Bitmap(Math.Max(4, w), Math.Max(4, h), PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(b))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                float lw = Math.Max(1.2f, h / 12f);
+                float pad = h * 0.32f, y = h / 2f;
+                PointF a = new PointF(pad, y), e = new PointF(w - pad, y);
+                PointF tip = atEnd ? e : a, other = atEnd ? a : e;
+                float L = Geo.Dist(a, e);
+                PointF u = new PointF((tip.X - other.X) / L, 0);
+                float hl = h * 0.42f, hw = hl * 0.55f;
+                float back = Renderer.HeadBack(style, lw, hl, hw);
+                Color col = Color.FromArgb(40, 40, 45);
+                using (Pen p = new Pen(col, lw))
+                {
+                    p.StartCap = p.EndCap = LineCap.Flat;
+                    g.DrawLine(p, other, new PointF(tip.X - u.X * back, tip.Y));
+                }
+                Renderer.DrawHead(g, tip, u, style, col, lw, hl, hw);
             }
             return b;
         }

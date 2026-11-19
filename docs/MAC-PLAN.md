@@ -4,10 +4,10 @@ The plan for bringing SnapMeasure to macOS (and later moving Windows onto the sa
 **If you are an AI assistant picking this up:** read this whole file first, then start at *Phase 1*.
 The owner is new to git: explain every git/GitHub step plainly, one click at a time.
 
-## Where things stand (Windows 1.0)
-- `main` = **SnapMeasure 1.0** for Windows, released on the [Releases](../../releases) page. **Keep `main` and the 1.0 release untouched** until 2.0 is ready.
+## Where things stand (Windows 1.1)
+- `main` = **SnapMeasure 1.1** for Windows, released on the [Releases](../../releases) page. **Keep `main` and the 1.0 release untouched** until 2.0 is ready.
 - Built with C# 5 / Windows Forms on .NET Framework 4 (`build.cmd`, no SDK), a single portable `SnapMeasure.exe`.
-- `SnapMeasure.exe --selftest <folder>` runs 68 built-in checks. They are the reference behaviour for the port.
+- `SnapMeasure.exe --selftest <folder>` runs 94 built-in checks. They are the reference behaviour for the port.
 
 | File | What it holds | Reuse on Mac |
 |---|---|---|
@@ -41,7 +41,7 @@ The owner is new to git: explain every git/GitHub step plainly, one click at a t
 ### Phase 2 – Cross-platform editor (Avalonia)
 Rebuild the editor window with the same layout as 1.0:
 - tool bar on the left, style bar above the canvas, scale & measurements panel on the right (toggle), status bar with the version;
-- all tools: select / multi-select, dimension, area, angle, calibrate, polygon, highlight (4 modes), rectangle, ellipse, line/arrow (heads none/end/start/both), freehand, text (bold/italic/align), speech bubble, number + letter markers, pixelate, adjustable crop;
+- all tools: select / multi-select, dimension, area with cut-outs, path length, perimeter, angle, calibrate, scale presets, counts with labels, polygon, highlight (4 modes), rectangle, ellipse, line/arrow (heads none/end/start/both), freehand, text (bold/italic/align), speech bubble, number + letter markers, revision cloud, stamps, text markup, notes (not printed), 10 line ends, pixelate, adjustable crop;
 - rulers and guides, undo/redo, copy/paste of shapes and pictures, draw order;
 - rotate / mirror / effects;
 - save: PNG, JPG, BMP, GIF, TIFF, PDF, ICO, plus `.snapm`.
