@@ -11,11 +11,48 @@ namespace SnapMeasure
     {
         public static Rectangle VirtualBounds { get { return SystemInformation.VirtualScreen; } }
 
+        /// <summary>Settings → Capture → "Capture the mouse pointer".</summary>
+        public static bool IncludeCursor;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct CURSORINFO { public int cbSize; public int flags; public IntPtr hCursor; public Point pt; }
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct ICONINFO { public bool fIcon; public int xHotspot; public int yHotspot; public IntPtr hbmMask; public IntPtr hbmColor; }
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO ci);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetIconInfo(IntPtr h, out ICONINFO ii);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr h, int w, int hh, int step, IntPtr brush, int flags);
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
+
+        static void DrawCursor(Graphics g, Rectangle r)
+        {
+            try
+            {
+                CURSORINFO ci = new CURSORINFO();
+                ci.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(CURSORINFO));
+                if (!GetCursorInfo(ref ci) || ci.flags == 0 || ci.hCursor == IntPtr.Zero) return;
+                ICONINFO ii;
+                int hx = 0, hy = 0;
+                if (GetIconInfo(ci.hCursor, out ii))
+                {
+                    hx = ii.xHotspot; hy = ii.yHotspot;
+                    if (ii.hbmMask != IntPtr.Zero) DeleteObject(ii.hbmMask);
+                    if (ii.hbmColor != IntPtr.Zero) DeleteObject(ii.hbmColor);
+                }
+                IntPtr hdc = g.GetHdc();
+                try { DrawIconEx(hdc, ci.pt.X - hx - r.X, ci.pt.Y - hy - r.Y, ci.hCursor, 0, 0, 0, IntPtr.Zero, 3); }   // DI_NORMAL
+                finally { g.ReleaseHdc(hdc); }
+            }
+            catch (Exception) { }
+        }
+
         public static Bitmap Grab(Rectangle r)
         {
             Bitmap bmp = new Bitmap(Math.Max(1, r.Width), Math.Max(1, r.Height), PixelFormat.Format24bppRgb);
             using (Graphics g = Graphics.FromImage(bmp))
+            {
                 g.CopyFromScreen(r.Left, r.Top, 0, 0, r.Size, CopyPixelOperation.SourceCopy);
+                if (IncludeCursor) DrawCursor(g, r);
+            }
             return bmp;
         }
 
@@ -212,8 +249,10 @@ namespace SnapMeasure
                 using (SolidBrush b = new SolidBrush(Color.FromArgb(225, 20, 20, 20))) g.FillRectangle(b, hintRect);
                 TextRenderer.DrawText(g, Hint, small, hintRect, Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
             }
-            DrawMag(g);
+            if (showMag) DrawMag(g);
         }
+
+        readonly bool showMag = Settings.GetBool("Magnifier", true);
 
         void DrawMag(Graphics g)
         {

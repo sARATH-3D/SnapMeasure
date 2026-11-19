@@ -71,6 +71,47 @@ namespace SnapMeasure
         }
     }
 
+    /// <summary>A short camera-shutter click, made in memory (no sound file needed).</summary>
+    internal static class Shutter
+    {
+        static byte[] wav;
+
+        static byte[] Make()
+        {
+            const int rate = 22050;
+            int n = rate * 16 / 100;                 // 0.16 s
+            short[] s = new short[n];
+            Random r = new Random(5);
+            for (int i = 0; i < n; i++)
+            {
+                double t = (double)i / rate;
+                // two quick clicks of filtered noise, like a shutter opening and closing
+                double env = Math.Exp(-t * 90) + (t > 0.07 ? 0.8 * Math.Exp(-(t - 0.07) * 110) : 0);
+                s[i] = (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, (r.NextDouble() * 2 - 1) * env * 14000));
+            }
+            using (MemoryStream ms = new MemoryStream())
+            using (BinaryWriter w = new BinaryWriter(ms))
+            {
+                w.Write(new char[] { 'R', 'I', 'F', 'F' }); w.Write(36 + n * 2); w.Write(new char[] { 'W', 'A', 'V', 'E' });
+                w.Write(new char[] { 'f', 'm', 't', ' ' }); w.Write(16); w.Write((short)1); w.Write((short)1); w.Write(rate); w.Write(rate * 2); w.Write((short)2); w.Write((short)16);
+                w.Write(new char[] { 'd', 'a', 't', 'a' }); w.Write(n * 2);
+                foreach (short v in s) w.Write(v);
+                w.Flush();
+                return ms.ToArray();
+            }
+        }
+
+        public static void Play()
+        {
+            try
+            {
+                if (wav == null) wav = Make();
+                using (System.Media.SoundPlayer p = new System.Media.SoundPlayer(new MemoryStream(wav))) p.Play();
+            }
+            catch (Exception) { }
+        }
+    }
+
     /// <summary>"Check for updates": asks GitHub for the newest release. Only runs when the user clicks it.</summary>
     internal static class UpdateCheck
     {

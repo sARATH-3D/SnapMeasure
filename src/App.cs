@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.1.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.0.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -87,6 +87,79 @@ namespace SnapMeasure
 
         public static StringBuilder log = new StringBuilder();
 
+        /// <summary>Checks for the 1.2 features: coordinates, line styles, cloud callouts, highlight shapes / pixelate,
+        /// text boxes and frames, open / closed perimeter, freehand arrows, saving captures without the editor.</summary>
+        static void V12(Canvas cv, string dir, Action<string, string, string> check)
+        {
+            CultureInfo cc = CultureInfo.CurrentCulture;
+            List<Shape> saved = new List<Shape>(cv.Shapes);
+            ScaleInfo sc = cv.Scale;      // 100 px = 1 m
+            cv.Shapes.Clear();
+
+            // coordinates: origin at (100,350), Y counts upwards
+            Shape org = Mk(cv, Tool.Coord, 100, 350); org.Kind = ShapeKind.Origin;
+            Shape c1 = Mk(cv, Tool.Coord, 500, 100, 540, 70);
+            Shape c2 = Mk(cv, Tool.Coord, 50, 400, 90, 370);
+            check("Coordinate X / Y (Y up)", sc.Coord(c1.Pts[0], org.Pts[0]) + " | " + sc.Coord(c2.Pts[0], org.Pts[0]),
+                  "X " + (4.0).ToString("N2", cc) + "   Y " + (2.5).ToString("N2", cc) + " m | X " + (-0.5).ToString("N2", cc) + "   Y " + (-0.5).ToString("N2", cc) + " m");
+            cv.MakeOrigin(c2);
+            check("New origin moves every point", sc.Coord(c1.Pts[0], Renderer.Origin(cv.Shapes).Pts[0]),
+                  "X " + (4.5).ToString("N2", cc) + "   Y " + (3.0).ToString("N2", cc) + " m");
+            string xl = Measure.ExcelText(cv.Shapes, sc);
+            check("Coordinates in Excel", xl.Contains("C1\tPoint\t\tm\t\t\t\t\t" + (4.5).ToString("F2", cc) + "\t" + (3.0).ToString("F2", cc)).ToString(), "True");
+            Shape moved = c1.Clone();
+            ShapeOps.DragHandle(moved, c1, new Handle(c1.Pts[0], HKind.Point, 0), new PointF(510, 110), false);
+            check("Label follows the point", P(moved.Pts[1]), "550.00,80.00");
+            List<Shape> rt = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { org, c1 }));
+            check("Coordinates round-trip", rt.Count + "|" + rt[0].Kind + "|" + rt[1].Kind + "|" + rt[1].Pts.Count, "2|Origin|Coord|2");
+
+            // line styles, cloud callout, highlight forms, text box, perimeter, freehand arrows
+            Shape rc = Mk(cv, Tool.Rect, 120, 120, 300, 220); rc.Dash = (int)LineStyle.Cloud;
+            Shape el = Mk(cv, Tool.Ellipse, 320, 120, 480, 220); el.Dash = (int)LineStyle.Dashed;
+            Shape cl = Mk(cv, Tool.Cloud, 520, 140, 700, 260, 780, 320); cl.Mode = (int)CloudCallout.Triangle; cl.Text = "3";
+            Shape cl2 = Mk(cv, Tool.Cloud, 120, 420, 300, 520, 380, 560); cl2.Mode = (int)CloudCallout.TextBox; cl2.Text = "Changed bracket";
+            Shape hp = Mk(cv, Tool.Highlight, 600, 380, 760, 500); hp.Mode = (int)HighlightMode.Pixelate; hp.Form = (int)HighlightForm.Ellipse;
+            Shape ht = Mk(cv, Tool.Highlight, 780, 380, 880, 500); ht.Form = (int)HighlightForm.Triangle;
+            Shape tx = Mk(cv, Tool.Text, 330, 260, 470, 260); tx.Text = "A long note that has to wrap inside the box"; tx.Frame = true; tx.Width = 2;
+            Shape fh = Mk(cv, Tool.Freehand, 20, 560, 60, 540, 100, 560, 140, 545); fh.HeadEnd = (int)HeadStyle.Filled;
+            Shape po = Mk(cv, Tool.Perimeter, 600, 520, 700, 520, 700, 580);
+            check("Perimeter open by default", po.IsOpenPath + "|" + Measure.Rows(cv.Shapes, sc, false).Find(r => r.Shape == po).Type, "True|Path length");
+            po.Mode = 0;
+            check("Perimeter closed", po.IsOpenPath + "|" + Measure.Rows(cv.Shapes, sc, false).Find(r => r.Shape == po).Type, "False|Perimeter");
+            SizeF ts = Renderer.TextSize(tx);
+            check("Text box wraps at its width", ts.Width.ToString("F0") + "|" + (ts.Height > tx.FontSize * 1.9f), "140|True");
+            Shape tx2 = tx.Clone();
+            ShapeOps.DragHandle(tx2, tx, new Handle(PointF.Empty, HKind.Box, 3), new PointF(530, 270), false);
+            check("Text box width handle", Renderer.WrapWidth(tx2).ToString("F0"), "200");
+            string err = "ok";
+            try { using (Bitmap f = cv.Flatten(null)) f.Save(Path.Combine(dir, "selftest_v12.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
+            check("1.2 shapes draw", err, "ok");
+            check("Callout hit test", ShapeOps.Hit(cl, new PointF(780, 318), 2) + "|" + ShapeOps.Hit(cl2, new PointF(380, 560), 2), "True|True");
+            List<Shape> rt2 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { rc, cl, hp, tx, fh }));
+            check("Styles round-trip", rt2[0].Dash + "|" + rt2[1].Mode + "/" + rt2[1].Text + "/" + rt2[1].Pts.Count + "|" + rt2[2].Mode + "/" + rt2[2].Form + "|" +
+                  rt2[3].Frame + "/" + Renderer.WrapWidth(rt2[3]).ToString("F0") + "|" + rt2[4].HeadEnd, "5|1/3/3|4/1|True/140|1");
+            List<Shape> old = ProjectFile.ShapesFromXml("<shapes><shape kind=\"Freehand\" stroke=\"FFFF0000\" fill=\"FFFFFF00\" heads=\"1\" headEnd=\"1\"><p x=\"1\" y=\"1\"/><p x=\"50\" y=\"9\"/></shape></shapes>");
+            check("Older freehand gets no arrow", old[0].HeadStart + "/" + old[0].HeadEnd, "0/0");
+
+            // a capture saved straight to disk (Settings → Capture → save, without the editor)
+            using (Bitmap b = new Bitmap(64, 40))
+            {
+                using (Graphics g = Graphics.FromImage(b)) g.Clear(Color.SteelBlue);
+                string res = "";
+                foreach (string ext in new string[] { "png", "jpg", "pdf" })
+                {
+                    string p = Path.Combine(dir, "capture_direct." + ext);
+                    Output.SaveBitmap(b, p);
+                    res += ext + "=" + (File.Exists(p) && new FileInfo(p).Length > 50) + " ";
+                }
+                check("Save capture without the editor", res.Trim(), "png=True jpg=True pdf=True");
+            }
+
+            cv.Shapes.Clear();
+            cv.Shapes.AddRange(saved);
+            cv.Selected = null;
+        }
+
         /// <summary>Checks for the 1.1 features: line ends, quantities, cut-outs, counts, presets, notes, stitching, PDF, OCR, update check.</summary>
         static void V11(Canvas cv, string dir, Action<string, string, string> check)
         {
@@ -116,6 +189,7 @@ namespace SnapMeasure
             Shape pl = Mk(cv, Tool.Polyline, 100, 380, 400, 380, 400, 780);
             check("Path length (3 + 4 m)", sc.Len(Geo.Perimeter(pl.Pts, false)), (7.0).ToString("N2", cc) + " m");
             Shape pm = Mk(cv, Tool.Perimeter, 600, 100, 700, 100, 700, 200, 600, 200);
+            pm.Mode = 0;    // closed
             check("Perimeter (4 × 1 m)", sc.Len(Geo.Perimeter(pm.Pts, true)), (4.0).ToString("N2", cc) + " m");
             Dictionary<Shape, string> names = Renderer.Labels(cv.Shapes, sc);
             check("Path / perimeter names", names[pl] + "|" + names[pm], "L1|P1");
@@ -552,6 +626,7 @@ namespace SnapMeasure
             }
 
             V11(cv, dir, check);
+            V12(cv, dir, check);
 
             // ---- adjustable crop ----
             {
@@ -615,22 +690,58 @@ namespace SnapMeasure
             return t.Length > 120 ? t.Substring(0, 120) : t;
         }
 
+        /// <summary>Tray notification (set by the tray icon).</summary>
+        public static Action<string> Notify;
+
+        static void Tell(string msg)
+        {
+            if (Notify != null && Settings.GetBool("Notify", true)) Notify(msg);
+        }
+
+        /// <summary>What happens after a capture (Settings → Capture): open the editor, copy, save, or copy + save.</summary>
         static void Deliver(Bitmap b, string title)
         {
             if (b == null) return;
-            if (Settings.GetBool("CopyOnCapture", true))
+            if (Settings.GetBool("CameraSound", false)) Shutter.Play();
+            int after = Settings.GetInt("AfterCapture", 0);
+            bool copy = after == 1 || after == 3 || (after == 0 && Settings.GetBool("CopyOnCapture", true));
+            if (copy) { try { Clipboard.SetImage(b); } catch { } }
+            if (after == 2 || after == 3)
             {
-                try { Clipboard.SetImage(b); } catch { }
+                try
+                {
+                    string dir = Settings.SaveFolder;
+                    Directory.CreateDirectory(dir);
+                    string ext = Output.Format;
+                    string name = Output.MakeName(Output.Pattern, DateTime.Now, title, Output.Pattern.Contains("${n") ? Output.NextNumber() : 0);
+                    string path = Output.UniqueBase(dir, name, ext, false) + "." + ext;
+                    Output.SaveBitmap(b, path);
+                    if (Output.CopyPath && after == 2) { try { Clipboard.SetText(path); } catch { } }
+                    Tell((after == 3 ? "Copied and saved: " : "Saved: ") + Path.GetFileName(path));
+                }
+                catch (Exception ex) { MessageBox.Show("Could not save the capture: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+                b.Dispose();
+                return;
             }
+            if (after == 1) { Tell("Capture copied to the clipboard (" + b.Width + " × " + b.Height + ")"); b.Dispose(); return; }
             EditorForm f = new EditorForm(b, title);
             f.Show();
             f.Activate();
+        }
+
+        /// <summary>Settings → Capture: wait a moment (lets menus close) and decide whether to include the mouse pointer.</summary>
+        static void PreCapture()
+        {
+            ScreenCapture.IncludeCursor = Settings.GetBool("CaptureCursor", false);
+            int ms = Math.Max(0, Math.Min(10000, Settings.GetInt("CaptureDelay", 0)));
+            if (ms > 0) Thread.Sleep(ms);
         }
 
         static void Guard(Action a)
         {
             if (busy) return;
             busy = true;
+            PreCapture();
             try { a(); }
             catch (Exception ex) { MessageBox.Show("Capture failed: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
             finally { busy = false; }
@@ -719,12 +830,10 @@ namespace SnapMeasure
         public static string FailedHotkeys = "";
         static AboutForm about;
 
+        /// <summary>About = the About tab of the settings window.</summary>
         public static void ShowAbout(IWin32Window owner)
         {
-            if (about != null && !about.IsDisposed) { about.Activate(); return; }
-            about = new AboutForm(AboutText.Shortcuts(FailedHotkeys));
-            about.FormClosed += (s, e) => about = null;
-            about.Show(owner);
+            Dialogs.ShowSettings(owner, 2);
         }
 
         /// <summary>Empty canvas to draw and scribble on.</summary>
@@ -772,6 +881,7 @@ namespace SnapMeasure
                 Bitmap sel = ScreenCapture.SelectRegion(out r, out title);
                 if (sel == null) return;
                 sel.Dispose();
+                ScreenCapture.IncludeCursor = false;      // the pointer sits in the middle while scrolling
                 Thread.Sleep(150);
                 Bitmap b = ScrollCapture.Capture(r);
                 if (b == null) return;
@@ -897,12 +1007,13 @@ namespace SnapMeasure
             copy.Checked = Settings.GetBool("CopyOnCapture", true);
             copy.Click += (s, e) => { copy.Checked = !copy.Checked; Settings.Set("CopyOnCapture", copy.Checked ? "1" : "0"); };
             menu.Items.Add(copy);
-            Item(menu, "Output settings…", "", () => Dialogs.OutputSettings(null), false).Image = Icons.Cmd("settings", 16);
+            Item(menu, "Settings (capture, output)…", "", () => Dialogs.ShowSettings(null, 0), false).Image = Icons.Cmd("settings", 16);
             Item(menu, "Open save folder", "", OpenFolder, false).Image = Icons.Cmd("folderopen", 16);
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "About SnapMeasure && shortcuts…", "", ShowAbout, false).Image = Icons.Cmd("help", 16);
             Item(menu, "Exit", "", ExitApp, false).Image = Icons.Cmd("exit", 16);
             ni.ContextMenuStrip = menu;
+            App.Notify = m => { try { ni.ShowBalloonTip(3000, "SnapMeasure", m, ToolTipIcon.Info); } catch { } };
             ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.CaptureRegion(); };
 
             hk = new HotkeyWindow();
@@ -1379,16 +1490,98 @@ namespace SnapMeasure
             }
         }
 
-        /// <summary>Output settings: save folder, file name pattern, format, quality, and what else to do on save.</summary>
-        public static void OutputSettings(IWin32Window owner)
+        /// <summary>A question with three plain-worded buttons. Returns 0, 1 or 2 (the button), or -1 if closed.</summary>
+        public static int Choose(IWin32Window owner, string title, string message, string b0, string b1, string b2)
         {
             float k = K(owner);
             Func<float, int> S = v => (int)Math.Round(v * k);
-            using (Form f = Base("Output settings", k, 520, 330))
+            using (Form f = Base(title, k, 470, 120))
             {
+                if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
+                PictureBox ic = new PictureBox();
+                ic.Image = SystemIcons.Question.ToBitmap();
+                ic.SizeMode = PictureBoxSizeMode.Zoom;
+                ic.SetBounds(S(14), S(14), S(32), S(32));
+                Label l = new Label(); l.Text = message; l.AutoSize = true; l.MaximumSize = new Size(S(390), 0); l.Location = new Point(S(58), S(20));
+                f.Controls.Add(ic); f.Controls.Add(l);
+                int result = -1;
+                string[] texts = { b0, b1, b2 };
+                int x = S(458);
+                for (int i = 2; i >= 0; i--)
+                {
+                    Button b = new Button();
+                    b.Text = texts[i];
+                    int w = Math.Max(S(96), TextRenderer.MeasureText(texts[i], f.Font).Width + S(24));
+                    x -= w + S(8);
+                    b.SetBounds(x + S(8), f.ClientSize.Height - S(40), w, S(28));
+                    int idx = i;
+                    b.Click += (s, e) => { result = idx; f.Close(); };
+                    f.Controls.Add(b);
+                    if (i == 0) f.AcceptButton = b;
+                    if (i == 2) f.CancelButton = b;
+                }
+                f.ShowDialog(owner);
+                return result;
+            }
+        }
+
+        /// <summary>Output settings: save folder, file name pattern, format, quality, and what else to do on save.</summary>
+        public static void OutputSettings(IWin32Window owner) { ShowSettings(owner, 1); }
+
+        /// <summary>
+        /// Settings window: Capture (what PrtSc does, mouse pointer, sound, notifications, magnifier, delay),
+        /// Output (folder, file name, format, quality) and About (version, GitHub, updates, shortcuts).
+        /// </summary>
+        public static void ShowSettings(IWin32Window owner, int startTab)
+        {
+            float k = K(owner);
+            Func<float, int> S = v => (int)Math.Round(v * k);
+            using (Form f = Base("SnapMeasure settings", k, 560, 470))
+            {
+                if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
+                f.Icon = AppIcon.Get();
+                f.ShowIcon = true;
+                TabControl tabs = new TabControl();
+                tabs.SetBounds(S(8), S(8), S(544), S(408));
+                TabPage tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tAbout = new TabPage("About");
+                tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tAbout);
+                f.Controls.Add(tabs);
+
+                // ---------- Capture ----------
+                {
+                    Label la = new Label(); la.Text = "After a capture (PrtSc, Ctrl+Shift+1 …):"; la.AutoSize = true; la.Location = new Point(S(12), S(14));
+                    tCap.Controls.Add(la);
+                    string[] acts = { "Open it in the SnapMeasure editor (default)", "Only copy it to the clipboard", "Only save it to the save folder", "Copy it and save it (no editor)" };
+                    int cur = SnapMeasure.Settings.GetInt("AfterCapture", 0);
+                    for (int i = 0; i < acts.Length; i++)
+                    {
+                        RadioButton r = new RadioButton(); r.Text = acts[i]; r.AutoSize = true; r.Location = new Point(S(24), S(38 + i * 24));
+                        r.Checked = i == cur; r.Tag = i; r.Name = "after" + i;
+                        tCap.Controls.Add(r);
+                    }
+                    CheckBox cClip = new CheckBox(); cClip.Name = "clip"; cClip.Text = "When the editor opens, also copy the capture to the clipboard";
+                    cClip.AutoSize = true; cClip.Location = new Point(S(24), S(136)); cClip.Checked = SnapMeasure.Settings.GetBool("CopyOnCapture", true);
+                    Label sep = new Label(); sep.BorderStyle = BorderStyle.Fixed3D; sep.SetBounds(S(12), S(166), S(510), 2);
+                    CheckBox cCur = new CheckBox(); cCur.Name = "cursor"; cCur.Text = "Capture the mouse pointer"; cCur.AutoSize = true; cCur.Location = new Point(S(12), S(178));
+                    cCur.Checked = SnapMeasure.Settings.GetBool("CaptureCursor", false);
+                    CheckBox cSnd = new CheckBox(); cSnd.Name = "sound"; cSnd.Text = "Play a camera sound"; cSnd.AutoSize = true; cSnd.Location = new Point(S(12), S(204));
+                    cSnd.Checked = SnapMeasure.Settings.GetBool("CameraSound", false);
+                    CheckBox cNot = new CheckBox(); cNot.Name = "notify"; cNot.Text = "Show a notification when a capture is copied or saved"; cNot.AutoSize = true; cNot.Location = new Point(S(12), S(230));
+                    cNot.Checked = SnapMeasure.Settings.GetBool("Notify", true);
+                    CheckBox cMag = new CheckBox(); cMag.Name = "mag"; cMag.Text = "Show the magnifier while picking an area"; cMag.AutoSize = true; cMag.Location = new Point(S(12), S(256));
+                    cMag.Checked = SnapMeasure.Settings.GetBool("Magnifier", true);
+                    NumericUpDown nd = new NumericUpDown(); nd.Name = "delay"; nd.Minimum = 0; nd.Maximum = 10000; nd.Increment = 100;
+                    nd.Value = Math.Max(0, Math.Min(10000, SnapMeasure.Settings.GetInt("CaptureDelay", 0)));
+                    nd.SetBounds(S(12), S(284), S(80), S(26));
+                    Label ld = new Label(); ld.Text = "milliseconds to wait before capturing (lets menus close)"; ld.AutoSize = true; ld.Location = new Point(S(98), S(287));
+                    foreach (Control c in new Control[] { cClip, sep, cCur, cSnd, cNot, cMag, nd, ld }) tCap.Controls.Add(c);
+                }
+
+                // ---------- Output ----------
+                TabPage tp = tOut;
                 Func<string, int, Label> lab = (t, y) =>
                 {
-                    Label l = new Label(); l.Text = t; l.AutoSize = true; l.Location = new Point(S(12), S(y + 4)); f.Controls.Add(l); return l;
+                    Label l = new Label(); l.Text = t; l.AutoSize = true; l.Location = new Point(S(12), S(y + 4)); tp.Controls.Add(l); return l;
                 };
                 lab("Save folder", 14); lab("File name", 48); lab("Example", 80); lab("Image format", 112); lab("JPEG quality", 146);
 
@@ -1427,8 +1620,6 @@ namespace SnapMeasure
                 proj.AutoSize = true; proj.Location = new Point(S(14), S(186)); proj.Checked = Output.SaveProject;
                 CheckBox copy = new CheckBox(); copy.Text = "Copy the file path to the clipboard after saving";
                 copy.AutoSize = true; copy.Location = new Point(S(14), S(212)); copy.Checked = Output.CopyPath;
-                CheckBox clip = new CheckBox(); clip.Text = "Copy every new capture to the clipboard";
-                clip.AutoSize = true; clip.Location = new Point(S(14), S(238)); clip.Checked = Settings.GetBool("CopyOnCapture", true);
 
                 Action update = () =>
                 {
@@ -1442,7 +1633,30 @@ namespace SnapMeasure
                 proj.CheckedChanged += (s, e) => update();
                 update();
 
-                foreach (Control c in new Control[] { folder, browse, pattern, help, example, fmt, q, ql, proj, copy, clip }) f.Controls.Add(c);
+                foreach (Control c in new Control[] { folder, browse, pattern, help, example, fmt, q, ql, proj, copy }) tOut.Controls.Add(c);
+
+                // ---------- About ----------
+                {
+                    PictureBox logo = new PictureBox(); logo.Image = AppIcon.Render(S(56)); logo.SetBounds(S(14), S(14), S(56), S(56));
+                    Label name = new Label(); name.Text = AppInfo.Name + "  " + AppInfo.Version; name.Font = Native.UiFont("Segoe UI", 15f, k, FontStyle.Bold);
+                    name.AutoSize = true; name.Location = new Point(S(82), S(12));
+                    Label sub = new Label(); sub.UseMnemonic = false; sub.AutoSize = true; sub.ForeColor = Color.FromArgb(90, 90, 90); sub.Location = new Point(S(84), S(46));
+                    sub.Text = "Portable screenshot, measuring & quantity takeoff tool\nMade by " + AppInfo.Author + "  ·  free and open source (MIT licence)";
+                    LinkLabel repo = new LinkLabel(); repo.Text = AppInfo.RepoUrl.Replace("https://", ""); repo.AutoSize = true; repo.Location = new Point(S(84), S(84));
+                    repo.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.RepoUrl);
+                    LinkLabel upd = new LinkLabel(); upd.Text = "Check for updates"; upd.AutoSize = true; upd.Location = new Point(S(84), S(106));
+                    LinkLabel iss = new LinkLabel(); iss.Text = "Report a problem or ask for a feature"; iss.AutoSize = true; iss.Location = new Point(S(220), S(106));
+                    iss.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.IssuesUrl);
+                    Label us = new Label(); us.AutoSize = true; us.ForeColor = Color.FromArgb(90, 90, 90); us.Location = new Point(S(84), S(126));
+                    upd.LinkClicked += (s, e) => { us.Text = "Checking GitHub…"; UpdateCheck.Start(f, m => us.Text = m); };
+                    TextBox keys = new TextBox(); keys.Multiline = true; keys.ReadOnly = true; keys.ScrollBars = ScrollBars.Vertical;
+                    keys.BackColor = Color.FromArgb(247, 248, 250); keys.Font = Native.UiFont("Consolas", 8.5f, k);
+                    keys.Text = AboutText.Shortcuts(App.FailedHotkeys).Replace("\r\n", "\n").Replace("\n", "\r\n");
+                    keys.SetBounds(S(12), S(150), S(512), S(220));
+                    foreach (Control c in new Control[] { logo, name, sub, repo, upd, iss, us, keys }) tAbout.Controls.Add(c);
+                }
+
+                tabs.SelectedIndex = Math.Max(0, Math.Min(2, startTab));
                 Buttons(f, k);
                 while (f.ShowDialog(owner) == DialogResult.OK)
                 {
@@ -1450,14 +1664,26 @@ namespace SnapMeasure
                     bool okDir = false;
                     try { okDir = dir.Length > 0 && Path.IsPathRooted(dir); if (okDir) Directory.CreateDirectory(dir); }
                     catch (Exception) { okDir = false; }
-                    if (!okDir) { MessageBox.Show(f, "Choose a folder that exists or can be created, e.g. C:\\Users\\you\\Pictures\\SnapMeasure", "Output settings"); continue; }
-                    Settings.Set("SaveFolder", dir);
-                    Settings.Set("FilePattern", string.IsNullOrWhiteSpace(pattern.Text) ? Output.DefaultPattern : pattern.Text.Trim());
-                    Settings.Set("ImageFormat", Output.Formats[Math.Max(0, fmt.SelectedIndex)]);
-                    Settings.Set("JpegQuality", q.Value.ToString(CultureInfo.InvariantCulture));
-                    Settings.Set("SaveProjectToo", proj.Checked ? "1" : "0");
-                    Settings.Set("CopyPathOnSave", copy.Checked ? "1" : "0");
-                    Settings.Set("CopyOnCapture", clip.Checked ? "1" : "0");
+                    if (!okDir) { tabs.SelectedTab = tOut; MessageBox.Show(f, "Choose a folder that exists or can be created, e.g. C:\\Users\\you\\Pictures\\SnapMeasure", "Settings"); continue; }
+                    SnapMeasure.Settings.Set("SaveFolder", dir);
+                    SnapMeasure.Settings.Set("FilePattern", string.IsNullOrWhiteSpace(pattern.Text) ? Output.DefaultPattern : pattern.Text.Trim());
+                    SnapMeasure.Settings.Set("ImageFormat", Output.Formats[Math.Max(0, fmt.SelectedIndex)]);
+                    SnapMeasure.Settings.Set("JpegQuality", q.Value.ToString(CultureInfo.InvariantCulture));
+                    SnapMeasure.Settings.Set("SaveProjectToo", proj.Checked ? "1" : "0");
+                    SnapMeasure.Settings.Set("CopyPathOnSave", copy.Checked ? "1" : "0");
+                    for (int i = 0; i < 4; i++)
+                    {
+                        RadioButton r = tCap.Controls["after" + i] as RadioButton;
+                        if (r != null && r.Checked) SnapMeasure.Settings.Set("AfterCapture", i.ToString(CultureInfo.InvariantCulture));
+                    }
+                    Func<string, bool> chk = n => { CheckBox c = tCap.Controls[n] as CheckBox; return c != null && c.Checked; };
+                    SnapMeasure.Settings.Set("CopyOnCapture", chk("clip") ? "1" : "0");
+                    SnapMeasure.Settings.Set("CaptureCursor", chk("cursor") ? "1" : "0");
+                    SnapMeasure.Settings.Set("CameraSound", chk("sound") ? "1" : "0");
+                    SnapMeasure.Settings.Set("Notify", chk("notify") ? "1" : "0");
+                    SnapMeasure.Settings.Set("Magnifier", chk("mag") ? "1" : "0");
+                    NumericUpDown dl = tCap.Controls["delay"] as NumericUpDown;
+                    if (dl != null) SnapMeasure.Settings.Set("CaptureDelay", ((int)dl.Value).ToString(CultureInfo.InvariantCulture));
                     return;
                 }
             }
@@ -1874,6 +2100,23 @@ namespace SnapMeasure
                             }
                             using (Pen pp = new Pen(ink, 1.6f)) { g.DrawLine(pp, 8, 10, 24, 10); g.DrawLine(pp, 8, 15, 19, 15); }
                             break;
+                        case Tool.Coord:
+                            {
+                                // origin cross with X / Y arrows and a point
+                                using (Pen ap = new Pen(blue, 2f))
+                                {
+                                    ap.StartCap = LineCap.Round;
+                                    g.DrawLine(ap, 6, 26, 26, 26);
+                                    g.DrawLine(ap, 6, 26, 6, 6);
+                                }
+                                using (SolidBrush bb = new SolidBrush(blue))
+                                {
+                                    g.FillPolygon(bb, new PointF[] { new PointF(29, 26), new PointF(24, 23), new PointF(24, 29) });
+                                    g.FillPolygon(bb, new PointF[] { new PointF(6, 3), new PointF(3, 8), new PointF(9, 8) });
+                                }
+                                using (Pen xp = new Pen(red, 2.2f)) { g.DrawLine(xp, 15, 10, 21, 16); g.DrawLine(xp, 15, 16, 21, 10); }
+                                break;
+                            }
                         case Tool.Polyline:
                             {
                                 Color purple = Color.FromArgb(130, 60, 200);

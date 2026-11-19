@@ -1,4 +1,4 @@
-# SnapMeasure 1.1
+# SnapMeasure 1.2
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
@@ -8,7 +8,25 @@ One file, `SnapMeasure.exe` (~300 KB). No installer, no admin rights. It runs on
 **Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
-**What's new in 1.1:**
+**What's new in 1.2:**
+* **Settings window** with three tabs: **Capture** (what PrtSc does – open the editor, only copy, only save, or copy + save;
+  mouse pointer; camera sound; notifications; magnifier; delay), **Output** and **About** (version, GitHub, check for updates, shortcuts).
+* **Coordinates** (`I`): the first click sets the origin 0,0; every point then shows X / Y with **Y up, like CAD**.
+  Drag the origin (or right-click a point → *Make this point the origin*) and every value updates. X and Y go to Excel.
+* **Line styles** for all outlines: solid, dashed, dotted, dash-dot, long dash and **cloud** (scalloped rectangles, ellipses, polygons).
+* **Revision cloud callouts:** a **revision triangle** with a number, or a **text box**, on a leader. Drag the yellow handle to move it.
+* **Stamps:** type straight onto the stamp (no pop-up) and more stamp types (Draft, Final, For comment, For construction,
+  Not approved, Checked, As built, Confidential, Void …).
+* **Text:** drag a **text box** to set its width (the text wraps), side handles to resize it, an optional **frame** in the line
+  colour and width, and **Esc keeps your text**.
+* **Length / perimeter** is open by default; tick **Closed** for a perimeter.
+* **Freehand** can have arrowheads (any of the 10 line ends).
+* **Highlight** now includes **Pixelate**, and every highlight can be a rectangle, ellipse, triangle, diamond or rounded box.
+* **Status bar guide:** tells you the next step for the tool you have (step 1, step 2 …) and what you can do with the selection.
+* **Closing:** clear buttons – *Save…*, *Close without saving*, *Keep editing*.
+* **Tool bar** grouped under headings: Measure, Count, Mark-up, Text, Tools.
+
+**What came in 1.1:**
 * **Quantities:** area **minus cut-outs** (gross / cut-outs / net), **path length** (sealant runs, gaskets), **perimeter**,
   **counts** per marker series, and **labels** on every measurement. *Copy measurements* puts all of it into Excel.
 * **Drawing scales:** 1:50 on an A1 sheet, 1:100 at 300 dpi, the exact size of a PDF page, or scales you save yourself.
@@ -78,14 +96,14 @@ Open them from the tray menu or the **Ruler** / **Protractor** buttons in the ed
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
 | Letter marker | `Shift+N` | A, B, C … is **its own series**, separate from the numbers, also counted |
 | Polygon | `P` | Highlight with any number of edges, with fill colour and opacity |
-| Highlight | `H` | Text marker, spotlight, grayscale outside, magnify ×2 |
+| Highlight | `H` | Text marker, spotlight, grayscale outside, magnify ×2, **pixelate** (`B`) – as a rectangle, ellipse, triangle, diamond or rounded box |
 | Text markup | `Y` | Drag over a line of text in the picture: **underline, strike out or highlight**. Snaps to the words (Windows text recognition). |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |
-| Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops |
+| Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops. **Callout:** none, revision triangle (number) or text box, on a leader |
 | Line / Arrow / Freehand | `L` `A` `F` | **10 line ends** (none, filled / open / hollow arrow, slash, tick, dot, circle, diamond, square) for the start and the end |
-| Text | `T` | Type straight onto the image. **Bold, italic, left / centre / right** on the style bar. |
+| Text | `T` | Click and type, or **drag a box** (the text wraps; side handles change the width). Bold, italic, alignment and an optional **frame** on the style bar. `Esc` keeps the text. |
 | Speech bubble | `S` | Drag or click, then type. Bold / italic / alignment as for Text. Drag the yellow handle to point the tail. |
-| Stamp | `Z` | Click to place **APPROVED / REVISE / FOR INFORMATION / REJECTED** or your own text, with today's date. Double-click to edit. |
+| Stamp | `Z` | Click to place APPROVED, REVISE, FOR INFORMATION, REJECTED, DRAFT, FINAL, FOR COMMENT, FOR CONSTRUCTION, NOT APPROVED, CHECKED, AS BUILT, CONFIDENTIAL, VOID or your own words, with the date. **Double-click and type straight onto it.** |
 | Note | `O` | A sticky note shown in the editor only – **left out of saved, copied and pinned pictures** (listed in the Excel export) |
 | Copy text (OCR) | `Shift+T` | Drag over text to copy it; a click copies all the text. The **Copy text** button copies the whole picture. |
 | Pixelate | `B` | Hide sensitive information |
@@ -186,7 +204,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 94 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 108 built-in checks.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.

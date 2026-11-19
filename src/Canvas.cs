@@ -47,6 +47,7 @@ namespace SnapMeasure
         public Func<double, bool> AskCalibration;        // (pixel length) -> true if scale was changed
         public Action<string> Message;                   // short status-bar message
         public Action<Rectangle> OcrArea;                // OCR tool: copy the text inside this image rectangle
+        public event EventHandler StateChanged;           // drawing started / point added / finished: the status-bar guide follows
         public Func<Rectangle, List<Rectangle>> FindWords;   // text recognition for snapping text markup (may be null)
         public event EventHandler DocChanged, SelectionChanged, ViewChanged, ToolChanged;
         public Action<PointF> CursorMoved;
@@ -118,6 +119,7 @@ namespace SnapMeasure
             d[Tool.Line].Heads = 0;
             d[Tool.Arrow] = St(ShapeKind.Arrow, red, 3, Color.Yellow, 0, 16);
             d[Tool.Freehand] = St(ShapeKind.Freehand, red, 3, Color.Yellow, 0, 16);
+            d[Tool.Freehand].HeadEnd = 0;                     // plain stroke; arrowheads are optional
             d[Tool.Text] = St(ShapeKind.Text, red, 2, Color.White, 0, 20);
             d[Tool.Polygon] = St(ShapeKind.Polygon, amber, 2, Color.Yellow, 35, 16);
             d[Tool.Dimension] = St(ShapeKind.Dimension, red, 1.5f, Color.White, 0, 15);
@@ -125,8 +127,10 @@ namespace SnapMeasure
             Color purple = Color.FromArgb(130, 60, 200), green = Color.FromArgb(30, 140, 60);
             d[Tool.Polyline] = St(ShapeKind.Polyline, purple, 2.5f, Color.White, 0, 15);
             d[Tool.Perimeter] = St(ShapeKind.Perimeter, green, 2.5f, Color.White, 0, 15);
+            d[Tool.Perimeter].Mode = 1;                       // open path by default; tick "Closed" for a perimeter
+            d[Tool.Coord] = St(ShapeKind.Coord, Color.FromArgb(20, 90, 170), 1.5f, Color.White, 0, 14);
             d[Tool.Cutout] = St(ShapeKind.Polygon, red, 2, red, 15, 15);
-            d[Tool.Cloud] = St(ShapeKind.Cloud, red, 2.5f, Color.Yellow, 0, 16);
+            d[Tool.Cloud] = St(ShapeKind.Cloud, red, 2.5f, Color.Yellow, 0, 22);      // text size = callout size
             d[Tool.Stamp] = St(ShapeKind.Stamp, Stamps.Colors[0], 3, Color.White, 0, 16);
             d[Tool.Note] = St(ShapeKind.Note, Color.FromArgb(150, 110, 0), 1, Color.FromArgb(255, 214, 64), 100, 16);
             d[Tool.Markup] = St(ShapeKind.Markup, red, 2, Color.Yellow, 45, 16);
@@ -173,6 +177,8 @@ namespace SnapMeasure
                 case ShapeKind.Markup: return Tool.Markup;
                 case ShapeKind.Polyline: return Tool.Polyline;
                 case ShapeKind.Perimeter: return Tool.Perimeter;
+                case ShapeKind.Coord:
+                case ShapeKind.Origin: return Tool.Coord;
                 default: return Tool.Pixelate;
             }
         }
@@ -695,7 +701,7 @@ namespace SnapMeasure
             get
             {
                 return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
-                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout;
+                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord;
             }
         }
 
@@ -829,6 +835,17 @@ namespace SnapMeasure
             if (Message != null) Message("Cut-out subtracted: net area " + Scale.Area(Measure.NetArea(target)));
         }
 
+        /// <summary>Moves the origin onto a coordinate point; every other point is then measured from there.</summary>
+        public void MakeOrigin(Shape point)
+        {
+            Shape o = Renderer.Origin(Shapes);
+            if (o == null || point == null) return;
+            PushUndo(Snapshot());
+            o.Pts[0] = point.Pts[0];
+            FireDoc(); Invalidate();
+            if (Message != null) Message("Origin moved – all coordinates now count from this point");
+        }
+
         /// <summary>Removes the cut-outs of the selected area.</summary>
         public void ClearCutouts()
         {
@@ -872,10 +889,12 @@ namespace SnapMeasure
                 if (t != null && t != cur) { PushUndo(Snapshot()); if (letters) Scale.LetterLabel = t; else Scale.NumberLabel = t; FireDoc(); Invalidate(); }
                 return;
             }
+            if (s.Kind == ShapeKind.Stamp || (s.Kind == ShapeKind.Cloud && s.Mode != 0 && s.Pts.Count > 2)) { BeginTextEdit(s, false); return; }   // typed in place
             string title;
             bool multi = false;
             switch (s.Kind)
             {
+                case ShapeKind.Coord: title = "Point label (e.g. Bracket B3)"; break;
                 case ShapeKind.Dimension: title = "Dimension label prefix (e.g. W =)"; break;
                 case ShapeKind.Area: title = "Area label (e.g. Spandrel L01)"; break;
                 case ShapeKind.Polyline: title = "Length label (e.g. Sealant run)"; break;
@@ -936,32 +955,37 @@ namespace SnapMeasure
             Selected = isNew ? null : s;
             FireSel();
 
+            bool boxed = s.Kind == ShapeKind.Bubble || s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Cloud;
             TextBox tb = new TextBox();
             tb.Multiline = true;
             tb.AcceptsReturn = true;
-            tb.WordWrap = s.Kind == ShapeKind.Bubble;
+            tb.WordWrap = boxed || Renderer.WrapWidth(s) > 0;
             tb.ScrollBars = ScrollBars.None;
             tb.BorderStyle = BorderStyle.FixedSingle;
-            tb.Font = new Font("Segoe UI", Math.Max(6f, s.FontSize * Zoom), s.Style, GraphicsUnit.Pixel);
+            float fsz = s.Kind == ShapeKind.Stamp ? 16f : s.FontSize;
+            tb.Font = new Font("Segoe UI", Math.Max(6f, fsz * Zoom), s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style, GraphicsUnit.Pixel);
             tb.ForeColor = Color.FromArgb(255, s.Stroke);
-            tb.BackColor = s.FillOpacity > 0 ? Color.FromArgb(255, s.Fill) : Color.White;
+            tb.BackColor = s.FillOpacity > 0 && s.Kind != ShapeKind.Cloud ? Color.FromArgb(255, s.Fill) : Color.White;
             if (tb.BackColor.GetBrightness() < 0.25f && tb.ForeColor.GetBrightness() < 0.25f) tb.BackColor = Color.White;
-            tb.TextAlign = TbAlign(s.Align);
+            tb.TextAlign = s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Cloud ? HorizontalAlignment.Center : TbAlign(s.Align);
             tb.Text = editOrigText.Replace("\r\n", "\n").Replace("\n", "\r\n");
-            if (s.Kind == ShapeKind.Bubble) s.Text = "";     // bubble body stays visible behind the editor
+            if (boxed) s.Text = "";     // the body stays visible behind the editor without its old text
             editBox = tb;
             tb.TextChanged += (o, e) => LayoutEditBox();
             tb.KeyDown += (o, e) =>
             {
-                if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; BeginInvoke((Action)(() => EndTextEdit(false))); }
-                else if (e.KeyCode == Keys.Enter && e.Control) { e.SuppressKeyPress = true; BeginInvoke((Action)(() => EndTextEdit(true))); }
+                // Esc and Ctrl+Enter both keep what you typed (Esc used to throw it away)
+                if (e.KeyCode == Keys.Escape || (e.KeyCode == Keys.Enter && e.Control)) { e.SuppressKeyPress = true; BeginInvoke((Action)(() => EndTextEdit(true))); }
             };
             tb.Leave += (o, e) => EndTextEdit(true);
             LayoutEditBox();
             Controls.Add(tb);
             tb.Focus();
-            tb.SelectionStart = tb.TextLength;
+            if (s.Kind == ShapeKind.Stamp && isNew) tb.SelectionStart = 0;          // type the stamp word on the first line
+            else if (s.Kind == ShapeKind.Stamp) { int nl = tb.Text.IndexOf('\r'); tb.SelectionStart = 0; tb.SelectionLength = nl >= 0 ? nl : tb.TextLength; }
+            else tb.SelectionStart = tb.TextLength;
             Invalidate();
+            FireState();
         }
 
         /// <summary>Style panel changed bold/italic/alignment/size while typing: update the edit box.</summary>
@@ -981,9 +1005,28 @@ namespace SnapMeasure
         {
             if (editBox == null) return;
             Shape s = editShape;
-            float newSize = Math.Max(6f, s.FontSize * Zoom);
-            if (Math.Abs(editBox.Font.Size - newSize) > 0.1f || editBox.Font.Style != s.Style)
-                editBox.Font = new Font("Segoe UI", newSize, s.Style, GraphicsUnit.Pixel);
+            float newSize = Math.Max(6f, (s.Kind == ShapeKind.Stamp ? 16f : s.FontSize) * Zoom);
+            FontStyle fst = s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style;
+            if (Math.Abs(editBox.Font.Size - newSize) > 0.1f || editBox.Font.Style != fst)
+                editBox.Font = new Font("Segoe UI", newSize, fst, GraphicsUnit.Pixel);
+            if (s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Cloud)
+            {
+                RectangleF r = s.Kind == ShapeKind.Stamp ? Geo.Rect(s.Pts[0], s.Pts[1]) : Renderer.CalloutRect(s);
+                PointF a = ToScr(r.Location);
+                int w = Math.Max((int)(r.Width * Zoom - 8), (int)(90 * Dpi));
+                Size need = TextRenderer.MeasureText(editBox.Text + "W", editBox.Font, new Size(w, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+                int h = Math.Max((int)(r.Height * Zoom - 8), need.Height + 8);
+                editBox.Bounds = new Rectangle((int)(a.X + 4), (int)(a.Y + 4), w, h);
+                return;
+            }
+            if (s.Kind == ShapeKind.Text && Renderer.WrapWidth(s) > 0)
+            {
+                PointF a = ToScr(s.Pts[0]);
+                int w = Math.Max((int)(Renderer.WrapWidth(s) * Zoom) + 8, (int)(60 * Dpi));
+                Size need = TextRenderer.MeasureText(editBox.Text + "W", editBox.Font, new Size(w - 8, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+                editBox.Bounds = new Rectangle((int)a.X - 3, (int)a.Y - 3, w, need.Height + 10);
+                return;
+            }
             if (s.Kind == ShapeKind.Bubble)
             {
                 RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
@@ -1018,7 +1061,7 @@ namespace SnapMeasure
             }
             else if (editIsNew)
             {
-                if (text.Trim().Length > 0 || s.Kind == ShapeKind.Bubble) { s.Text = text; AddShape(s); }
+                if (text.Trim().Length > 0 || s.Kind == ShapeKind.Bubble || s.Kind == ShapeKind.Cloud) { s.Text = text; AddShape(s); }
             }
             else if (text != editOrigText)
             {
@@ -1032,6 +1075,7 @@ namespace SnapMeasure
             editBefore = null;
             Invalidate();
             if (Visible) Focus();
+            FireState();
         }
 
         // ---------- context menu ----------
@@ -1085,6 +1129,7 @@ namespace SnapMeasure
                 string what = one.Kind == ShapeKind.Counter ? (one.IsLetterMarker ? "Label the letter series…" : "Label the number series…")
                             : one.Kind == ShapeKind.Note ? "Edit note…" : one.Kind == ShapeKind.Stamp ? "Edit stamp text…" : "Label…";
                 add(what, "double-click", true, () => EditLabel(one));
+                if (one.Kind == ShapeKind.Coord) add("Make this point the origin (0,0)", "", HasOrigin, () => MakeOrigin(one));
                 if (one.Kind == ShapeKind.Area)
                 {
                     add("Add a cut-out (opening)", "X", true, () => CurrentTool = Tool.Cutout);
@@ -1121,7 +1166,25 @@ namespace SnapMeasure
         }
 
         // ---------- mouse ----------
+        /// <summary>For the status-bar guide: -1 = not drawing, otherwise how many points the shape being drawn has.</summary>
+        public int CreatingPoints { get { return creating == null ? -1 : creating.Pts.Count; } }
+        public bool HasOrigin { get { return Renderer.Origin(Shapes) != null; } }
+
+        void FireState() { if (StateChanged != null) StateChanged(this, EventArgs.Empty); }
+
         protected override void OnMouseDown(MouseEventArgs e)
+        {
+            MouseDownCore(e);
+            FireState();
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            MouseUpCore(e);
+            FireState();
+        }
+
+        void MouseDownCore(MouseEventArgs e)
         {
             if (editBox != null)
             {
@@ -1212,8 +1275,28 @@ namespace SnapMeasure
                 case Tool.Text:
                     {
                         Shape hit = HitShape(ip);
-                        if (hit != null && hit.Kind == ShapeKind.Text) { BeginTextEdit(hit, false); break; }
-                        BeginTextEdit(NewShape(Tool.Text, ip), true);
+                        if (hit != null && (hit.Kind == ShapeKind.Text || hit.Kind == ShapeKind.Stamp)) { BeginTextEdit(hit, false); break; }
+                        // click = text that grows as you type; drag = a text box of that width (the text wraps inside)
+                        Sel.Clear(); FireSel();
+                        creating = NewShape(Tool.Text, ip);
+                        creating.Pts.Add(ip);
+                        break;
+                    }
+                case Tool.Coord:
+                    {
+                        if (!HasOrigin)
+                        {
+                            Shape o = NewShape(Tool.Coord, sp);
+                            o.Kind = ShapeKind.Origin;
+                            AddShape(o);
+                            if (Message != null) Message("Origin 0,0 placed – now click the points you want coordinates for (Y counts upwards, like CAD)");
+                        }
+                        else
+                        {
+                            Shape c = NewShape(Tool.Coord, sp);
+                            c.Pts.Add(new PointF(sp.X + 40f * Dpi / Zoom, sp.Y - 34f * Dpi / Zoom));
+                            AddShape(c);
+                        }
                         break;
                     }
                 case Tool.Counter:
@@ -1316,7 +1399,8 @@ namespace SnapMeasure
             Shape s = HitShape(ip);
             if (s == null) return;
             Selected = s; FireSel();
-            if (s.Kind == ShapeKind.Text || s.Kind == ShapeKind.Bubble) { BeginTextEdit(s, false); return; }
+            if (s.Kind == ShapeKind.Text || s.Kind == ShapeKind.Bubble || s.Kind == ShapeKind.Stamp ||
+                (s.Kind == ShapeKind.Cloud && s.Mode != (int)CloudCallout.None && s.Pts.Count > 2)) { BeginTextEdit(s, false); return; }
             if (s.IsPoly)
             {
                 // double-click on an edge inserts a new vertex there
@@ -1420,6 +1504,9 @@ namespace SnapMeasure
                     case Tool.Cutout:
                         creating.Pts[n - 1] = (shift && !snapPt.HasValue && n >= 2) ? Geo.SnapAngle(creating.Pts[n - 2], sp, 15) : sp;
                         break;
+                    case Tool.Text:
+                        if (creating.Pts.Count >= 2) creating.Pts[1] = ip;
+                        break;
                     case Tool.Rect:
                     case Tool.Ellipse:
                     case Tool.Pixelate:
@@ -1504,7 +1591,7 @@ namespace SnapMeasure
             if (!Nullable.Equals(oldSnap, snapPt) || tool != Tool.Select) Invalidate();
         }
 
-        protected override void OnMouseUp(MouseEventArgs e)
+        void MouseUpCore(MouseEventArgs e)
         {
             if (panning)
             {
@@ -1570,6 +1657,15 @@ namespace SnapMeasure
                             if (r.Width > 2 && r.Height > 2 && OcrArea != null) OcrArea(r);
                             return;
                         }
+                    case Tool.Text:
+                        {
+                            RectangleF r = Geo.Rect(c.Pts[0], c.Pts[1]);
+                            if (r.Width * Zoom < 24 * Dpi) { c.Pts.Clear(); c.Pts.Add(new PointF(r.X, r.Y)); }   // a click: text grows as you type
+                            else { c.Pts[0] = r.Location; c.Pts[1] = new PointF(r.Right, r.Y); }            // a drag: fixed-width text box
+                            Invalidate();
+                            BeginTextEdit(c, true);
+                            return;
+                        }
                     case Tool.Stamp:
                         {
                             RectangleF r = Geo.Rect(c.Pts[0], c.Pts[1]);
@@ -1577,11 +1673,42 @@ namespace SnapMeasure
                                 r = new RectangleF(c.Pts[0].X, c.Pts[0].Y, 230f * Dpi / Zoom, 84f * Dpi / Zoom);   // a click makes a default-size stamp
                             c.Pts[0] = r.Location;
                             c.Pts[1] = new PointF(r.Right, r.Bottom);
-                            if (c.Mode == Stamps.Names.Length - 1)
+                            if (c.Mode == Stamps.Custom)
                             {
-                                string t = AskNote != null ? AskNote("Stamp text: first line = stamp word, then date / name", c.Text) : null;
-                                if (t == null || t.Trim().Length == 0) { Invalidate(); return; }
-                                c.Text = t;
+                                // your own stamp: type straight onto it
+                                c.Text = "\n" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                                Invalidate();
+                                BeginTextEdit(c, true);
+                                return;
+                            }
+                            AddShape(c);
+                            break;
+                        }
+                    case Tool.Cloud:
+                        {
+                            RectangleF r = Geo.Rect(c.Pts[0], c.Pts[1]);
+                            if (r.Width * Zoom < 6 || r.Height * Zoom < 6) break;
+                            if (c.Mode != (int)CloudCallout.None)
+                            {
+                                // the callout sits down-right of the cloud, on the leader
+                                RectangleF vr = ViewRect;
+                                float dx = 70f * Dpi / Zoom, dy = 46f * Dpi / Zoom;
+                                PointF tag = new PointF(r.Right + dx, r.Bottom + dy);
+                                if (tag.X > vr.Right - dx * 0.5f) tag.X = r.X - dx;
+                                if (tag.Y > vr.Bottom - dy * 0.5f) tag.Y = r.Y - dy;
+                                c.Pts.Add(tag);
+                                if (c.Mode == (int)CloudCallout.Triangle)
+                                {
+                                    int n = 1;
+                                    foreach (Shape x in Shapes) if (x.Kind == ShapeKind.Cloud && x.Mode == (int)CloudCallout.Triangle) n++;
+                                    c.Text = n.ToString(CultureInfo.InvariantCulture);
+                                }
+                                else
+                                {
+                                    Invalidate();
+                                    BeginTextEdit(c, true);
+                                    return;
+                                }
                             }
                             AddShape(c);
                             break;
@@ -1717,7 +1844,8 @@ namespace SnapMeasure
                 case Keys.A: CurrentTool = Tool.Arrow; break;
                 case Keys.F: CurrentTool = Tool.Freehand; break;
                 case Keys.T: CurrentTool = e.Shift ? Tool.Ocr : Tool.Text; break;
-                case Keys.W: CurrentTool = Tool.Polyline; break;
+                case Keys.W: CurrentTool = Tool.Perimeter; break;
+                case Keys.I: CurrentTool = Tool.Coord; break;
                 case Keys.Q: CurrentTool = Tool.Perimeter; break;
                 case Keys.X: CurrentTool = Tool.Cutout; break;
                 case Keys.U: CurrentTool = Tool.Cloud; break;
@@ -1730,7 +1858,7 @@ namespace SnapMeasure
                 case Keys.G: CurrentTool = Tool.Angle; break;
                 case Keys.K: CurrentTool = Tool.Calibrate; break;
                 case Keys.N: CurrentTool = e.Shift ? Tool.Letter : Tool.Counter; break;
-                case Keys.B: CurrentTool = Tool.Pixelate; break;
+                case Keys.B: Styles[Tool.Highlight].Mode = (int)HighlightMode.Pixelate; CurrentTool = Tool.Highlight; break;   // pixelate = a highlight mode
                 case Keys.C: CurrentTool = Tool.Crop; break;
                 case Keys.H: CurrentTool = Tool.Highlight; break;
                 case Keys.S: CurrentTool = Tool.Bubble; break;
@@ -1804,7 +1932,7 @@ namespace SnapMeasure
 
             Shape skip = (editShape != null && editShape.Kind == ShapeKind.Text) ? editShape : null;
             Renderer.DrawAll(g, Shapes, Image, Scale, skip);
-            if (editShape != null && editIsNew && editShape.Kind == ShapeKind.Bubble)
+            if (editShape != null && editIsNew && (editShape.Kind == ShapeKind.Bubble || editShape.Kind == ShapeKind.Stamp || editShape.Kind == ShapeKind.Cloud))
             {
                 if (editShape.Shadow) Renderer.DrawShadow(g, editShape, Image, Scale, null);
                 Renderer.Draw(g, editShape, Image, Scale, null);
@@ -1821,7 +1949,18 @@ namespace SnapMeasure
                     string nm = creating.Kind == ShapeKind.Area ? "A" + (CountKind(ShapeKind.Area) + 1)
                               : creating.Kind == ShapeKind.Polyline ? "L" + (CountKind(ShapeKind.Polyline) + 1)
                               : creating.Kind == ShapeKind.Perimeter ? "P" + (CountKind(ShapeKind.Perimeter) + 1) : null;
-                    if (tool == Tool.Cutout || tool == Tool.Ocr)
+                    if (tool == Tool.Text)
+                    {
+                        if (creating.Pts.Count >= 2)
+                            using (Pen p = new Pen(Color.FromArgb(0, 120, 215), 1.2f / Zoom))
+                            {
+                                p.DashStyle = DashStyle.Dash;
+                                RectangleF r = Geo.Rect(creating.Pts[0], creating.Pts[1]);
+                                float h = Math.Max(r.Height, creating.FontSize * 1.3f);
+                                g.DrawRectangle(p, r.X, r.Y, Math.Max(1f, r.Width), h);
+                            }
+                    }
+                    else if (tool == Tool.Cutout || tool == Tool.Ocr)
                         using (Pen p = new Pen(tool == Tool.Ocr ? Color.FromArgb(0, 120, 215) : Color.FromArgb(220, 30, 30), 1.5f / Zoom))
                         using (SolidBrush b = new SolidBrush(tool == Tool.Ocr ? Color.FromArgb(30, 0, 120, 215) : Color.FromArgb(40, 220, 30, 30)))
                         {

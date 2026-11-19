@@ -113,6 +113,33 @@ namespace SnapMeasure
         // ---------------- extra export formats ----------------
 
         /// <summary>GIF with an adaptive 256-colour palette (much better than the built-in web palette).</summary>
+        /// <summary>Saves a plain picture in the format its extension names (used when a capture is saved without the editor).</summary>
+        public static void SaveBitmap(Bitmap b, string path)
+        {
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            switch (ext)
+            {
+                case ".jpg":
+                case ".jpeg":
+                    {
+                        System.Drawing.Imaging.ImageCodecInfo jpg = Array.Find(System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders(), c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
+                        using (System.Drawing.Imaging.EncoderParameters ep = new System.Drawing.Imaging.EncoderParameters(1))
+                        {
+                            ep.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)JpegQuality);
+                            b.Save(path, jpg, ep);
+                        }
+                        break;
+                    }
+                case ".bmp": b.Save(path, System.Drawing.Imaging.ImageFormat.Bmp); break;
+                case ".gif": SaveGif(b, path); break;
+                case ".tif":
+                case ".tiff": b.Save(path, System.Drawing.Imaging.ImageFormat.Tiff); break;
+                case ".pdf": SavePdf(b, path, JpegQuality); break;
+                case ".ico": SaveIco(b, path); break;
+                default: b.Save(path, System.Drawing.Imaging.ImageFormat.Png); break;
+            }
+        }
+
         public static void SaveGif(Bitmap src, string path)
         {
             int w = src.Width, h = src.Height;
