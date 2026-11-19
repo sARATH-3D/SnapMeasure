@@ -39,11 +39,32 @@ namespace SnapMeasure
     {
         // the first four keep their place (stamp type is stored by number); new ones go before "Custom…"
         public static readonly string[] Names = { "APPROVED", "REVISE", "FOR INFORMATION", "REJECTED",
-            "DRAFT", "FINAL", "FOR COMMENT", "FOR CONSTRUCTION", "NOT APPROVED", "CHECKED", "AS BUILT", "CONFIDENTIAL", "VOID", "Custom…" };
+            "DRAFT", "FINAL", "FOR COMMENT", "FOR CONSTRUCTION", "NOT APPROVED", "CHECKED", "AS BUILT", "CONFIDENTIAL", "VOID",
+            "AS IS", "DEPARTMENTAL", "EXPERIMENTAL", "EXPIRED", "FOR PUBLIC RELEASE", "NOT FOR PUBLIC RELEASE", "SOLD", "TOP SECRET", "Custom…" };
         static readonly Color Green = Color.FromArgb(30, 140, 60), Orange = Color.FromArgb(225, 115, 0), Blue = Color.FromArgb(0, 100, 200),
                               Red = Color.FromArgb(210, 30, 30), Purple = Color.FromArgb(90, 40, 160);
-        public static readonly Color[] Colors = { Green, Orange, Blue, Red, Red, Red, Green, Green, Red, Green, Blue, Red, Red, Purple };
+        public static readonly Color[] Colors = { Green, Orange, Blue, Red, Red, Red, Green, Green, Red, Green, Blue, Red, Red,
+                                                  Red, Blue, Blue, Red, Green, Red, Blue, Red, Purple };
         public static int Custom { get { return Names.Length - 1; } }
+
+        // the date line on a stamp
+        public static readonly string[] DateFormats = { "yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy", "ddd, d MMMM yyyy", "" };
+        public static readonly string[] DateNames = { "2026-11-19", "19/11/2026", "11/19/2026", "Thu, 19 November 2026", "No date" };
+
+        public static string FormatDate(DateTime d, int fmt)
+        {
+            fmt = Math.Max(0, Math.Min(DateFormats.Length - 1, fmt));
+            return DateFormats[fmt].Length == 0 ? "" : d.ToString(DateFormats[fmt], CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Reads a stamp's date line back in any of the formats (so the format can be changed later).</summary>
+        public static bool TryParseDate(string s, out DateTime d)
+        {
+            foreach (string f in DateFormats)
+                if (f.Length > 0 && DateTime.TryParseExact((s ?? "").Trim(), f, CultureInfo.InvariantCulture, DateTimeStyles.None, out d)) return true;
+            d = DateTime.MinValue;
+            return false;
+        }
     }
 
     public class Shape

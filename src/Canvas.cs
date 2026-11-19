@@ -219,7 +219,8 @@ namespace SnapMeasure
         public static string StampText(int mode, string custom)
         {
             string main = mode >= 0 && mode < Stamps.Names.Length - 1 ? Stamps.Names[mode] : (string.IsNullOrEmpty(custom) ? "CHECKED" : custom);
-            return main + "\n" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            string date = Stamps.FormatDate(DateTime.Now, Settings.GetInt("StampDate", 0));
+            return date.Length > 0 ? main + "\n" + date : main;
         }
 
         // ---------- coordinates & view ----------
@@ -1676,7 +1677,8 @@ namespace SnapMeasure
                             if (c.Mode == Stamps.Custom)
                             {
                                 // your own stamp: type straight onto it
-                                c.Text = "\n" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                                string dt = Stamps.FormatDate(DateTime.Now, Settings.GetInt("StampDate", 0));
+                                c.Text = dt.Length > 0 ? "\n" + dt : "";
                                 Invalidate();
                                 BeginTextEdit(c, true);
                                 return;

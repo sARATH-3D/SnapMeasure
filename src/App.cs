@@ -1150,12 +1150,37 @@ namespace SnapMeasure
                 Directory.CreateDirectory(dir);
                 FilePath = Path.Combine(dir, "SnapMeasure.ini");
             }
-            if (!File.Exists(FilePath)) return;
-            foreach (string line in File.ReadAllLines(FilePath))
+            ReadFile();
+        }
+
+        static DateTime readStamp = DateTime.MinValue;
+
+        static void ReadFile()
+        {
+            try
             {
-                int i = line.IndexOf('=');
-                if (i > 0 && !line.StartsWith(";")) d[line.Substring(0, i).Trim()] = line.Substring(i + 1).Trim();
+                if (FilePath == null || !File.Exists(FilePath)) return;
+                DateTime t = File.GetLastWriteTimeUtc(FilePath);
+                string[] lines = File.ReadAllLines(FilePath);
+                foreach (string line in lines)
+                {
+                    int i = line.IndexOf('=');
+                    if (i > 0 && !line.StartsWith(";")) d[line.Substring(0, i).Trim()] = line.Substring(i + 1).Trim();
+                }
+                readStamp = t;
             }
+            catch (Exception) { }
+        }
+
+        /// <summary>Another SnapMeasure window (e.g. an editor opened from Explorer runs as its own program) may have
+        /// changed the settings file: read it again so every window uses the latest settings and none overwrites another's.</summary>
+        static void Refresh()
+        {
+            try
+            {
+                if (FilePath != null && File.Exists(FilePath) && File.GetLastWriteTimeUtc(FilePath) != readStamp) ReadFile();
+            }
+            catch (Exception) { }
         }
 
         static bool CanWrite(string dir)
@@ -1178,12 +1203,13 @@ namespace SnapMeasure
                 lines.Add("; SnapMeasure settings");
                 foreach (KeyValuePair<string, string> kv in d) lines.Add(kv.Key + "=" + kv.Value);
                 File.WriteAllLines(FilePath, lines.ToArray());
+                readStamp = File.GetLastWriteTimeUtc(FilePath);
             }
             catch { }
         }
 
-        public static string Get(string key, string def) { string v; return d.TryGetValue(key, out v) ? v : def; }
-        public static void Set(string key, string val) { d[key] = val; Save(); }
+        public static string Get(string key, string def) { Refresh(); string v; return d.TryGetValue(key, out v) ? v : def; }
+        public static void Set(string key, string val) { Refresh(); d[key] = val; Save(); }
         public static bool GetBool(string key, bool def) { string v = Get(key, null); return v == null ? def : v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase); }
         public static int GetInt(string key, int def) { int v; return int.TryParse(Get(key, ""), NumberStyles.Integer, CultureInfo.InvariantCulture, out v) ? v : def; }
         public static double GetDouble(string key, double def) { double v; return double.TryParse(Get(key, ""), NumberStyles.Float, CultureInfo.InvariantCulture, out v) && v > 0 ? v : def; }
@@ -1574,7 +1600,11 @@ namespace SnapMeasure
                     nd.Value = Math.Max(0, Math.Min(10000, SnapMeasure.Settings.GetInt("CaptureDelay", 0)));
                     nd.SetBounds(S(12), S(284), S(80), S(26));
                     Label ld = new Label(); ld.Text = "milliseconds to wait before capturing (lets menus close)"; ld.AutoSize = true; ld.Location = new Point(S(98), S(287));
-                    foreach (Control c in new Control[] { cClip, sep, cCur, cSnd, cNot, cMag, nd, ld }) tCap.Controls.Add(c);
+                    Label sep2 = new Label(); sep2.BorderStyle = BorderStyle.Fixed3D; sep2.SetBounds(S(12), S(320), S(510), 2);
+                    CheckBox cMatch = new CheckBox(); cMatch.Name = "match"; cMatch.Text = "Editor: match the capture size (open the window just big enough for the picture at 100 %)";
+                    cMatch.AutoSize = true; cMatch.MaximumSize = new Size(S(510), 0); cMatch.Location = new Point(S(12), S(332));
+                    cMatch.Checked = SnapMeasure.Settings.GetBool("MatchCaptureSize", false);
+                    foreach (Control c in new Control[] { cClip, sep, cCur, cSnd, cNot, cMag, nd, ld, sep2, cMatch }) tCap.Controls.Add(c);
                 }
 
                 // ---------- Output ----------
@@ -1682,6 +1712,7 @@ namespace SnapMeasure
                     SnapMeasure.Settings.Set("CameraSound", chk("sound") ? "1" : "0");
                     SnapMeasure.Settings.Set("Notify", chk("notify") ? "1" : "0");
                     SnapMeasure.Settings.Set("Magnifier", chk("mag") ? "1" : "0");
+                    SnapMeasure.Settings.Set("MatchCaptureSize", chk("match") ? "1" : "0");
                     NumericUpDown dl = tCap.Controls["delay"] as NumericUpDown;
                     if (dl != null) SnapMeasure.Settings.Set("CaptureDelay", ((int)dl.Value).ToString(CultureInfo.InvariantCulture));
                     return;

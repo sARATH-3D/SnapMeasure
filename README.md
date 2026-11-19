@@ -10,13 +10,14 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
 **What's new in 1.2:**
 * **Settings window** with three tabs: **Capture** (what PrtSc does – open the editor, only copy, only save, or copy + save;
-  mouse pointer; camera sound; notifications; magnifier; delay), **Output** and **About** (version, GitHub, check for updates, shortcuts).
+  mouse pointer; camera sound; notifications; magnifier; delay; editor window matches the capture size), **Output** and **About** (version, GitHub, check for updates, shortcuts).
 * **Coordinates** (`I`): the first click sets the origin 0,0; every point then shows X / Y with **Y up, like CAD**.
   Drag the origin (or right-click a point → *Make this point the origin*) and every value updates. X and Y go to Excel.
 * **Line styles** for all outlines: solid, dashed, dotted, dash-dot, long dash and **cloud** (scalloped rectangles, ellipses, polygons).
 * **Revision cloud callouts:** a **revision triangle** with a number, or a **text box**, on a leader. Drag the yellow handle to move it.
 * **Stamps:** type straight onto the stamp (no pop-up) and more stamp types (Draft, Final, For comment, For construction,
-  Not approved, Checked, As built, Confidential, Void …).
+  Not approved, Checked, As built, Confidential, Void, Expired, Sold … 21 in all, plus Custom) with a **date format** choice
+  (2026-11-19, 19/11/2026, 11/19/2026, long date, or no date).
 * **Text:** drag a **text box** to set its width (the text wraps), side handles to resize it, an optional **frame** in the line
   colour and width, and **Esc keeps your text**.
 * **Length / perimeter** is open by default; tick **Closed** for a perimeter.
@@ -103,7 +104,7 @@ Open them from the tray menu or the **Ruler** / **Protractor** buttons in the ed
 | Line / Arrow / Freehand | `L` `A` `F` | **10 line ends** (none, filled / open / hollow arrow, slash, tick, dot, circle, diamond, square) for the start and the end |
 | Text | `T` | Click and type, or **drag a box** (the text wraps; side handles change the width). Bold, italic, alignment and an optional **frame** on the style bar. `Esc` keeps the text. |
 | Speech bubble | `S` | Drag or click, then type. Bold / italic / alignment as for Text. Drag the yellow handle to point the tail. |
-| Stamp | `Z` | Click to place APPROVED, REVISE, FOR INFORMATION, REJECTED, DRAFT, FINAL, FOR COMMENT, FOR CONSTRUCTION, NOT APPROVED, CHECKED, AS BUILT, CONFIDENTIAL, VOID or your own words, with the date. **Double-click and type straight onto it.** |
+| Stamp | `Z` | Click to place APPROVED, REVISE, FOR INFORMATION, REJECTED, DRAFT, FINAL, FOR COMMENT, FOR CONSTRUCTION, NOT APPROVED, CHECKED, AS BUILT, CONFIDENTIAL, VOID, EXPIRED, SOLD, TOP SECRET … or your own words, with the date in the format you pick on the style bar. **Double-click and type straight onto it.** |
 | Note | `O` | A sticky note shown in the editor only – **left out of saved, copied and pinned pictures** (listed in the Excel export) |
 | Copy text (OCR) | `Shift+T` | Drag over text to copy it; a click copies all the text. The **Copy text** button copies the whole picture. |
 | Pixelate | `B` | Hide sensitive information |

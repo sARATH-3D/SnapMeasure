@@ -95,6 +95,14 @@ namespace SnapMeasure
             StartPosition = FormStartPosition.Manual;
             Rectangle wa = Screen.FromPoint(Cursor.Position).WorkingArea;
             Size = new Size(Math.Min(S(1300), (int)(wa.Width * 0.92)), Math.Min(S(860), (int)(wa.Height * 0.92)));
+            if (Settings.GetBool("MatchCaptureSize", false) && img != null)
+            {
+                // Settings → Capture → "Match capture size": the window fits the picture at 100 % (within the screen)
+                int chromeW = S(52) + (Settings.GetBool("ShowPanel", true) ? S(262) : 0) + S(20) + S(60);
+                int chromeH = S(32) + S(36) + S(26) + S(20) + S(40) + S(60);
+                Size = new Size(Math.Max(S(780), Math.Min(img.Width + chromeW, (int)(wa.Width * 0.95))),
+                                Math.Max(S(520), Math.Min(img.Height + chromeH, (int)(wa.Height * 0.95))));
+            }
             Location = new Point(wa.X + (wa.Width - Width) / 2, wa.Y + (wa.Height - Height) / 2);
             // cascade: step down-right from any editor already open there, so windows don't stack exactly
             List<Point> others = Native.EditorWindowCorners(IntPtr.Zero);   // this form has no window yet
@@ -582,6 +590,25 @@ namespace SnapMeasure
             LoadStyle();
         }
 
+        /// <summary>Stamp date format: rewrites the date line of the selected stamps (same date, new format) and is used for new stamps.</summary>
+        void StampDateChanged(int fmt)
+        {
+            if (loading || fmt < 0) return;
+            Settings.Set("StampDate", fmt.ToString(CultureInfo.InvariantCulture));
+            ApplyStyle(x =>
+            {
+                if (x.Kind != ShapeKind.Stamp || !cv.Shapes.Contains(x)) return;
+                List<string> lines = new List<string>((x.Text ?? "").Replace("\r", "").Split('\n'));
+                DateTime when = DateTime.Now;
+                int at = -1;
+                for (int i = 1; i < lines.Count; i++) { DateTime d; if (Stamps.TryParseDate(lines[i], out d)) { when = d; at = i; break; } }
+                string nd = Stamps.FormatDate(when, fmt);
+                if (at >= 0) { if (nd.Length > 0) lines[at] = nd; else lines.RemoveAt(at); }
+                else if (nd.Length > 0) lines.Insert(Math.Min(1, lines.Count), nd);
+                x.Text = string.Join("\n", lines.ToArray());
+            });
+        }
+
         void StampModeChanged()
         {
             int m = cStamp.SelectedIndex;
@@ -771,7 +798,16 @@ namespace SnapMeasure
             gHeads.Controls.Add(cHeadE);
             rowHl = Grp("Mode", cHlMode);
             rowMarkStart = Grp("Start at", tMarkStart);
+            ComboBox cDate = Combo(150, Stamps.DateNames);
+            cDate.SelectedIndex = Math.Max(0, Math.Min(Stamps.DateNames.Length - 1, Settings.GetInt("StampDate", 0)));
+            cDate.SelectedIndexChanged += (s, e) => StampDateChanged(cDate.SelectedIndex);
+            tip.SetToolTip(cDate, "Date line on the stamp (keeps the stamp's own date, just changes how it is written)");
             rowStamp = Grp("Stamp", cStamp);
+            Label lDate = new Label(); lDate.Text = "Date"; lDate.AutoSize = true; lDate.ForeColor = Color.FromArgb(80, 80, 80);
+            lDate.Margin = new Padding(S(4), S(6), S(3), 0);
+            rowStamp.Controls.Add(lDate);
+            cDate.Margin = new Padding(0, S(2), S(3), 0);
+            rowStamp.Controls.Add(cDate);
             rowMarkup = Grp("Mode", cMarkup);
             gDash = Grp("Style", cDash);
             rowForm = Grp("Shape", cForm);
