@@ -205,7 +205,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 108 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 109 built-in checks.
 
 ## Licence
 MIT – see [LICENSE](LICENSE). You can use, change and share SnapMeasure freely; keep the copyright notice.

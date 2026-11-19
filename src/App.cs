@@ -480,6 +480,26 @@ namespace SnapMeasure
             cv.Undo(); cv.Undo(); cv.Undo();
             check("Undo effects", cv.Image.Width + "x" + cv.Image.Height, "900x600");
 
+            // undo / redo over picture changes must never reach a freed (disposed) picture
+            string ur;
+            try
+            {
+                cv.ImageOp("rotcw"); cv.ImageOp("border");
+                cv.Undo(); cv.Undo(); cv.Redo(); cv.Redo();
+                using (Bitmap fl = cv.Flatten(null)) { }
+                string a1 = cv.Image.Width + "x" + cv.Image.Height;
+                cv.Undo(); cv.Undo();
+                cv.ImageOp("gray");                                   // a new step drops the redo pictures
+                cv.Undo();
+                for (int i = 0; i < 305; i++) cv.PushUndo(cv.Snapshot());   // past the 300-step limit
+                for (int i = 0; i < 5; i++) cv.Undo();
+                cv.Redo();
+                using (Bitmap fl = cv.Flatten(null)) { }
+                ur = a1 + "|" + cv.Image.Width + "x" + cv.Image.Height;
+            }
+            catch (Exception ex) { ur = ex.GetType().Name + ": " + ex.Message; }
+            check("Undo / redo after rotate + border", ur, "608x908|900x600");
+
             // a bubble started near the bottom-right corner is pulled fully inside the image
             {
                 RectangleF br = new RectangleF(850, 580, 170, 70);
@@ -1254,24 +1274,32 @@ namespace SnapMeasure
                 foreach (KeyValuePair<string, string> kv in d) lines.Add(kv.Key + "=" + kv.Value);
                 // write a temporary file next to it and swap it in, so another SnapMeasure process never reads half a file
                 string tmp = FilePath + "." + Process.GetCurrentProcess().Id + ".tmp";
-                File.WriteAllLines(tmp, lines.ToArray());
-                for (int attempt = 0; ; attempt++)
+                try
                 {
-                    try
+                    File.WriteAllLines(tmp, lines.ToArray());
+                    for (int attempt = 0; ; attempt++)
                     {
-                        if (File.Exists(FilePath))
+                        try
                         {
-                            try { File.Replace(tmp, FilePath, null, true); }
-                            catch (PlatformNotSupportedException) { File.Copy(tmp, FilePath, true); File.Delete(tmp); }   // e.g. FAT USB stick
+                            // .NET 4: File.Replace needs an existing target and File.Move can't overwrite
+                            if (File.Exists(FilePath))
+                            {
+                                try { File.Replace(tmp, FilePath, null, true); }
+                                catch (PlatformNotSupportedException) { File.Copy(tmp, FilePath, true); }   // e.g. FAT USB stick
+                            }
+                            else File.Move(tmp, FilePath);
+                            break;
                         }
-                        else File.Move(tmp, FilePath);
-                        break;
+                        catch (IOException)
+                        {
+                            if (attempt >= 4) throw;
+                            Thread.Sleep(40);      // another SnapMeasure is swapping the file in right now
+                        }
                     }
-                    catch (IOException)
-                    {
-                        if (attempt >= 4) { try { File.Delete(tmp); } catch { } throw; }
-                        Thread.Sleep(40);
-                    }
+                }
+                finally
+                {
+                    try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
                 }
                 readStamp = File.GetLastWriteTimeUtc(FilePath);
             }

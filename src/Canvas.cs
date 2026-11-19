@@ -1961,17 +1961,19 @@ namespace SnapMeasure
             {
                 if (checker == null)
                 {
-                    Bitmap b = new Bitmap(16, 16);
-                    using (Graphics g = Graphics.FromImage(b))
+                    using (Bitmap b = new Bitmap(16, 16))      // the brush keeps its own copy of the pattern
                     {
-                        g.Clear(Color.White);
-                        using (SolidBrush br = new SolidBrush(Color.FromArgb(225, 225, 225)))
+                        using (Graphics g = Graphics.FromImage(b))
                         {
-                            g.FillRectangle(br, 0, 0, 8, 8);
-                            g.FillRectangle(br, 8, 8, 8, 8);
+                            g.Clear(Color.White);
+                            using (SolidBrush br = new SolidBrush(Color.FromArgb(225, 225, 225)))
+                            {
+                                g.FillRectangle(br, 0, 0, 8, 8);
+                                g.FillRectangle(br, 8, 8, 8, 8);
+                            }
                         }
+                        checker = new TextureBrush(b);
                     }
-                    checker = new TextureBrush(b);
                 }
                 return checker;
             }
