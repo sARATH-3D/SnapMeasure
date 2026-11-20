@@ -171,6 +171,7 @@ namespace SnapMeasure
             cv.SelectionChanged += (s, e) => { LoadStyle(); SyncListSelection(); UpdateGuide(); };
             cv.StateChanged += (s, e) => UpdateGuide();
             cv.ToolChanged += (s, e) => { SyncToolButtons(); LoadStyle(); };
+            cv.MatchChanged += (s, e) => SyncToolButtons();
             cv.ViewChanged += (s, e) => { UpdateZoom(); if (bRulers != null) bRulers.Checked = cv.ShowRulers; };
             cv.CursorMoved = UpdatePos;
 
@@ -285,6 +286,7 @@ namespace SnapMeasure
             bar.Items.Add(lZoomBar);
             IconOnly(AddBtn(bar, "Zoom in", "Zoom in (Ctrl++, or Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(1)), "zoomin");
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
+            IconOnly(AddBtn(bar, "Zoom to area", "Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)", (s, e) => { cv.StartZoomBox(); cv.Focus(); }), "zoomarea");
             bar.Items.Add(new ToolStripSeparator());
 
             ToolStripDropDownButton view = new ToolStripDropDownButton("View");
@@ -392,9 +394,9 @@ namespace SnapMeasure
             AddTool(Tool.Select, "Select / move / rotate (V)");
             AddHeading("MEASURE");
             AddTool(Tool.Dimension, "Dimension (D)");
-            AddTool(Tool.Area, "Area + perimeter (M)");
+            AddTool(Tool.Area, "Area / perimeter: closed outline, show area, perimeter or both (M; Q = perimeter only)");
             AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
-            AddTool(Tool.Perimeter, "Length / perimeter: open path, or tick 'Closed' for a perimeter (W)");
+            AddTool(Tool.Perimeter, "Length: open path along a run (W)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
             AddTool(Tool.Coord, "Coordinates: first click = origin 0,0, then points show X / Y (I)");
@@ -405,7 +407,6 @@ namespace SnapMeasure
             AddHeading("MARK-UP");
             AddTool(Tool.Highlight, "Focus: spotlight / grayscale outside / magnify / pixelate, in several shapes (H, B = pixelate)");
             AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
-            AddTool(Tool.Markup, "Text markup: underline / strike out / highlight text (Y)");
             AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
             AddTool(Tool.Rect, "Rectangle (R)");
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
@@ -422,6 +423,25 @@ namespace SnapMeasure
             AddHeading("TOOLS");
             AddTool(Tool.Ocr, "Copy text from an area – text recognition (Shift+T)");
             AddTool(Tool.Crop, "Crop (C)");
+            // match properties: not a drawing tool, a brush that stays on until Esc / right-click
+            bMatch = new ToolStripButton();
+            bMatch.Image = Icons.Cmd("match", S(IconSize));
+            bMatch.ImageScaling = ToolStripItemImageScaling.None;
+            bMatch.DisplayStyle = ToolStripItemDisplayStyle.Image;
+            bMatch.AutoSize = false;
+            bMatch.Size = new Size(S(IconSize + 24), S(IconSize + 3));
+            bMatch.ToolTipText = "Match properties: select a shape, then click the shapes to give its look (Ctrl+Shift+M; Esc or right-click ends)";
+            bMatch.Margin = new Padding(0, S(1), 0, S(1));
+            bMatch.Click += (s, e) => { ToggleMatch(); cv.Focus(); };
+            toolBar.Items.Add(bMatch);
+        }
+
+        ToolStripButton bMatch;
+        void ToggleMatch()
+        {
+            if (cv.MatchActive) { cv.EndMatch(); return; }
+            if (cv.Selected == null || cv.Sel.Count != 1) { Flash("Match properties: first select the shape whose look you want to copy."); return; }
+            cv.StartMatch();
         }
 
         /// <summary>Small section title in the tool column.</summary>
@@ -1135,7 +1155,8 @@ namespace SnapMeasure
         // ---------------- state sync ----------------
         void SyncToolButtons()
         {
-            foreach (KeyValuePair<Tool, ToolStripButton> kv in toolButtons) kv.Value.Checked = kv.Key == cv.CurrentTool;
+            foreach (KeyValuePair<Tool, ToolStripButton> kv in toolButtons) kv.Value.Checked = kv.Key == cv.CurrentTool && !cv.MatchActive;
+            if (bMatch != null) bMatch.Checked = cv.MatchActive;
             UpdateGuide();
         }
 
@@ -1153,6 +1174,8 @@ namespace SnapMeasure
         string GuideText()
         {
             if (cv.IsEditingText) return "Typing. Esc or click outside = done.";
+            if (cv.MatchActive) return "Match properties: click shapes to give them the look. Esc or right-click = done.";
+            if (cv.ZoomBoxActive) return "Zoom to area: drag a box. Esc = cancel.";
             Tool t = cv.CurrentTool;
             int n = cv.CreatingPoints;
             Shape sel = cv.Selected;
@@ -1817,6 +1840,7 @@ namespace SnapMeasure
                     return true;
                 case Keys.Control | Keys.S: QuickSave(); return true;
                 case Keys.Control | Keys.Shift | Keys.S: SaveAs(); return true;
+                case Keys.Control | Keys.Shift | Keys.M: if (!inText) { ToggleMatch(); return true; } break;
                 case Keys.Control | Keys.O: OpenFile(); return true;
                 case Keys.Control | Keys.N: NewCapture(); return true;
                 case Keys.Control | Keys.P: Pin(); return true;

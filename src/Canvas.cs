@@ -95,6 +95,7 @@ namespace SnapMeasure
 
         public Canvas()
         {
+            HookSideWheel();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
             BackColor = Color.FromArgb(52, 54, 58);
@@ -200,6 +201,8 @@ namespace SnapMeasure
             set
             {
                 EndTextEdit(true);
+                EndMatch();
+                if (zoomBox) EndZoomBox();
                 if (creating != null && creating.IsPoly && tool != value) FinishPoly();
                 creating = null;
                 marquee = false;
@@ -1310,12 +1313,16 @@ namespace SnapMeasure
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
+            if (ZoomBoxMouse(e, 0)) return;
+            if (MatchMouse(e)) { Focus(); return; }
             MouseDownCore(e);
             FireState();
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
+            if (ZoomBoxMouse(e, 2)) return;
+            if (matchSource != null) return;
             MouseUpCore(e);
             FireState();
         }
@@ -1570,6 +1577,8 @@ namespace SnapMeasure
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
+            if (ZoomBoxMouse(e, 1)) return;
+            if (matchSource != null) { Cursor = Cursors.Hand; return; }
             PointF ip = ToImg(e.Location);
             mouseImg = ip;
             mouseScr = e.Location;
@@ -1930,6 +1939,46 @@ namespace SnapMeasure
             ViewMoved();
         }
 
+        /// <summary>Side scrolling (tilt wheel, MX thumb wheel, touchpad): WM_MOUSEHWHEEL pans left / right.</summary>
+        public void ScrollSideways(int delta)
+        {
+            Pan = new PointF(Pan.X - delta / 120f * 60f * Dpi, Pan.Y);
+            ViewMoved();
+        }
+
+        /// <summary>Side scrolling is sent to the focused control (maybe a toolbar box); send it to the canvas under the pointer instead.</summary>
+        sealed class SideWheelFilter : IMessageFilter
+        {
+            [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Point p);
+            public bool PreFilterMessage(ref Message m)
+            {
+                if (m.Msg != 0x020E) return false;
+                Canvas cv = Control.FromHandle(WindowFromPoint(Cursor.Position)) as Canvas;
+                if (cv == null) return false;
+                cv.ScrollSideways((short)((m.WParam.ToInt64() >> 16) & 0xFFFF));
+                return true;
+            }
+        }
+        static bool sideWheelHooked;
+        static void HookSideWheel()
+        {
+            if (sideWheelHooked) return;
+            sideWheelHooked = true;
+            Application.AddMessageFilter(new SideWheelFilter());
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_MOUSEHWHEEL = 0x020E;
+            if (m.Msg == WM_MOUSEHWHEEL)
+            {
+                ScrollSideways((short)((m.WParam.ToInt64() >> 16) & 0xFFFF));
+                m.Result = (IntPtr)1;     // tell the mouse driver it was handled, or some stop sending it
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
         /// <summary>If another window takes the mouse in the middle of a drag, cancel it cleanly
         /// (otherwise a guide or selection box could be left hanging and dropped on the next click).</summary>
         protected override void OnMouseCaptureChanged(EventArgs e)
@@ -1971,7 +2020,9 @@ namespace SnapMeasure
             switch (e.KeyCode)
             {
                 case Keys.Escape:
-                    if (creating != null) creating = null;
+                    if (zoomBox) EndZoomBox();
+                    else if (matchSource != null) EndMatch();
+                    else if (creating != null) creating = null;
                     else if (Sel.Count > 0) { Sel.Clear(); FireSel(); }
                     else CurrentTool = Tool.Select;
                     Invalidate(); break;
@@ -1999,8 +2050,7 @@ namespace SnapMeasure
                 case Keys.Q: Styles[Tool.Area].Mode = 2; CurrentTool = Tool.Area; break;   // closed perimeter = area tool showing the perimeter only
                 case Keys.X: CurrentTool = Tool.Cutout; break;
                 case Keys.U: CurrentTool = Tool.Cloud; break;
-                case Keys.Z: CurrentTool = Tool.Stamp; break;
-                case Keys.Y: CurrentTool = Tool.Markup; break;
+                case Keys.Z: if (e.Shift) StartZoomBox(); else CurrentTool = Tool.Stamp; break;   // Shift+Z = zoom to area
                 case Keys.O: CurrentTool = Tool.Note; break;
                 case Keys.P: CurrentTool = Tool.Polygon; break;
                 case Keys.D: CurrentTool = Tool.Dimension; break;
@@ -2064,6 +2114,128 @@ namespace SnapMeasure
         }
 
         protected override void OnPaint(PaintEventArgs e)
+        {
+            PaintCore(e);
+            if (zoomBox && zbStart.HasValue)
+                using (Pen p = new Pen(Color.FromArgb(0, 120, 215), 1.5f))
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(30, 0, 120, 215)))
+                {
+                    p.DashStyle = DashStyle.Dash;
+                    Rectangle r = ZoomBoxRect();
+                    e.Graphics.FillRectangle(b, r);
+                    e.Graphics.DrawRectangle(p, r);
+                }
+        }
+
+        // ---------- zoom to area (Shift+Z or the button next to Fit): drag a box, the view zooms to it ----------
+        bool zoomBox;
+        Point? zbStart;
+        Point zbEnd;
+        public bool ZoomBoxActive { get { return zoomBox; } }
+        public void StartZoomBox()
+        {
+            if (Image == null) return;
+            zoomBox = true; zbStart = null;
+            Cursor = Cursors.Cross;
+            Invalidate();
+            FireState();
+        }
+        void EndZoomBox()
+        {
+            zoomBox = false; zbStart = null;
+            Cursor = Cursors.Default;
+            Invalidate();
+            FireState();
+        }
+        Rectangle ZoomBoxRect()
+        {
+            Point a = zbStart.Value;
+            return Rectangle.FromLTRB(Math.Min(a.X, zbEnd.X), Math.Min(a.Y, zbEnd.Y), Math.Max(a.X, zbEnd.X), Math.Max(a.Y, zbEnd.Y));
+        }
+        /// <summary>Zoom so that this part of the picture (image pixels) fills the window.</summary>
+        public void ZoomToRect(RectangleF ir)
+        {
+            if (Image == null || ir.Width < 1 || ir.Height < 1) return;
+            float rs = RulerSize, aw = Width - rs, ah = Height - rs;
+            Zoom = Math.Max(0.05f, Math.Min(32f, Math.Min((aw - 24f) / ir.Width, (ah - 24f) / ir.Height)));
+            Pan = new PointF(rs + aw / 2f - (ir.X + ir.Width / 2f) * Zoom, rs + ah / 2f - (ir.Y + ir.Height / 2f) * Zoom);
+            ViewMoved();
+        }
+        /// <summary>Mouse handling while zoom-to-area is on (what: 0 down, 1 move, 2 up); true = the event was used.</summary>
+        bool ZoomBoxMouse(MouseEventArgs e, int what)
+        {
+            if (!zoomBox) return false;
+            if (what == 0)
+            {
+                if (e.Button == MouseButtons.Right) { EndZoomBox(); return true; }
+                if (e.Button == MouseButtons.Left) { zbStart = e.Location; zbEnd = e.Location; }
+                return e.Button == MouseButtons.Left;
+            }
+            if (what == 1) { if (zbStart.HasValue) { zbEnd = e.Location; Invalidate(); return true; } return false; }
+            if (e.Button != MouseButtons.Left || !zbStart.HasValue) return false;
+            zbEnd = e.Location;
+            Rectangle r = ZoomBoxRect();
+            EndZoomBox();
+            if (r.Width >= 6 && r.Height >= 6)
+            {
+                PointF a = ToImg(new Point(r.Left, r.Top)), b = ToImg(new Point(r.Right, r.Bottom));
+                ZoomToRect(RectangleF.FromLTRB(a.X, a.Y, b.X, b.Y));
+            }
+            else ZoomAt(Zoom * 2f, r.Location);     // a click zooms in twice around that point
+            return true;
+        }
+
+        // ---------- match properties (Ctrl+Shift+M): copy the selected shape's look onto the shapes you click ----------
+        Shape matchSource;
+        public bool MatchActive { get { return matchSource != null; } }
+        public event EventHandler MatchChanged;
+        public void StartMatch()
+        {
+            Shape s = Selected;
+            if (s == null || Sel.Count != 1) return;
+            EndTextEdit(true);
+            matchSource = s.Clone();
+            Cursor = Cursors.Hand;
+            if (MatchChanged != null) MatchChanged(this, EventArgs.Empty);
+        }
+        public void EndMatch()
+        {
+            if (matchSource == null) return;
+            matchSource = null;
+            Cursor = Cursors.Default;
+            Invalidate();
+            if (MatchChanged != null) MatchChanged(this, EventArgs.Empty);
+        }
+
+        /// <summary>Copy colours, opacity, line width / style, text size and style, line ends and shadow – never the text, points or labels.</summary>
+        public static void MatchProps(Shape src, Shape t)
+        {
+            t.Stroke = src.Stroke; t.StrokeOpacity = src.StrokeOpacity;
+            t.Fill = src.Fill; t.FillOpacity = src.FillOpacity;
+            t.Width = src.Width;
+            if (t.HasOutlineStyle && (src.Dash != (int)LineStyle.Cloud || t.CanBeCloud)) t.Dash = src.Dash;
+            t.FontSize = src.FontSize;
+            t.Bold = src.Bold; t.Italic = src.Italic; t.Underline = src.Underline; t.Strikeout = src.Strikeout;
+            if (t.HasHeads && src.HasHeads) { t.HeadStart = src.HeadStart; t.HeadEnd = src.HeadEnd; }
+            if (t.CanShadow) t.Shadow = src.Shadow;
+            t.Cache = null;
+        }
+
+        /// <summary>Mouse handling while the brush is on; true = the event was used.</summary>
+        bool MatchMouse(MouseEventArgs e)
+        {
+            if (matchSource == null) return false;
+            if (e.Button == MouseButtons.Right) { EndMatch(); return true; }
+            if (e.Button != MouseButtons.Left) return true;
+            Shape t = HitShape(ToImg(e.Location));
+            if (t == null) return true;
+            PushUndo(Snapshot());
+            MatchProps(matchSource, t);
+            FireDoc(); Invalidate();
+            return true;
+        }
+
+        void PaintCore(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
             g.Clear(BackColor);

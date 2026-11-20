@@ -12,11 +12,18 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
 **What's new in 1.3:**
 * **Radius / diameter** (`Shift+R`): click 3 points on a curve or circle → R, Ø and the arc length (R1, R2 … in Excel).
+  **Show** radius, diameter or both; the label can be moved and resized like an area label.
+* **Area and perimeter in one tool** (`M`): **Show** area + perimeter, area only or perimeter only. `Q` opens it set to
+  perimeter only (P1, P2 …); cut-outs still work. `W` stays for open lengths. Files from 1.2 open unchanged.
+* **Match properties** (`Ctrl+Shift+M`, brush under TOOLS): select a shape, then click other shapes to give them its colours,
+  opacity, line width and style, text size and style, line ends and shadow (never its text or points). `Esc` or right-click ends it.
+* **Zoom to area** (`Shift+Z`, button next to *Fit*): drag a box and the view zooms to it.
+* **Side scrolling:** the tilt / thumb wheel (e.g. Logitech MX) and `Shift`+wheel pan left and right.
 * **Arc** (`Shift+L`): a drawing tool – start, a point on the arc, end.
 * **Polyline:** untick **Closed** on the Polygon tool for an open line through any number of points, with optional arrowheads.
 * **Highlighter pen** (`Shift+H`): a see-through yellow marker you drag over text; hold `Shift` for a straight stroke
   (line width up to 200 for large text).
-* **Focus** (`H`, was Highlight): spotlight, grayscale outside, magnify or pixelate. The yellow marker mode is now the highlighter pen.
+* **Focus** (`H`, was Highlight): spotlight, grayscale, magnify or pixelate; grayscale and pixelate work **inside or outside** the shape. The yellow marker mode is now the highlighter pen.
 * **Magnifier** at the pointer for every measuring tool, and while you drag a point of a measurement, so points land exactly on the lines.
 * **Text boxes have 8 handles**: corners and sides resize the box, the text wraps inside and keeps its size.
   **Line width is the frame:** 0 = no frame, any other width draws it. New **U** (underline) and **S** (strike out) buttons.
@@ -30,6 +37,8 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Tidier top row:** *New capture ▾* (blank canvas), *Save ▾* (save as), *Copy ▾* (picture, text, measurements), *Image ▾* (rotate,
   mirror, effects) and *View ▾* (1:1, rulers, on-screen ruler and protractor). **Panel, Pin and Settings** sit at the right end.
 * **Simpler status bar:** one short sentence for the next step.
+* **Shadows** fall only under lines and shapes, not under value boxes or labels.
+* The **Text markup** tool (`Y`) is gone: use the highlighter pen or a line. Markups in older files still show.
 * **Guides are magenta**, so they stand out from blue and cyan drawings. **Focus** always starts as a rectangle.
 * **Pin** minimizes the editor; in the pin, `Ctrl+P`, `Esc` or a double-click unpins and brings the editor back.
 
@@ -126,20 +135,19 @@ Open them from the tray menu or **View ▾ → On-screen ruler / On-screen protr
 | Tool | Key | What it does |
 |---|---|---|
 | Dimension | `D` | CAD-style dimension: solid arrowheads that grow with the line width, end ticks, and the value **in the middle of the line**. Drag the yellow handle to offset it. Double-click to add a prefix. |
-| Area | `M` | Click corners → area + perimeter label (A1, A2 …) |
+| Area / perimeter | `M` | Click corners → label with area + perimeter, area only or perimeter only (**Show** on the style bar) (A1, A2 …) |
 | Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
 | Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …) |
-| Perimeter | `Q` | Closed outline → perimeter only (P1, P2 …) |
+| Perimeter | `Q` | The area tool set to perimeter only (P1, P2 …) |
 | Coordinates | `I` | The first click sets the origin 0,0; every point after it shows X / Y (**Y up, like CAD**). Drag the origin, or right-click a point → *Make this point the origin*, and every value updates. X and Y go to Excel. |
 | Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
-| Radius / diameter | `Shift+R` | **3 points** on a curve or circle edge → R, Ø and arc length (R1, R2 …), with a centre mark. Listed under Measurements and in Excel. |
+| Radius / diameter | `Shift+R` | **3 points** on a curve or circle edge → R, Ø and arc length (R1, R2 …), with a centre mark. **Show** R, Ø or both; the label can be moved. Listed under Measurements and in Excel. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
 | Letter marker | `Shift+N` | A, B, C … is **its own series**, separate from the numbers, also counted |
 | Polygon / polyline | `P` | Any number of edges, with fill colour and opacity. Untick **Closed** for an open polyline (arrowheads optional). |
-| Focus | `H` | Spotlight, grayscale outside, magnify ×2, **pixelate** (`B`) – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
+| Focus | `H` | Spotlight, grayscale, magnify ×2, **pixelate** (`B`) – grayscale and pixelate inside or outside – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
 | Highlighter pen | `Shift+H` | Drag over text like a marker pen: see-through yellow, square ends. `Shift` = straight stroke. Colour, width and opacity on the style bar. |
-| Text markup | `Y` | Drag over a line of text in the picture: **underline, strike out or highlight**. Snaps to the words (Windows text recognition). |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |
 | Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops. **Callout:** none, revision triangle (number) or text box, on a leader |
 | Line / Arrow / Freehand | `L` `A` `F` | **10 line ends** (none, filled / open / hollow arrow, slash, tick, dot, circle, diamond, square) for the start and the end |
@@ -203,7 +211,7 @@ Guides are magenta. Drag a guide to move it, or drag it back onto the ruler to d
 ## Image menus and view
 * **Rotate:** right / left 90°, mirror horizontal / vertical. Annotations, the crop and measurements follow.
 * **Effects:** border, drop shadow, torn edge, grayscale, invert (`Ctrl+Z` to undo).
-* `Home` (or `0`, or double-click the middle mouse button) fits and centres the image. `Ctrl+wheel` zooms; `Space`+drag pans.
+* `Home` (or `0`, or double-click the middle mouse button) fits and centres the image. `Ctrl+wheel` zooms; `Space`+drag pans; `Shift+Z` zooms to a box; `Shift`+wheel or the side wheel scrolls sideways.
 
 **Scale:** set the unit and *1 pixel = …* in the right panel, calibrate from a known length (`K`), or use
 **Drawing scale…**: 1:N with the picture's resolution (e.g. 1:100 at 300 dpi), the sheet it shows (e.g. 1:50 on A1 landscape),
@@ -247,7 +255,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 128 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 135 built-in checks.
 The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
 it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 

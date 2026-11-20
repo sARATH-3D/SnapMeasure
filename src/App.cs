@@ -166,6 +166,40 @@ namespace SnapMeasure
                 check("Pointer is its own picture", (cv.Shapes.Count - before) + "|" + ps.Kind + "|" + ps.Text, "1|Image|Mouse pointer");
             }
 
+            // area tool: show area + perimeter / area only / perimeter only (Q); Excel rows follow
+            Shape aP = Mk(cv, Tool.Area, 1000, 100, 1200, 100, 1200, 200, 1000, 200); aP.Mode = 2;
+            Shape aA = Mk(cv, Tool.Area, 1000, 300, 1200, 300, 1200, 400, 1000, 400); aA.Mode = 1;
+            List<MeasureRow> rows13 = Measure.Rows(cv.Shapes, sc, false);
+            MeasureRow rP = rows13.Find(r => r.Shape == aP), rA = rows13.Find(r => r.Shape == aA);
+            check("Area tool: perimeter only", rP == null ? "-" : rP.Name + "|" + rP.Type + "|" + rP.Display + "|" + aP.ShowsArea + "/" + aP.ShowsPerimeter,
+                  "P1|Perimeter|" + (6.0).ToString("N2", cc) + " m|False/True");
+            check("Area tool: area only", rA == null ? "-" : rA.Type + "|" + aA.ShowsArea + "/" + aA.ShowsPerimeter, "Area|True/False");
+            List<Shape> rt8 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { aP }));
+            check("Perimeter-only area round-trip", rt8.Count == 1 ? rt8[0].Kind + "/" + rt8[0].Mode : "-", "Area/2");
+
+            // radius: diameter only, and its label moves from halfway along the radius line
+            Shape rd = rad.Clone(); rd.Mode = 2;
+            MeasureRow rdr = Measure.Rows(new List<Shape> { rd }, sc, false).Find(r => r.Shape == rd);
+            check("Radius: diameter only", rdr == null ? "-" : rdr.Type + "|" + rdr.Display, "Diameter|" + (2.0).ToString("N2", cc) + " m");
+            Shape rd2 = rd.Clone();
+            ShapeOps.DragHandle(rd2, rd, new Handle(PointF.Empty, HKind.Label, 0), new PointF(400, 250), false);
+            check("Radius label moves", P(ShapeOps.LabelAnchor(rd)) + "|" + P(rd2.LabelOffset), "300.00,250.00|100.00,0.00");
+
+            // match properties: the look is copied, the text and points are not
+            Shape mSrc = Mk(cv, Tool.Line, 0, 0, 10, 10); mSrc.Stroke = Color.FromArgb(255, 0, 128, 0); mSrc.Width = 7; mSrc.Dash = 1; mSrc.FontSize = 33; mSrc.Bold = true; mSrc.Shadow = true;
+            Shape mT = Mk(cv, Tool.Bubble, 50, 50, 150, 100); mT.Text = "keep";
+            Canvas.MatchProps(mSrc, mT);
+            check("Match properties", mT.Stroke.G + "|" + mT.Width + "|" + mT.FontSize + "|" + mT.Bold + "|" + mT.Text + "|" + P(mT.Pts[0]), "128|7|33|True|keep|50.00,50.00");
+
+            // zoom to area: the middle of the chosen part comes to the middle of the window
+            if (cv.Image != null && cv.Width > 100 && cv.Height > 100)
+            {
+                cv.ZoomToRect(new RectangleF(100, 100, 200, 100));
+                PointF mid = cv.ToScr(new PointF(200, 150));
+                check("Zoom to area", (Math.Abs(mid.X - (cv.Width + cv.RulerSize) / 2f) < 2 && Math.Abs(mid.Y - (cv.Height + cv.RulerSize) / 2f) < 2).ToString(), "True");
+                cv.Fit();
+            }
+
             string err = "ok";
             try { using (Bitmap fl = cv.Flatten(null)) fl.Save(Path.Combine(dir, "selftest_v13.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
             check("1.3 shapes draw", err, "ok");
@@ -2776,6 +2810,24 @@ namespace SnapMeasure
                                 g.DrawLines(pp, new PointF[] { new PointF(5.5f, 14.5f), new PointF(1.5f, 14.5f), new PointF(1.5f, 10.5f) });
                             }
                             g.FillRectangle(bb, 5, 5, 6, 6);
+                            break;
+                        case "match":
+                            // paint brush: handle, ferrule and a blue tip
+                            using (Pen hp = new Pen(ink, 2.2f)) { hp.StartCap = hp.EndCap = LineCap.Round; g.DrawLine(hp, 14f, 2f, 9.5f, 6.5f); }
+                            g.FillPolygon(bi, new PointF[] { new PointF(9.6f, 4.6f), new PointF(11.4f, 6.4f), new PointF(8.6f, 9.2f), new PointF(6.8f, 7.4f) });
+                            g.FillPolygon(bb, new PointF[] { new PointF(6.6f, 7.6f), new PointF(8.4f, 9.4f), new PointF(5f, 14.5f), new PointF(1.5f, 14.5f), new PointF(1.5f, 11f) });
+                            break;
+                        case "zoomarea":
+                            // dashed box with a magnifier on its corner
+                            using (Pen pp = new Pen(ink, 1.2f))
+                            {
+                                pp.DashStyle = DashStyle.Dash;
+                                g.DrawRectangle(pp, 1.5f, 1.5f, 9f, 7f);
+                                pp.DashStyle = DashStyle.Solid; pp.Width = 1.5f;
+                                g.DrawEllipse(pp, 7.5f, 7.5f, 5f, 5f);
+                                pp.StartCap = pp.EndCap = LineCap.Round; pp.Width = 2f;
+                                g.DrawLine(pp, 12f, 12f, 14.5f, 14.5f);
+                            }
                             break;
                         case "actual":
                             g.DrawRectangle(p, 1.5f, 2.5f, 13, 11);

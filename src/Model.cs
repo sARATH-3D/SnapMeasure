@@ -575,6 +575,12 @@ namespace SnapMeasure
                             r.Display = sc.Len(rad);
                             r.Perimeter = Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]) * u;     // the arc's length
                             r.Extra = "Ø " + sc.Len(2 * rad) + " · arc " + sc.Len((float)Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]));
+                            if (s.Mode == 2)
+                            {
+                                // diameter only
+                                r.Type = "Diameter"; r.Value = 2 * rad * u; r.Display = sc.Len(2 * rad);
+                                r.Extra = "R " + sc.Len(rad) + " · arc " + sc.Len((float)Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]));
+                            }
                             break;
                         }
                     case ShapeKind.Angle:
@@ -1278,8 +1284,13 @@ namespace SnapMeasure
                         }
                         foreach (PointF q in s.Pts) using (SolidBrush b = new SolidBrush(sCol)) g.FillEllipse(b, q.X - w * 1.3f, q.Y - w * 1.3f, w * 2.6f, w * 2.6f);
                         string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n") +
-                                   "R = " + sc.Len(rad) + "\nØ = " + sc.Len(2 * rad);
-                        DrawBox(g, t, Geo.Mid(o, s.Pts[1]), GetFont(s.FontSize, false), A(s.Stroke, 100));
+                                   // Mode: 0 = radius and diameter, 1 = radius only, 2 = diameter only
+                                   (s.Mode == 2 ? "" : "R = " + sc.Len(rad)) + (s.Mode == 0 ? "\n" : "") + (s.Mode == 1 ? "" : "Ø = " + sc.Len(2 * rad));
+                        PointF mid = Geo.Mid(o, s.Pts[1]);
+                        PointF lc = new PointF(mid.X + s.LabelOffset.X, mid.Y + s.LabelOffset.Y);
+                        if (Geo.Dist(mid, lc) > s.FontSize * 1.5f)
+                            using (Pen lp = new Pen(A(s.Stroke, 80), 1f)) { lp.DashStyle = DashStyle.Dot; g.DrawLine(lp, mid, lc); }
+                        s.LabelRect = DrawBoxR(g, t, lc, GetFont(s.FontSize, false), A(s.Stroke, 100));
                         break;
                     }
                 case ShapeKind.Image:
@@ -2057,6 +2068,11 @@ namespace SnapMeasure
                 case ShapeKind.Arc:
                 case ShapeKind.Radius:
                     for (int i = 0; i < s.Pts.Count; i++) h.Add(new Handle(s.Pts[i], HKind.Point, i));   // start, middle, end
+                    if (s.Kind == ShapeKind.Radius && !s.LabelRect.IsEmpty)
+                    {
+                        h.Add(new Handle(Geo.Center(s.LabelRect), HKind.Label, 0));
+                        h.Add(new Handle(new PointF(s.LabelRect.Right, s.LabelRect.Bottom), HKind.LabelSize, 0));
+                    }
                     break;
                 case ShapeKind.Origin:
                     h.Add(new Handle(s.Pts[0], HKind.Point, 0));
@@ -2080,6 +2096,14 @@ namespace SnapMeasure
             return h;
         }
 
+        /// <summary>Where a movable label sits before it is moved: the middle of an area, or halfway along a radius.</summary>
+        public static PointF LabelAnchor(Shape s)
+        {
+            PointF o; float rad;
+            if (s.Kind == ShapeKind.Radius && s.Pts.Count >= 3 && Geo.Circle3(s.Pts[0], s.Pts[1], s.Pts[2], out o, out rad)) return Geo.Mid(o, s.Pts[1]);
+            return Geo.Centroid(s.Pts);
+        }
+
         /// <summary>Apply a handle drag. orig = the shape as it was when the drag started.</summary>
         public static void DragHandle(Shape s, Shape orig, Handle h, PointF p, bool shift)
         {
@@ -2087,7 +2111,7 @@ namespace SnapMeasure
             {
                 case HKind.Label:
                     {
-                        PointF mid = Geo.Centroid(orig.Pts);
+                        PointF mid = LabelAnchor(orig);
                         s.LabelOffset = new PointF(p.X - mid.X, p.Y - mid.Y);
                         break;
                     }
@@ -2251,7 +2275,7 @@ namespace SnapMeasure
         {
             if (s.Pts.Count == 0) return false;
             // a label moved off its area still selects the area
-            if ((s.Kind == ShapeKind.Area || s.Kind == ShapeKind.Perimeter) && !s.LabelRect.IsEmpty && s.LabelRect.Contains(p)) return true;
+            if ((s.Kind == ShapeKind.Area || s.Kind == ShapeKind.Perimeter || s.Kind == ShapeKind.Radius) && !s.LabelRect.IsEmpty && s.LabelRect.Contains(p)) return true;
             if (s.Rotatable && s.Angle != 0f) p = Geo.Rot(p, Center(s), -s.Angle);
             float t = tol + s.Width / 2f;
             switch (s.Kind)
