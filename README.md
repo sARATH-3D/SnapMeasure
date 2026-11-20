@@ -11,18 +11,27 @@ One file, `SnapMeasure.exe` (~400 KB). No installer, no admin rights. It runs on
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
 **What's new in 1.3:**
-* **Highlighter pen** (`Shift+H`): a see-through yellow marker you drag over text; hold `Shift` for a straight stroke.
-* **Magnifier** at the pointer for every measuring tool (dimension, area, length, perimeter, angle, coordinates, cut-out, calibrate),
-  so points land exactly on the drawing's lines.
+* **Radius / diameter** (`Shift+R`): click 3 points on a curve or circle → R, Ø and the arc length (R1, R2 … in Excel).
+* **Arc** (`Shift+L`): a drawing tool – start, a point on the arc, end.
+* **Polyline:** untick **Closed** on the Polygon tool for an open line through any number of points, with optional arrowheads.
+* **Highlighter pen** (`Shift+H`): a see-through yellow marker you drag over text; hold `Shift` for a straight stroke
+  (line width up to 200 for large text).
+* **Focus** (`H`, was Highlight): spotlight, grayscale outside, magnify or pixelate. The yellow marker mode is now the highlighter pen.
+* **Magnifier** at the pointer for every measuring tool, and while you drag a point of a measurement, so points land exactly on the lines.
 * **Text boxes have 8 handles**: corners and sides resize the box, the text wraps inside and keeps its size.
-  **Line width is the frame:** 0 = no frame, any other width draws it (the separate *Frame* box is gone).
+  **Line width is the frame:** 0 = no frame, any other width draws it. New **U** (underline) and **S** (strike out) buttons.
+* **Area and perimeter labels** can be moved (yellow knob) and resized (corner handle); a dotted line joins them to the shape.
+* **Handles show which way they stretch** (↔ ↕ ⤡ ⤢).
+* **Captured mouse pointer** (Settings → Capture) arrives as a separate picture on top: move it, or press Delete to remove it.
+* **Freehand arrowheads** now point along the end of the stroke. **Cloud** line style is offered only for closed shapes.
 * **Texts list** in the right panel: every text, speech bubble, cloud callout and stamp in one place. Click a line to select it,
   click again or press `F2` to edit it there (`↵` = new line). **Copy all text** puts them all on the clipboard.
 * **Settings → General:** choose your own **capture keys** (two per capture) and the **tool icon size** (small, medium, large).
 * **Tidier top row:** *New capture ▾* (blank canvas), *Save ▾* (save as), *Copy ▾* (picture, text, measurements), *Image ▾* (rotate,
-  mirror, effects) and *View ▾* (1:1, rulers, panel, on-screen ruler and protractor).
-* **Guides are magenta**, so they stand out from blue and cyan drawings. **Highlight** always starts as a rectangle.
-* **Pin** minimizes the editor, so the pinned picture is what you see.
+  mirror, effects) and *View ▾* (1:1, rulers, on-screen ruler and protractor). **Panel, Pin and Settings** sit at the right end.
+* **Simpler status bar:** one short sentence for the next step.
+* **Guides are magenta**, so they stand out from blue and cyan drawings. **Focus** always starts as a rectangle.
+* **Pin** minimizes the editor; in the pin, `Ctrl+P`, `Esc` or a double-click unpins and brings the editor back.
 
 **What's fixed in 1.2.1** (same features as 1.2):
 * A 2-point **open path** and a **custom stamp** are no longer lost or changed when you save or copy-paste them.
@@ -123,17 +132,19 @@ Open them from the tray menu or **View ▾ → On-screen ruler / On-screen protr
 | Perimeter | `Q` | Closed outline → perimeter only (P1, P2 …) |
 | Coordinates | `I` | The first click sets the origin 0,0; every point after it shows X / Y (**Y up, like CAD**). Drag the origin, or right-click a point → *Make this point the origin*, and every value updates. X and Y go to Excel. |
 | Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
+| Radius / diameter | `Shift+R` | **3 points** on a curve or circle edge → R, Ø and arc length (R1, R2 …), with a centre mark. Listed under Measurements and in Excel. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
 | Letter marker | `Shift+N` | A, B, C … is **its own series**, separate from the numbers, also counted |
-| Polygon | `P` | Highlight with any number of edges, with fill colour and opacity |
-| Highlight | `H` | Text marker, spotlight, grayscale outside, magnify ×2, **pixelate** (`B`) – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
+| Polygon / polyline | `P` | Any number of edges, with fill colour and opacity. Untick **Closed** for an open polyline (arrowheads optional). |
+| Focus | `H` | Spotlight, grayscale outside, magnify ×2, **pixelate** (`B`) – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
 | Highlighter pen | `Shift+H` | Drag over text like a marker pen: see-through yellow, square ends. `Shift` = straight stroke. Colour, width and opacity on the style bar. |
 | Text markup | `Y` | Drag over a line of text in the picture: **underline, strike out or highlight**. Snaps to the words (Windows text recognition). |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |
 | Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops. **Callout:** none, revision triangle (number) or text box, on a leader |
 | Line / Arrow / Freehand | `L` `A` `F` | **10 line ends** (none, filled / open / hollow arrow, slash, tick, dot, circle, diamond, square) for the start and the end |
-| Text | `T` | Click and type, or **drag a box** (the text wraps; the **8 handles** resize the box). Bold, italic and alignment on the style bar; **line width = frame** (0 = none). `Esc` keeps the text. Every text is also listed under **Texts** on the right, where you can edit it. |
+| Arc | `Shift+L` | 3 points: start, a point on the arc, end |
+| Text | `T` | Click and type, or **drag a box** (the text wraps; the **8 handles** resize the box). Bold, italic, underline, strike out and alignment on the style bar; **line width = frame** (0 = none). `Esc` keeps the text. Every text is also listed under **Texts** on the right, where you can edit it. |
 | Speech bubble | `S` | Drag or click, then type. Bold / italic / alignment as for Text. Drag the yellow handle to point the tail. |
 | Stamp | `Z` | Click to place APPROVED, REVISE, FOR INFORMATION, REJECTED, DRAFT, FINAL, FOR COMMENT, FOR CONSTRUCTION, NOT APPROVED, CHECKED, AS BUILT, CONFIDENTIAL, VOID, EXPIRED, SOLD, TOP SECRET … or your own words, with the date in the format you pick on the style bar. **Double-click and type straight onto it.** |
 | Note | `O` | A sticky note shown in the editor only – **left out of saved, copied and pinned pictures** (listed in the Excel export) |
@@ -236,7 +247,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 120 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 128 built-in checks.
 The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
 it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 

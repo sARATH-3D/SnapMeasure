@@ -141,12 +141,15 @@ namespace SnapMeasure
             d[Tool.Markup] = St(ShapeKind.Markup, red, 2, Color.Yellow, 45, 16);
             d[Tool.Area] = St(ShapeKind.Area, blue, 2, blue, 22, 15);
             d[Tool.Angle] = St(ShapeKind.Angle, blue, 2, Color.White, 0, 15);
+            d[Tool.Radius] = St(ShapeKind.Radius, Color.FromArgb(0, 130, 140), 1.8f, Color.White, 0, 15);
+            d[Tool.Arc] = St(ShapeKind.Arc, red, 3, Color.Yellow, 0, 16);
             d[Tool.Counter] = St(ShapeKind.Counter, Color.White, 2.5f, red, 100, 18);
             Shape letter = St(ShapeKind.Counter, Color.White, 2.5f, blue, 100, 18);
             letter.Mode = 1;
             d[Tool.Letter] = letter;
             d[Tool.Pixelate] = St(ShapeKind.Pixelate, Color.Gray, 3, Color.Gray, 0, 16);
             d[Tool.Highlight] = St(ShapeKind.Highlight, red, 2, Color.Yellow, 45, 16);
+            d[Tool.Highlight].Mode = (int)HighlightMode.Spotlight;     // Focus: the yellow marker is now the highlighter pen
             Shape bub = St(ShapeKind.Bubble, Color.FromArgb(40, 40, 40), 2, Color.White, 100, 16);
             bub.Align = 1;
             d[Tool.Bubble] = bub;
@@ -174,6 +177,8 @@ namespace SnapMeasure
                 case ShapeKind.Dimension: return Tool.Dimension;
                 case ShapeKind.Area: return Tool.Area;
                 case ShapeKind.Angle: return Tool.Angle;
+                case ShapeKind.Arc: return Tool.Arc;
+                case ShapeKind.Radius: return Tool.Radius;
                 case ShapeKind.Counter: return Tool.Counter;
                 case ShapeKind.Highlight: return Tool.Highlight;
                 case ShapeKind.Bubble: return Tool.Bubble;
@@ -753,7 +758,8 @@ namespace SnapMeasure
             get
             {
                 return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
-                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord;
+                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord ||
+                       tool == Tool.Arc || tool == Tool.Radius;
             }
         }
 
@@ -803,6 +809,28 @@ namespace SnapMeasure
             foreach (float v in HGuides) if (Math.Abs(v - ip.Y) < by) { by = Math.Abs(v - ip.Y); y = v; g = true; }
             if (g) { snapPt = new PointF(x, y); return snapPt.Value; }
             return ip;
+        }
+
+        /// <summary>The pointer over a handle shows which way it stretches: ↔ ↕ ⤡ ⤢ for box edges and corners
+        /// (following the shape's rotation), a four-way arrow for points, a hand for the rotate knob.</summary>
+        static Cursor HandleCursor(Handle h, Shape s)
+        {
+            switch (h.Kind)
+            {
+                case HKind.Rotate: return Cursors.Hand;
+                case HKind.LabelSize: return Cursors.SizeNWSE;
+                case HKind.Box:
+                    {
+                        PointF c = ShapeOps.Center(s);
+                        double ang = Math.Atan2(h.Pos.Y - c.Y, h.Pos.X - c.X) * 180.0 / Math.PI;
+                        if (ang < 0) ang += 180.0;                    // a stretch goes both ways: 0–180° is enough
+                        if (ang < 22.5 || ang >= 157.5) return Cursors.SizeWE;
+                        if (ang < 67.5) return Cursors.SizeNWSE;      // down-right / up-left
+                        if (ang < 112.5) return Cursors.SizeNS;
+                        return Cursors.SizeNESW;
+                    }
+                default: return Cursors.SizeAll;                    // points, tails, offsets, centre: move them
+            }
         }
 
         Handle? HandleAt(Point sp)
@@ -952,6 +980,7 @@ namespace SnapMeasure
                 case ShapeKind.Polyline: title = "Length label (e.g. Sealant run)"; break;
                 case ShapeKind.Perimeter: title = "Perimeter label (e.g. Gasket W12)"; break;
                 case ShapeKind.Angle: title = "Angle label (e.g. Roof pitch)"; break;
+                case ShapeKind.Radius: title = "Radius label (e.g. Curved mullion)"; break;
                 case ShapeKind.Note: title = "Note (shown here only – not on saved pictures)"; multi = true; break;
                 default: return;
             }
@@ -962,6 +991,23 @@ namespace SnapMeasure
             PushUndo(Snapshot());
             s.Text = v;
             FireDoc(); Invalidate();
+        }
+
+        /// <summary>The captured mouse pointer as a picture on top of the capture (part of the capture: no undo step).
+        /// Select it to move it, or press Delete to remove it.</summary>
+        public void AddPointerPicture(Bitmap pointer, Point at)
+        {
+            Shape s = new Shape();
+            s.Kind = ShapeKind.Image;
+            s.Img = pointer;
+            s.FillOpacity = 100;
+            s.Width = 0;
+            s.Stroke = Color.FromArgb(60, 60, 60);
+            s.Text = "Mouse pointer";
+            s.Pts.Add(new PointF(at.X, at.Y));
+            s.Pts.Add(new PointF(at.X + pointer.Width, at.Y + pointer.Height));
+            Shapes.Add(s);
+            Invalidate();
         }
 
         /// <summary>Changes a shape's text from outside the canvas (the editor's text list), as one undo step.</summary>
@@ -975,7 +1021,7 @@ namespace SnapMeasure
             FireDoc(); Invalidate();
         }
 
-        bool ClickBuilt(Shape s) { return s != null && (s.IsPoly || s.Kind == ShapeKind.Angle); }
+        bool ClickBuilt(Shape s) { return s != null && (s.IsPoly || s.Kind == ShapeKind.Angle || s.Kind == ShapeKind.Arc || s.Kind == ShapeKind.Radius); }
 
         /// <summary>Text markup: tighten the dragged box to the words found under it (Windows text recognition).</summary>
         RectangleF SnapToText(RectangleF r)
@@ -1421,7 +1467,10 @@ namespace SnapMeasure
                         break;
                     }
                 case Tool.Angle:
+                case Tool.Arc:
+                case Tool.Radius:
                     {
+                        // three clicks: angle = arm, vertex, arm · arc / radius = start, a point on the curve, end
                         if (creating == null)
                         {
                             Sel.Clear(); FireSel();
@@ -1596,6 +1645,8 @@ namespace SnapMeasure
                     case Tool.Polygon:
                     case Tool.Area:
                     case Tool.Angle:
+                    case Tool.Arc:
+                    case Tool.Radius:
                     case Tool.Polyline:
                     case Tool.Perimeter:
                     case Tool.Cutout:
@@ -1668,7 +1719,7 @@ namespace SnapMeasure
                 snapPt = null;
                 Handle? h = HandleAt(e.Location);
                 int ga, gi;
-                if (h.HasValue) Cursor = h.Value.Kind == HKind.Rotate ? Cursors.Hand : (h.Value.Kind == HKind.Center ? Cursors.SizeAll : Cursors.Cross);
+                if (h.HasValue) Cursor = HandleCursor(h.Value, Selected);
                 else if (HitShape(ip) != null) Cursor = Cursors.SizeAll;
                 else if (GuideAt(e.Location, out ga, out gi)) Cursor = ga == 1 ? Cursors.HSplit : Cursors.VSplit;
                 else Cursor = Cursors.Default;
@@ -1726,7 +1777,7 @@ namespace SnapMeasure
                 Invalidate();
                 return;
             }
-            if (creating != null && creating.Kind == ShapeKind.Angle)
+            if (creating != null && (creating.Kind == ShapeKind.Angle || creating.Kind == ShapeKind.Arc || creating.Kind == ShapeKind.Radius))
             {
                 // press-drag-release draws the first arm in one go
                 if (creating.Pts.Count == 2 && Geo.Dist(creating.Pts[0], creating.Pts[1]) * Zoom > 6f * Dpi)
@@ -1937,9 +1988,9 @@ namespace SnapMeasure
                 case Keys.Up: Nudge(0, -step); break;
                 case Keys.Down: Nudge(0, step); break;
                 case Keys.V: CurrentTool = Tool.Select; break;
-                case Keys.R: CurrentTool = Tool.Rect; break;
+                case Keys.R: CurrentTool = e.Shift ? Tool.Radius : Tool.Rect; break;      // Shift+R = radius / diameter
                 case Keys.E: CurrentTool = Tool.Ellipse; break;
-                case Keys.L: CurrentTool = Tool.Line; break;
+                case Keys.L: CurrentTool = e.Shift ? Tool.Arc : Tool.Line; break;         // Shift+L = arc
                 case Keys.A: CurrentTool = Tool.Arrow; break;
                 case Keys.F: CurrentTool = Tool.Freehand; break;
                 case Keys.T: CurrentTool = e.Shift ? Tool.Ocr : Tool.Text; break;
@@ -1959,7 +2010,11 @@ namespace SnapMeasure
                 case Keys.N: CurrentTool = e.Shift ? Tool.Letter : Tool.Counter; break;
                 case Keys.B: Styles[Tool.Highlight].Mode = (int)HighlightMode.Pixelate; CurrentTool = Tool.Highlight; break;   // pixelate = a highlight mode
                 case Keys.C: CurrentTool = Tool.Crop; break;
-                case Keys.H: CurrentTool = e.Shift ? Tool.Marker : Tool.Highlight; break;   // Shift+H = highlighter pen
+                case Keys.H:
+                    // H = Focus (back to spotlight after B / pixelate), Shift+H = highlighter pen
+                    if (!e.Shift && Styles[Tool.Highlight].Mode == (int)HighlightMode.Pixelate) Styles[Tool.Highlight].Mode = (int)HighlightMode.Spotlight;
+                    CurrentTool = e.Shift ? Tool.Marker : Tool.Highlight;
+                    break;
                 case Keys.S: CurrentTool = Tool.Bubble; break;
                 default: return;
             }
@@ -2112,14 +2167,16 @@ namespace SnapMeasure
         static bool LoupeTool(Tool t)
         {
             return t == Tool.Calibrate || t == Tool.Dimension || t == Tool.Area || t == Tool.Polyline || t == Tool.Perimeter ||
-                   t == Tool.Coord || t == Tool.Angle || t == Tool.Cutout;
+                   t == Tool.Coord || t == Tool.Angle || t == Tool.Cutout || t == Tool.Radius;
         }
 
         /// <summary>Magnifier for the measuring tools: the picture around the pointer (or the point it snaps to) at 4× the
         /// current zoom, with a cross-hair on the exact spot and the segment being drawn.</summary>
         void DrawLoupe(Graphics g)
         {
-            if (!LoupeTool(tool) || Image == null || panning || editBox != null) return;
+            // also while dragging a point of a dimension, area, length, angle, coordinate … to put it somewhere exact
+            bool draggingPoint = dragH.HasValue && dragH.Value.Kind == HKind.Point && Selected != null && (Selected.IsMeasure || Selected.IsPoly);
+            if ((!LoupeTool(tool) && !draggingPoint) || Image == null || panning || editBox != null) return;
             float rs = RulerSize;
             if (mouseScr.X < rs || mouseScr.Y < rs || mouseScr.X >= Width || mouseScr.Y >= Height) return;
             int size = (int)(132 * Dpi);
@@ -2392,6 +2449,7 @@ namespace SnapMeasure
                         break;
                     case HKind.DimOffset:
                     case HKind.Tail:
+                    case HKind.Label:
                         using (SolidBrush b = new SolidBrush(Color.FromArgb(255, 200, 0))) g.FillEllipse(b, rr);
                         using (Pen pp = new Pen(Color.FromArgb(0, 120, 215), 1.5f)) g.DrawEllipse(pp, rr);
                         break;
@@ -2463,6 +2521,17 @@ namespace SnapMeasure
                     {
                         float L = Geo.Dist(p[0], p[1]);
                         t = (tool == Tool.Calibrate ? L.ToString("N1") + " px" : Scale.Len(L)) + "   ∠ " + Geo.AngleDeg(p[0], p[1]).ToString("N1") + "°";
+                    }
+                    break;
+                case Tool.Arc:
+                case Tool.Radius:
+                    if (p.Count == 2) t = "Click a point on the curve, then its end";
+                    else if (p.Count >= 3)
+                    {
+                        PointF o; float rad;
+                        t = Geo.Circle3(p[0], p[1], p[2], out o, out rad)
+                            ? "R = " + Scale.Len(rad) + "   Ø = " + Scale.Len(2 * rad) + "\nArc " + Scale.Len((float)Geo.ArcLength(p[0], p[1], p[2])) + " · click the end to finish"
+                            : "Points in a straight line – move the middle point";
                     }
                     break;
                 case Tool.Angle:

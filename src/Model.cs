@@ -13,10 +13,10 @@ namespace SnapMeasure
 {
     // new kinds are only ever added at the end (names are stored in .snapm files)
     public enum ShapeKind { Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Counter, Pixelate, Highlight, Bubble, Angle, Image,
-                            Cloud, Stamp, Note, Markup, Polyline, Perimeter, Coord, Origin }
+                            Cloud, Stamp, Note, Markup, Polyline, Perimeter, Coord, Origin, Arc, Radius }
 
     public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle,
-                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker }
+                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius }
 
     public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4 }
 
@@ -82,6 +82,9 @@ namespace SnapMeasure
         public bool Shadow;
         public int Mode;             // HighlightMode for Highlight shapes; 0 = numbers, 1 = letters for markers
         public bool Bold, Italic;    // Text and speech bubble
+        public bool Underline, Strikeout;   // Text and speech bubble (1.3)
+        public PointF LabelOffset;          // Area: where its label sits, from the middle of the area (1.3)
+        public RectangleF LabelRect;        // Area: the label box as last drawn (for its handles; not saved)
         public int Align;            // 0 left, 1 centre, 2 right (Text, speech bubble)
         public int HeadStart;        // Line / Arrow / Dimension: HeadStyle at the first point
         public int HeadEnd = 1;      // … and at the second point
@@ -102,7 +105,14 @@ namespace SnapMeasure
             }
         }
 
-        public FontStyle Style { get { return (Bold ? FontStyle.Bold : FontStyle.Regular) | (Italic ? FontStyle.Italic : FontStyle.Regular); } }
+        public FontStyle Style
+        {
+            get
+            {
+                return (Bold ? FontStyle.Bold : FontStyle.Regular) | (Italic ? FontStyle.Italic : FontStyle.Regular) |
+                       (Underline ? FontStyle.Underline : FontStyle.Regular) | (Strikeout ? FontStyle.Strikeout : FontStyle.Regular);
+            }
+        }
         public bool HasTextStyle { get { return Kind == ShapeKind.Text || Kind == ShapeKind.Bubble; } }
         public bool IsLetterMarker { get { return Kind == ShapeKind.Counter && Mode == 1; } }
 
@@ -139,15 +149,25 @@ namespace SnapMeasure
         /// <summary>Shapes built by clicking corners one after the other.</summary>
         public bool IsPoly { get { return Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter; } }
         /// <summary>Open path: path length, or a perimeter with "Closed" switched off (Mode 1).</summary>
-        public bool IsOpenPath { get { return Kind == ShapeKind.Polyline || (Kind == ShapeKind.Perimeter && Mode == 1); } }
+        public bool IsOpenPath { get { return Kind == ShapeKind.Polyline || ((Kind == ShapeKind.Perimeter || Kind == ShapeKind.Polygon) && Mode == 1); } }
         public bool HasOutlineStyle
         {
             get
             {
                 return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Freehand ||
-                       Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter;
+                       Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter || Kind == ShapeKind.Arc;
             }
         }
+        /// <summary>Cloud (scalloped) outlines only make sense round a closed shape.</summary>
+        public bool CanBeCloud
+        {
+            get
+            {
+                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Area ||
+                       ((Kind == ShapeKind.Polygon || Kind == ShapeKind.Perimeter) && !IsOpenPath);
+            }
+        }
+
         public bool IsBox
         {
             get
@@ -157,7 +177,14 @@ namespace SnapMeasure
             }
         }
         public bool Rotatable { get { return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp; } }
-        public bool HasHeads { get { return Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Dimension || (Kind == ShapeKind.Freehand && !IsMarkerPen); } }
+        public bool HasHeads
+        {
+            get
+            {
+                return Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Dimension || (Kind == ShapeKind.Freehand && !IsMarkerPen) ||
+                       (Kind == ShapeKind.Polygon && Mode == 1);       // an open polyline drawn with the Polygon tool
+            }
+        }
         /// <summary>Highlighter pen: a freehand stroke drawn as a see-through marker (Mode 1).</summary>
         public bool IsMarkerPen { get { return Kind == ShapeKind.Freehand && Mode == 1; } }
         public bool IsMeasure
@@ -165,7 +192,7 @@ namespace SnapMeasure
             get
             {
                 return Kind == ShapeKind.Dimension || Kind == ShapeKind.Area || Kind == ShapeKind.Angle || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter ||
-                       Kind == ShapeKind.Coord;
+                       Kind == ShapeKind.Coord || Kind == ShapeKind.Radius;
             }
         }
         public bool CanShadow
@@ -228,6 +255,103 @@ namespace SnapMeasure
         }
 
         public static PointF Mid(PointF a, PointF b) { return new PointF((a.X + b.X) / 2f, (a.Y + b.Y) / 2f); }
+
+        /// <summary>The circle through three points. False when they lie (almost) on one line.</summary>
+        public static bool Circle3(PointF a, PointF b, PointF c, out PointF centre, out float radius)
+        {
+            double d = 2.0 * (a.X * (b.Y - c.Y) + b.X * (c.Y - a.Y) + c.X * (a.Y - b.Y));
+            centre = PointF.Empty; radius = 0;
+            double scale = Math.Max(1.0, Math.Max(Dist(a, b), Math.Max(Dist(b, c), Dist(a, c))));
+            if (Math.Abs(d) < 1e-6 * scale * scale) return false;
+            double a2 = a.X * a.X + a.Y * a.Y, b2 = b.X * b.X + b.Y * b.Y, c2 = c.X * c.X + c.Y * c.Y;
+            double ux = (a2 * (b.Y - c.Y) + b2 * (c.Y - a.Y) + c2 * (a.Y - b.Y)) / d;
+            double uy = (a2 * (c.X - b.X) + b2 * (a.X - c.X) + c2 * (b.X - a.X)) / d;
+            centre = new PointF((float)ux, (float)uy);
+            radius = Dist(centre, a);
+            return radius < 1e6f;
+        }
+
+        /// <summary>Start angle and sweep (radians) of the arc from a through b to c around 'centre'.</summary>
+        static void ArcAngles(PointF a, PointF b, PointF c, PointF centre, out double start, out double sweep)
+        {
+            start = Math.Atan2(a.Y - centre.Y, a.X - centre.X);
+            double tb = Math.Atan2(b.Y - centre.Y, b.X - centre.X), tc = Math.Atan2(c.Y - centre.Y, c.X - centre.X);
+            Func<double, double> norm = v => { while (v < 0) v += 2 * Math.PI; while (v >= 2 * Math.PI) v -= 2 * Math.PI; return v; };
+            double toC = norm(tc - start), toB = norm(tb - start);
+            sweep = toB <= toC ? toC : toC - 2 * Math.PI;     // go the way that passes through b
+        }
+
+        /// <summary>Points along the arc from a through b to c (a straight line a–c when the three are in line).</summary>
+        public static List<PointF> ArcPoints(PointF a, PointF b, PointF c, int n)
+        {
+            List<PointF> r = new List<PointF>();
+            PointF o; float rad;
+            if (!Circle3(a, b, c, out o, out rad)) { r.Add(a); r.Add(c); return r; }
+            double start, sweep;
+            ArcAngles(a, b, c, o, out start, out sweep);
+            for (int i = 0; i <= n; i++)
+            {
+                double t = start + sweep * i / n;
+                r.Add(new PointF(o.X + rad * (float)Math.Cos(t), o.Y + rad * (float)Math.Sin(t)));
+            }
+            return r;
+        }
+
+        /// <summary>Length along the arc from a through b to c.</summary>
+        public static double ArcLength(PointF a, PointF b, PointF c)
+        {
+            PointF o; float rad;
+            if (!Circle3(a, b, c, out o, out rad)) return Dist(a, c);
+            double start, sweep;
+            ArcAngles(a, b, c, o, out start, out sweep);
+            return Math.Abs(sweep) * rad;
+        }
+
+        /// <summary>Unit vector from a to b (x axis if they coincide).</summary>
+        public static PointF Unit(PointF a, PointF b)
+        {
+            float L = Dist(a, b);
+            return L < 0.0001f ? new PointF(1, 0) : new PointF((b.X - a.X) / L, (b.Y - a.Y) / L);
+        }
+
+        /// <summary>The point 'd' along a path from its start (or its end).</summary>
+        public static PointF PointAlong(List<PointF> p, bool fromStart, float d)
+        {
+            int n = p.Count;
+            if (n == 0) return PointF.Empty;
+            PointF prev = fromStart ? p[0] : p[n - 1];
+            float run = 0;
+            for (int i = 1; i < n; i++)
+            {
+                PointF q = fromStart ? p[i] : p[n - 1 - i];
+                float seg = Dist(prev, q);
+                if (run + seg >= d && seg > 0)
+                {
+                    float t = (d - run) / seg;
+                    return new PointF(prev.X + (q.X - prev.X) * t, prev.Y + (q.Y - prev.Y) * t);
+                }
+                run += seg; prev = q;
+            }
+            return prev;
+        }
+
+        /// <summary>The path with 'cutStart' cut off its start and 'cutEnd' off its end (both measured along it).</summary>
+        public static List<PointF> TrimPath(List<PointF> p, float cutStart, float cutEnd)
+        {
+            List<PointF> r = new List<PointF>();
+            if (p.Count < 2) { r.AddRange(p); return r; }
+            float total = (float)Perimeter(p, false);
+            float a = Math.Max(0, cutStart), b = Math.Max(a, total - Math.Max(0, cutEnd));
+            r.Add(PointAlong(p, true, a));
+            float run = 0;
+            for (int i = 1; i < p.Count; i++)
+            {
+                run += Dist(p[i - 1], p[i]);
+                if (run > a && run < b) r.Add(p[i]);
+            }
+            r.Add(PointAlong(p, true, b));
+            return r;
+        }
 
         public static float SegDist(PointF p, PointF a, PointF b) { return Dist(p, Project(p, a, b)); }
 
@@ -437,6 +561,18 @@ namespace SnapMeasure
                         r.Value = Geo.Perimeter(s.Pts, true) * u;
                         r.Display = sc.Len(Geo.Perimeter(s.Pts, true));
                         break;
+                    case ShapeKind.Radius:
+                        {
+                            if (s.Pts.Count < 3) continue;
+                            PointF o; float rad;
+                            if (!Geo.Circle3(s.Pts[0], s.Pts[1], s.Pts[2], out o, out rad)) continue;
+                            r.Type = "Radius"; r.Unit = sc.Unit;
+                            r.Value = rad * u;
+                            r.Display = sc.Len(rad);
+                            r.Perimeter = Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]) * u;     // the arc's length
+                            r.Extra = "Ø " + sc.Len(2 * rad) + " · arc " + sc.Len((float)Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]));
+                            break;
+                        }
                     case ShapeKind.Angle:
                         if (s.Pts.Count < 3) continue;
                         r.Type = "Angle"; r.Unit = "°";
@@ -592,7 +728,7 @@ namespace SnapMeasure
         public static Dictionary<Shape, string> Labels(List<Shape> shapes, ScaleInfo sc)
         {
             Dictionary<Shape, string> d = new Dictionary<Shape, string>();
-            int nd = 0, na = 0, nm = 0, nl = 0, ng = 0, npl = 0, npm = 0, nc = 0;
+            int nd = 0, na = 0, nm = 0, nl = 0, ng = 0, npl = 0, npm = 0, nc = 0, nr = 0;
             foreach (Shape s in shapes)
             {
                 if (s.Kind == ShapeKind.Dimension) d[s] = "D" + (++nd);
@@ -601,6 +737,7 @@ namespace SnapMeasure
                 else if (s.Kind == ShapeKind.Polyline || (s.Kind == ShapeKind.Perimeter && s.IsOpenPath)) d[s] = "L" + (++npl);
                 else if (s.Kind == ShapeKind.Perimeter) d[s] = "P" + (++npm);
                 else if (s.Kind == ShapeKind.Coord) d[s] = "C" + (++nc);
+                else if (s.Kind == ShapeKind.Radius) d[s] = "R" + (++nr);
                 else if (s.Kind == ShapeKind.Counter) d[s] = s.IsLetterMarker ? sc.MarkerLabel(nl++, true) : sc.MarkerLabel(nm++, false);
             }
             return d;
@@ -765,22 +902,33 @@ namespace SnapMeasure
                 case ShapeKind.Freehand:
                     {
                         if (!stroke) return;
+                        bool heads = !s.IsMarkerPen && s.Pts.Count >= 2 && (s.HeadStart > 0 || s.HeadEnd > 0);
+                        float hl = 0, hw = 0, cut0 = 0, cut1 = 0;
+                        if (heads)
+                        {
+                            float len = (float)Geo.Perimeter(s.Pts, false);
+                            Geo.HeadSize(w, Math.Max(4f, len * 0.4f), out hl, out hw);
+                            // like a straight arrow: the stroke stops where each head begins, so it runs straight into the head
+                            if (s.HeadStart > 0) cut0 = Math.Min(len * 0.45f, Math.Max(HeadBack(s.HeadStart, w, hl, hw), hl * 0.6f));
+                            if (s.HeadEnd > 0) cut1 = Math.Min(len * 0.45f, Math.Max(HeadBack(s.HeadEnd, w, hl, hw), hl * 0.6f));
+                        }
+                        List<PointF> body = heads ? Geo.TrimPath(s.Pts, cut0, cut1) : s.Pts;
                         using (Pen p = OutlinePen(s, sCol, w))
                         {
                             // highlighter pen: square ends like a chisel marker; one stroke, so overlaps don't darken
                             LineCap cap = s.IsMarkerPen ? LineCap.Square : LineCap.Round;
                             p.StartCap = cap; p.EndCap = cap; p.LineJoin = LineJoin.Round;
-                            if (s.Pts.Count == 1) g.DrawLine(p, s.Pts[0], new PointF(s.Pts[0].X + 0.1f, s.Pts[0].Y));
-                            else g.DrawLines(p, s.Pts.ToArray());
+                            if (s.HeadStart > 0 && heads) p.StartCap = LineCap.Flat;
+                            if (s.HeadEnd > 0 && heads) p.EndCap = LineCap.Flat;
+                            if (body.Count == 1) g.DrawLine(p, body[0], new PointF(body[0].X + 0.1f, body[0].Y));
+                            else if (body.Count > 1) g.DrawLines(p, body.ToArray());
                         }
-                        if (s.IsMarkerPen) break;
-                        if (s.Pts.Count >= 2 && (s.HeadStart > 0 || s.HeadEnd > 0))
+                        if (heads)
                         {
-                            // heads point along the last few pixels of the stroke
-                            float len = (float)Geo.Perimeter(s.Pts, false), hl, hw;
-                            Geo.HeadSize(w, Math.Max(4f, len * 0.4f), out hl, out hw);
-                            if (s.HeadStart > 0) DrawHead(g, s.Pts[0], PathDir(s.Pts, true, hl), s.HeadStart, sCol, w, hl, hw);
-                            if (s.HeadEnd > 0) DrawHead(g, s.Pts[s.Pts.Count - 1], PathDir(s.Pts, false, hl), s.HeadEnd, sCol, w, hl, hw);
+                            // each head points from where the stroke stops to the tip: in line with the stroke's last stretch
+                            float over = Math.Max(hl, w * 3f);
+                            if (s.HeadStart > 0) DrawHead(g, s.Pts[0], Geo.Unit(Geo.PointAlong(s.Pts, true, over), s.Pts[0]), s.HeadStart, sCol, w, hl, hw);
+                            if (s.HeadEnd > 0) DrawHead(g, s.Pts[s.Pts.Count - 1], Geo.Unit(Geo.PointAlong(s.Pts, false, over), s.Pts[s.Pts.Count - 1]), s.HeadEnd, sCol, w, hl, hw);
                         }
                         break;
                     }
@@ -805,6 +953,7 @@ namespace SnapMeasure
                 case ShapeKind.Polygon:
                 case ShapeKind.Area:
                     {
+                        if (s.Kind == ShapeKind.Polygon && s.IsOpenPath) goto case ShapeKind.Freehand;   // open polyline: drawn like a stroke, heads optional
                         PointF[] pts = s.Pts.ToArray();
                         bool holes = s.Holes != null && s.Holes.Count > 0;
                         if (pts.Length >= 3 && fill)
@@ -839,7 +988,12 @@ namespace SnapMeasure
                             string t = holes
                                 ? head + "Gross " + sc.Area(Measure.GrossArea(s)) + "\nCut-outs −" + sc.Area(Measure.HolesArea(s)) + "\nNet A = " + sc.Area(Measure.NetArea(s)) + "\nP = " + sc.Len(per)
                                 : head + "A = " + sc.Area(Measure.GrossArea(s)) + "\nP = " + sc.Len(per);
-                            DrawBox(g, t, Geo.Centroid(s.Pts), GetFont(s.FontSize, false), A(s.Stroke, 100));
+                            // the label can be dragged away from the middle (LabelOffset) and resized (text size); a thin line joins it back
+                            PointF mid = Geo.Centroid(s.Pts);
+                            PointF lc = new PointF(mid.X + s.LabelOffset.X, mid.Y + s.LabelOffset.Y);
+                            if (Geo.Dist(mid, lc) > s.FontSize * 1.5f)
+                                using (Pen lp = new Pen(A(s.Stroke, 80), 1f)) { lp.DashStyle = DashStyle.Dot; g.DrawLine(lp, mid, lc); g.FillEllipse(lp.Brush, mid.X - 2, mid.Y - 2, 4, 4); }
+                            s.LabelRect = DrawBoxR(g, t, lc, GetFont(s.FontSize, false), A(s.Stroke, 100));
                         }
                         break;
                     }
@@ -860,7 +1014,11 @@ namespace SnapMeasure
                         if (s.Pts.Count >= 3)
                         {
                             string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n") + "P = " + sc.Len(Geo.Perimeter(s.Pts, true));
-                            DrawBox(g, t, Geo.Centroid(s.Pts), GetFont(s.FontSize, false), A(s.Stroke, 100));
+                            PointF mid = Geo.Centroid(s.Pts);
+                            PointF lc = new PointF(mid.X + s.LabelOffset.X, mid.Y + s.LabelOffset.Y);
+                            if (Geo.Dist(mid, lc) > s.FontSize * 1.5f)
+                                using (Pen lp = new Pen(A(s.Stroke, 80), 1f)) { lp.DashStyle = DashStyle.Dot; g.DrawLine(lp, mid, lc); }
+                            s.LabelRect = DrawBoxR(g, t, lc, GetFont(s.FontSize, false), A(s.Stroke, 100));
                         }
                         break;
                     }
@@ -1020,6 +1178,37 @@ namespace SnapMeasure
                 case ShapeKind.Angle:
                     DrawAngle(g, s, sCol, w, name);
                     break;
+                case ShapeKind.Arc:
+                    {
+                        if (!stroke || s.Pts.Count < 2) return;
+                        List<PointF> ap = s.Pts.Count >= 3 ? Geo.ArcPoints(s.Pts[0], s.Pts[1], s.Pts[2], 96) : s.Pts;
+                        using (Pen p = OutlinePen(s, sCol, w)) { p.StartCap = p.EndCap = LineCap.Round; p.LineJoin = LineJoin.Round; g.DrawLines(p, ap.ToArray()); }
+                        break;
+                    }
+                case ShapeKind.Radius:
+                    {
+                        if (s.Pts.Count < 2) return;
+                        if (s.Pts.Count < 3) { if (stroke) using (Pen p = new Pen(sCol, w)) g.DrawLine(p, s.Pts[0], s.Pts[1]); return; }
+                        PointF o; float rad;
+                        bool round = Geo.Circle3(s.Pts[0], s.Pts[1], s.Pts[2], out o, out rad);
+                        List<PointF> ap = Geo.ArcPoints(s.Pts[0], s.Pts[1], s.Pts[2], 96);
+                        if (stroke) using (Pen p = new Pen(sCol, w)) { p.LineJoin = LineJoin.Round; g.DrawLines(p, ap.ToArray()); }
+                        if (!round) break;
+                        // centre mark and a dashed radius line to the middle point
+                        float cm = Math.Max(4f, s.FontSize * 0.45f);
+                        using (Pen cp = new Pen(sCol, Math.Max(1f, w * 0.8f)))
+                        {
+                            g.DrawLine(cp, o.X - cm, o.Y, o.X + cm, o.Y);
+                            g.DrawLine(cp, o.X, o.Y - cm, o.X, o.Y + cm);
+                            cp.DashStyle = DashStyle.Dash;
+                            g.DrawLine(cp, o, s.Pts[1]);
+                        }
+                        foreach (PointF q in s.Pts) using (SolidBrush b = new SolidBrush(sCol)) g.FillEllipse(b, q.X - w * 1.3f, q.Y - w * 1.3f, w * 2.6f, w * 2.6f);
+                        string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n") +
+                                   "R = " + sc.Len(rad) + "\nØ = " + sc.Len(2 * rad);
+                        DrawBox(g, t, Geo.Mid(o, s.Pts[1]), GetFont(s.FontSize, false), A(s.Stroke, 100));
+                        break;
+                    }
                 case ShapeKind.Image:
                     {
                         if (s.Pts.Count < 2) return;
@@ -1578,10 +1767,19 @@ namespace SnapMeasure
             g.Restore(st);
         }
 
-        public static void DrawBox(Graphics g, string t, PointF c, Font f, Color col)
+        public static void DrawBox(Graphics g, string t, PointF c, Font f, Color col) { DrawBoxR(g, t, c, f, col); }
+
+        /// <summary>Same, and returns the box it drew.</summary>
+        public static RectangleF DrawBoxR(Graphics g, string t, PointF c, Font f, Color col)
         {
             SizeF sz = g.MeasureString(t, f);
             RectangleF r = new RectangleF(c.X - sz.Width / 2f - 4f, c.Y - sz.Height / 2f - 2f, sz.Width + 8f, sz.Height + 4f);
+            DrawBoxAt(g, t, r, f, col);
+            return r;
+        }
+
+        static void DrawBoxAt(Graphics g, string t, RectangleF r, Font f, Color col)
+        {
             using (SolidBrush bg = new SolidBrush(Color.FromArgb(215, 255, 255, 255))) g.FillRectangle(bg, r);
             using (Pen p = new Pen(col, 1f)) g.DrawRectangle(p, r.X, r.Y, r.Width, r.Height);
             using (SolidBrush b = new SolidBrush(col))
@@ -1653,7 +1851,7 @@ namespace SnapMeasure
         }
     }
 
-    public enum HKind { Point, Box, Rotate, Center, DimOffset, Tail }
+    public enum HKind { Point, Box, Rotate, Center, DimOffset, Tail, Label, LabelSize }
 
     public struct Handle
     {
@@ -1747,6 +1945,12 @@ namespace SnapMeasure
                     {
                         if (s.Kind != ShapeKind.Freehand)
                             for (int i = 0; i < s.Pts.Count; i++) h.Add(new Handle(s.Pts[i], HKind.Point, i));
+                        // area / perimeter label: yellow knob in its middle = move it, corner = size of its text
+                        if ((s.Kind == ShapeKind.Area || (s.Kind == ShapeKind.Perimeter && !s.IsOpenPath)) && !s.LabelRect.IsEmpty)
+                        {
+                            h.Add(new Handle(Geo.Center(s.LabelRect), HKind.Label, 0));
+                            h.Add(new Handle(new PointF(s.LabelRect.Right, s.LabelRect.Bottom), HKind.LabelSize, 0));
+                        }
                         RectangleF b = RawBounds(s.Pts);
                         h.Add(new Handle(new PointF(b.X + b.Width / 2f, b.Y - rotDist), HKind.Rotate, 0));
                         break;
@@ -1764,6 +1968,10 @@ namespace SnapMeasure
                 case ShapeKind.Coord:
                     h.Add(new Handle(s.Pts[0], HKind.Point, 0));
                     if (s.Pts.Count > 1) h.Add(new Handle(s.Pts[1], HKind.Tail, 1));
+                    break;
+                case ShapeKind.Arc:
+                case ShapeKind.Radius:
+                    for (int i = 0; i < s.Pts.Count; i++) h.Add(new Handle(s.Pts[i], HKind.Point, i));   // start, middle, end
                     break;
                 case ShapeKind.Origin:
                     h.Add(new Handle(s.Pts[0], HKind.Point, 0));
@@ -1792,6 +2000,21 @@ namespace SnapMeasure
         {
             switch (h.Kind)
             {
+                case HKind.Label:
+                    {
+                        PointF mid = Geo.Centroid(orig.Pts);
+                        s.LabelOffset = new PointF(p.X - mid.X, p.Y - mid.Y);
+                        break;
+                    }
+                case HKind.LabelSize:
+                    {
+                        // drag the label's corner out or in: its text grows or shrinks
+                        PointF lc = Geo.Center(orig.LabelRect);
+                        PointF c0 = new PointF(orig.LabelRect.Right, orig.LabelRect.Bottom);
+                        float d0 = Geo.Dist(lc, c0), d1 = Geo.Dist(lc, p);
+                        if (d0 > 1f) s.FontSize = Math.Max(6f, Math.Min(300f, orig.FontSize * d1 / d0));
+                        break;
+                    }
                 case HKind.Point:
                     if (h.Index < s.Pts.Count)
                     {
@@ -1892,6 +2115,15 @@ namespace SnapMeasure
                 return new RectangleF(s.Pts[0].X - r, s.Pts[0].Y - r, 2 * r, 2 * r);
             }
             if (s.Kind == ShapeKind.Note) return Renderer.NoteRect(s);
+            if ((s.Kind == ShapeKind.Arc || s.Kind == ShapeKind.Radius) && s.Pts.Count >= 3)
+            {
+                RectangleF ab = RawBounds(Geo.ArcPoints(s.Pts[0], s.Pts[1], s.Pts[2], 48));
+                PointF o; float rad;
+                if (s.Kind == ShapeKind.Radius && Geo.Circle3(s.Pts[0], s.Pts[1], s.Pts[2], out o, out rad))
+                    ab = RectangleF.Union(ab, new RectangleF(o.X - 4, o.Y - 4, 8, 8));
+                ab.Inflate(s.Width, s.Width);
+                return ab;
+            }
             if (s.Kind == ShapeKind.Origin)
             {
                 float r = Math.Max(6f, s.FontSize * 0.9f) * 2.8f;
@@ -1933,6 +2165,8 @@ namespace SnapMeasure
         public static bool Hit(Shape s, PointF p, float tol)
         {
             if (s.Pts.Count == 0) return false;
+            // a label moved off its area still selects the area
+            if ((s.Kind == ShapeKind.Area || s.Kind == ShapeKind.Perimeter) && !s.LabelRect.IsEmpty && s.LabelRect.Contains(p)) return true;
             if (s.Rotatable && s.Angle != 0f) p = Geo.Rot(p, Center(s), -s.Angle);
             float t = tol + s.Width / 2f;
             switch (s.Kind)
@@ -2024,9 +2258,25 @@ namespace SnapMeasure
                         PointF lab = s.IsOpenPath ? Renderer.PathMiddle(s.Pts) : (s.Pts.Count >= 3 ? Geo.Centroid(s.Pts) : s.Pts[0]);
                         return Geo.Dist(p, lab) <= s.FontSize * 1.5f + tol;
                     }
+                case ShapeKind.Arc:
+                case ShapeKind.Radius:
+                    {
+                        if (s.Pts.Count < 3) return false;
+                        List<PointF> ap = Geo.ArcPoints(s.Pts[0], s.Pts[1], s.Pts[2], 64);
+                        for (int i = 0; i + 1 < ap.Count; i++) if (Geo.SegDist(p, ap[i], ap[i + 1]) <= t) return true;
+                        PointF o; float rad;
+                        if (s.Kind == ShapeKind.Radius && Geo.Circle3(s.Pts[0], s.Pts[1], s.Pts[2], out o, out rad))
+                            return Geo.SegDist(p, o, s.Pts[1]) <= t || Geo.Dist(p, Geo.Mid(o, s.Pts[1])) <= s.FontSize * 1.5f + tol;
+                        return false;
+                    }
                 case ShapeKind.Polygon:
                 case ShapeKind.Area:
                     {
+                        if (s.IsOpenPath)
+                        {
+                            for (int i = 0; i + 1 < s.Pts.Count; i++) if (Geo.SegDist(p, s.Pts[i], s.Pts[i + 1]) <= t) return true;
+                            return false;
+                        }
                         if (s.Pts.Count >= 3 && Geo.InPolygon(p, s.Pts)) return true;
                         for (int i = 0; i < s.Pts.Count; i++)
                             if (Geo.SegDist(p, s.Pts[i], s.Pts[(i + 1) % s.Pts.Count]) <= t) return true;
@@ -2206,6 +2456,8 @@ namespace SnapMeasure
             w.WriteAttributeString("mode", s.Mode.ToString(Inv));
             w.WriteAttributeString("bold", s.Bold ? "1" : "0");
             w.WriteAttributeString("italic", s.Italic ? "1" : "0");
+            if (s.Underline) w.WriteAttributeString("underline", "1");
+            if (s.Strikeout) w.WriteAttributeString("strikeout", "1");
             w.WriteAttributeString("align", s.Align.ToString(Inv));
             if (s.Kind == ShapeKind.Freehand)
             {
@@ -2221,6 +2473,11 @@ namespace SnapMeasure
             }
             if (s.Dash != 0) w.WriteAttributeString("dash", s.Dash.ToString(Inv));
             if (s.Form != 0) w.WriteAttributeString("form", s.Form.ToString(Inv));
+            if (s.LabelOffset.X != 0 || s.LabelOffset.Y != 0)
+            {
+                w.WriteAttributeString("lx", F(s.LabelOffset.X));
+                w.WriteAttributeString("ly", F(s.LabelOffset.Y));
+            }
             if (s.Kind == ShapeKind.Text ? s.Width > 0 : s.Frame) w.WriteAttributeString("frame", "1");   // 1.2 reads the frame from this
             w.WriteAttributeString("text", s.Text ?? "");
             if (s.Holes != null)
@@ -2332,7 +2589,8 @@ namespace SnapMeasure
             {
                 case ShapeKind.Text: case ShapeKind.Counter: case ShapeKind.Freehand: case ShapeKind.Note:
                 case ShapeKind.Coord: case ShapeKind.Origin: need = 1; break;
-                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Angle: need = 3; break;
+                case ShapeKind.Polygon: need = s.Mode == 1 ? 2 : 3; break;         // an open polyline needs only 2 points
+                case ShapeKind.Area: case ShapeKind.Angle: case ShapeKind.Arc: case ShapeKind.Radius: need = 3; break;
                 case ShapeKind.Perimeter: need = s.Mode == 1 ? 2 : 3; break;      // an open path needs only 2 points
                 default: need = 2; break;
             }
@@ -2372,6 +2630,8 @@ namespace SnapMeasure
             s.Mode = PI(e.GetAttribute("mode"), 0);
             s.Bold = e.GetAttribute("bold") == "1";
             s.Italic = e.GetAttribute("italic") == "1";
+            s.Underline = e.GetAttribute("underline") == "1";
+            s.Strikeout = e.GetAttribute("strikeout") == "1";
             s.Align = PI(e.GetAttribute("align"), s.Kind == ShapeKind.Bubble ? 1 : 0);
             if (s.Kind == ShapeKind.Freehand)
             {
@@ -2392,6 +2652,7 @@ namespace SnapMeasure
             s.Text = e.GetAttribute("text");
             s.Dash = PI(e.GetAttribute("dash"), 0);
             s.Form = PI(e.GetAttribute("form"), 0);
+            if (e.HasAttribute("lx")) s.LabelOffset = new PointF(Finite(PF(e.GetAttribute("lx"), 0f), 0f, -100000f, 100000f), Finite(PF(e.GetAttribute("ly"), 0f), 0f, -100000f, 100000f));
             s.Frame = e.GetAttribute("frame") == "1";
             // since 1.3 a text's frame is its line width: older text without a frame gets width 0
             if (s.Kind == ShapeKind.Text && !s.Frame) s.Width = 0f;

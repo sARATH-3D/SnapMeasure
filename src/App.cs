@@ -128,6 +128,44 @@ namespace SnapMeasure
             check("Keys that block typing are refused", Hotkeys.Usable(Keys.A) + "|" + Hotkeys.Usable(Keys.Shift | Keys.A) + "|" + Hotkeys.Usable(Keys.Control | Keys.A) + "|" + Hotkeys.Usable(Keys.F8),
                   "False|False|True|True");
 
+            // radius / diameter: 3 points on a circle round (300,300) with radius 100 px = 1 m
+            ScaleInfo sc = cv.Scale;
+            Shape rad = Mk(cv, Tool.Radius, 200, 300, 300, 200, 400, 300);
+            MeasureRow rr = Measure.Rows(cv.Shapes, sc, false).Find(r => r.Shape == rad);
+            CultureInfo cc = CultureInfo.CurrentCulture;
+            check("Radius R / arc length", rr == null ? "-" : rr.Name + "|" + rr.Display + "|" + (rr.Perimeter ?? 0).ToString("F2", CultureInfo.InvariantCulture),
+                  "R1|" + (1.0).ToString("N2", cc) + " m|3.14");
+            Shape arc = Mk(cv, Tool.Arc, 500, 300, 600, 200, 700, 300);
+            List<Shape> rt5 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { rad, arc }));
+            check("Arc and radius round-trip", rt5.Count + "|" + (rt5.Count == 2 ? rt5[0].Kind + "/" + rt5[1].Kind + "/" + rt5[1].Pts.Count : "-"), "2|Radius/Arc/3");
+            check("Arc hit test", ShapeOps.Hit(arc, new PointF(600, 201), 3) + "|" + ShapeOps.Hit(arc, new PointF(600, 280), 3), "True|False");
+
+            // polygon with Closed unticked = open polyline, with arrowheads possible
+            Shape pl = Mk(cv, Tool.Polygon, 100, 600, 200, 650, 300, 600); pl.Mode = 1; pl.HeadEnd = (int)HeadStyle.Filled;
+            List<Shape> rt6 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { pl }));
+            check("Open polygon (polyline)", pl.IsOpenPath + "|" + pl.HasHeads + "|" + pl.CanBeCloud + "|" + (rt6.Count == 1 ? rt6[0].Mode + "/" + rt6[0].HeadEnd : "-"), "True|True|False|1/1");
+
+            // text underline / strike out, area label position, cloud only for closed shapes
+            Shape tu = Mk(cv, Tool.Text, 100, 700); tu.Text = "U"; tu.Underline = true; tu.Strikeout = true;
+            Shape ar = Mk(cv, Tool.Area, 600, 500, 800, 500, 800, 650, 600, 650); ar.LabelOffset = new PointF(150, -40);
+            List<Shape> rt7 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { tu, ar }));
+            check("Text U/S and moved area label round-trip", rt7.Count == 2 ? rt7[0].Underline + "/" + rt7[0].Strikeout + "|" + P(rt7[1].LabelOffset) : "-", "True/True|150.00,-40.00");
+            check("Cloud only round closed shapes", cv.Styles[Tool.Line].CanBeCloud + "|" + cv.Styles[Tool.Ellipse].CanBeCloud + "|" + cv.Styles[Tool.Freehand].CanBeCloud, "False|True|False");
+
+            // a freehand arrow stops where its head begins
+            List<PointF> line = new List<PointF> { new PointF(0, 0), new PointF(50, 0), new PointF(100, 0) };
+            List<PointF> cut = Geo.TrimPath(line, 10, 20);
+            check("Freehand stroke trimmed for its heads", P(cut[0]) + " " + P(cut[cut.Count - 1]), "10.00,0.00 80.00,0.00");
+
+            // the captured mouse pointer is a separate picture that can be deleted
+            using (Bitmap ptr = new Bitmap(12, 19))
+            {
+                int before = cv.Shapes.Count;
+                cv.AddPointerPicture(new Bitmap(ptr), new Point(40, 40));
+                Shape ps = cv.Shapes[cv.Shapes.Count - 1];
+                check("Pointer is its own picture", (cv.Shapes.Count - before) + "|" + ps.Kind + "|" + ps.Text, "1|Image|Mouse pointer");
+            }
+
             string err = "ok";
             try { using (Bitmap fl = cv.Flatten(null)) fl.Save(Path.Combine(dir, "selftest_v13.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
             check("1.3 shapes draw", err, "ok");
@@ -167,7 +205,7 @@ namespace SnapMeasure
             Shape cl = Mk(cv, Tool.Cloud, 520, 140, 700, 260, 780, 320); cl.Mode = (int)CloudCallout.Triangle; cl.Text = "3";
             Shape cl2 = Mk(cv, Tool.Cloud, 120, 420, 300, 520, 380, 560); cl2.Mode = (int)CloudCallout.TextBox; cl2.Text = "Changed bracket";
             Shape hp = Mk(cv, Tool.Highlight, 600, 380, 760, 500); hp.Mode = (int)HighlightMode.Pixelate; hp.Form = (int)HighlightForm.Ellipse;
-            Shape ht = Mk(cv, Tool.Highlight, 780, 380, 880, 500); ht.Form = (int)HighlightForm.Triangle;
+            Shape ht = Mk(cv, Tool.Highlight, 780, 380, 880, 500); ht.Form = (int)HighlightForm.Triangle; ht.Mode = (int)HighlightMode.Marker;
             Shape tx = Mk(cv, Tool.Text, 330, 260, 470, 260); tx.Text = "A long note that has to wrap inside the box"; tx.Frame = true; tx.Width = 2;
             Shape fh = Mk(cv, Tool.Freehand, 20, 560, 60, 540, 100, 560, 140, 545); fh.HeadEnd = (int)HeadStyle.Filled;
             Shape po = Mk(cv, Tool.Perimeter, 600, 520, 700, 520, 700, 580);
@@ -431,7 +469,7 @@ namespace SnapMeasure
             Shape m3 = Mk(cv, Tool.Counter, 625, 175);
             m3.Shadow = true;
             Mk(cv, Tool.Pixelate, 230, 466, 380, 498);
-            Shape hl = Mk(cv, Tool.Highlight, 106, 518, 318, 546);                // text marker
+            Shape hl = Mk(cv, Tool.Highlight, 106, 518, 318, 546); hl.Mode = (int)HighlightMode.Marker;   // text marker (from 1.2 files)
             Shape mag = Mk(cv, Tool.Highlight, 20, 380, 90, 440); mag.Mode = (int)HighlightMode.Magnify;
             Shape rr = Mk(cv, Tool.Rect, 220, 180, 380, 260); rr.Angle = 30; rr.FillOpacity = 25; rr.Shadow = true;
             Shape el = Mk(cv, Tool.Ellipse, 30, 30, 80, 80); el.Fill = Color.Lime; el.FillOpacity = 40;
@@ -566,7 +604,7 @@ namespace SnapMeasure
 
             // undo keeps the edited shape selected, so the style panel shows its restored values
             {
-                Shape hs = Mk(cv, Tool.Highlight, 10, 10, 100, 40);
+                Shape hs = Mk(cv, Tool.Highlight, 10, 10, 100, 40); hs.Mode = (int)HighlightMode.Marker;
                 cv.Shapes.Add(hs); cv.Selected = hs;
                 cv.PushUndo(cv.Snapshot()); hs.Mode = (int)HighlightMode.Spotlight;
                 cv.Undo();
@@ -776,9 +814,26 @@ namespace SnapMeasure
         }
 
         /// <summary>What happens after a capture (Settings → Capture): open the editor, copy, save, or copy + save.</summary>
-        static void Deliver(Bitmap b, string title)
+        static void Deliver(Bitmap b, string title) { Deliver(b, title, Rectangle.Empty); }
+
+        /// <summary>'area' = where the capture was on screen, to place the mouse pointer (Settings → Capture the mouse pointer).</summary>
+        static void Deliver(Bitmap b, string title, Rectangle area)
         {
-            if (b == null) return;
+            if (b == null) { ScreenCapture.ForgetCursor(); return; }
+            ScreenCapture.CursorShot cur = ScreenCapture.TakeCursor();
+            Point curAt = Point.Empty;
+            if (cur != null)
+            {
+                curAt = new Point(cur.ScreenPos.X - area.X, cur.ScreenPos.Y - area.Y);
+                if (area.IsEmpty || !new Rectangle(0, 0, b.Width, b.Height).IntersectsWith(new Rectangle(curAt, cur.Image.Size))) { cur.Image.Dispose(); cur = null; }
+            }
+            int afterMode = Settings.GetInt("AfterCapture", 0);
+            if (cur != null && afterMode != 0)
+            {
+                // no editor: the pointer goes into the picture itself
+                using (Graphics g = Graphics.FromImage(b)) g.DrawImage(cur.Image, curAt.X, curAt.Y, cur.Image.Width, cur.Image.Height);
+                cur.Image.Dispose(); cur = null;
+            }
             if (Settings.GetBool("CameraSound", false)) Shutter.Play();
             int after = Settings.GetInt("AfterCapture", 0);
             bool copy = after == 1 || after == 3 || (after == 0 && Settings.GetBool("CopyOnCapture", true));
@@ -802,6 +857,7 @@ namespace SnapMeasure
             }
             if (after == 1) { Tell("Capture copied to the clipboard (" + b.Width + " × " + b.Height + ")"); b.Dispose(); return; }
             EditorForm f = new EditorForm(b, title);
+            if (cur != null) f.CanvasControl.AddPointerPicture(cur.Image, curAt);   // a picture on top: move it or press Delete
             f.Show();
             f.Activate();
         }
@@ -810,6 +866,7 @@ namespace SnapMeasure
         static int PreCapture()
         {
             ScreenCapture.IncludeCursor = Settings.GetBool("CaptureCursor", false);
+            ScreenCapture.ForgetCursor();
             return Math.Max(0, Math.Min(10000, Settings.GetInt("CaptureDelay", 0)));
         }
 
@@ -845,7 +902,7 @@ namespace SnapMeasure
                 Bitmap b = ScreenCapture.SelectRegion(out r, out title);
                 if (b == null) return;
                 Settings.Set("LastRegion", r.X + "," + r.Y + "," + r.Width + "," + r.Height);
-                Deliver(b, Named(title, "Region " + r.Width + "×" + r.Height));
+                Deliver(b, Named(title, "Region " + r.Width + "×" + r.Height), r);
             });
         }
 
@@ -857,7 +914,7 @@ namespace SnapMeasure
                 Rectangle r = h == IntPtr.Zero ? Rectangle.Empty : Native.GetWindowBounds(h);
                 r.Intersect(ScreenCapture.VirtualBounds);
                 if (r.Width < 2 || r.Height < 2) return;
-                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(h), "Window " + r.Width + "×" + r.Height));
+                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(h), "Window " + r.Width + "×" + r.Height), r);
             });
         }
 
@@ -866,7 +923,7 @@ namespace SnapMeasure
             Guard(() =>
             {
                 Rectangle r = Screen.FromPoint(Cursor.Position).Bounds;
-                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(Native.GetForegroundWindow()), "Screen " + r.Width + "×" + r.Height));
+                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(Native.GetForegroundWindow()), "Screen " + r.Width + "×" + r.Height), r);
             });
         }
 
@@ -875,7 +932,7 @@ namespace SnapMeasure
             Guard(() =>
             {
                 Rectangle r = ScreenCapture.VirtualBounds;
-                Deliver(ScreenCapture.Grab(r), "All screens " + r.Width + "×" + r.Height);
+                Deliver(ScreenCapture.Grab(r), "All screens " + r.Width + "×" + r.Height, r);
             });
         }
 
@@ -896,7 +953,7 @@ namespace SnapMeasure
                 List<string> titles = new List<string>();
                 List<Rectangle> wins = Native.GetVisibleWindowRects(titles);
                 string t = ScreenCapture.TitleFor(r, wins, titles, Native.WindowTitle(Native.GetForegroundWindow()));
-                Deliver(ScreenCapture.Grab(r), Named(t, "Last region " + r.Width + "×" + r.Height));
+                Deliver(ScreenCapture.Grab(r), Named(t, "Last region " + r.Width + "×" + r.Height), r);
             });
         }
 
@@ -1588,7 +1645,7 @@ namespace SnapMeasure
             }
             m.Items.Add(op);
             m.Items.Add(new ToolStripSeparator());
-            m.Items.Add("Close", Icons.Cmd("close", 16), (s, e) => Close());
+            m.Items.Add("Unpin – back to the editor  (Ctrl+P / Esc)", Icons.Cmd("close", 16), (s, e) => Close());
             m.Opening += (s, e) => reset.Enabled = src.Width != img.Width || src.Height != img.Height;
             ContextMenuStrip = m;
         }
@@ -1750,8 +1807,23 @@ namespace SnapMeasure
                 if (cropping) { cropping = cropDragging = false; Cursor = Cursors.Default; Invalidate(); }
                 else Close();
             }
+            else if (e.Control && e.KeyCode == Keys.P) Close();          // unpin: back to the editor
             else if (e.Control && e.KeyCode == Keys.C) CopyShown();
             else if (e.KeyCode == Keys.C && !e.Control && !e.Alt) StartCrop();
+        }
+
+        /// <summary>The editor this pin came from: it was minimized when pinning and comes back when the pin closes.</summary>
+        public Form Source;
+        public FormWindowState SourceState = FormWindowState.Normal;
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            base.OnFormClosed(e);
+            if (Source != null && !Source.IsDisposed)
+            {
+                if (Source.WindowState == FormWindowState.Minimized) Source.WindowState = SourceState;
+                Source.Activate();
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -2507,14 +2579,26 @@ namespace SnapMeasure
                             break;
                         case Tool.Highlight:
                             {
-                                using (SolidBrush y = new SolidBrush(Color.FromArgb(170, 255, 225, 0))) g.FillRectangle(y, 3, 17, 26, 9);
-                                GraphicsState st = g.Save();
-                                g.TranslateTransform(19, 12);
-                                g.RotateTransform(40);
-                                using (SolidBrush body = new SolidBrush(Color.FromArgb(255, 200, 0))) g.FillRectangle(body, -4, -11, 8, 15);
-                                g.FillPolygon(bi, new PointF[] { new PointF(-4, 4), new PointF(4, 4), new PointF(1.5f, 9), new PointF(-1.5f, 9) });
-                                using (Pen pp = new Pen(ink, 1.2f)) g.DrawRectangle(pp, -4, -11, 8, 15);
-                                g.Restore(st);
+                                // Focus: a bright spot in a darkened square
+                                using (SolidBrush dark = new SolidBrush(Color.FromArgb(110, 115, 125))) g.FillRectangle(dark, 3, 5, 26, 22);
+                                using (SolidBrush lit = new SolidBrush(Color.FromArgb(255, 245, 190))) g.FillEllipse(lit, 9, 9, 15, 14);
+                                using (Pen pp = new Pen(amber, 1.8f)) g.DrawEllipse(pp, 9, 9, 15, 14);
+                                break;
+                            }
+                        case Tool.Arc:
+                            using (Pen pp = new Pen(red, 2.4f)) { pp.StartCap = pp.EndCap = LineCap.Round; g.DrawArc(pp, 4, 8, 24, 30, 200, 140); }
+                            foreach (PointF q in new PointF[] { new PointF(5.4f, 18.5f), new PointF(16, 8), new PointF(26.6f, 18.5f) }) g.FillEllipse(bi, q.X - 2, q.Y - 2, 4, 4);
+                            break;
+                        case Tool.Radius:
+                            {
+                                using (Pen pp = new Pen(Color.FromArgb(0, 130, 140), 2.2f)) { pp.StartCap = pp.EndCap = LineCap.Round; g.DrawArc(pp, 3, 3, 26, 26, 180, 180); }
+                                using (Pen pp = new Pen(ink, 1.4f))
+                                {
+                                    g.DrawLine(pp, 13, 16, 19, 16); g.DrawLine(pp, 16, 13, 16, 19);   // centre mark
+                                    pp.DashStyle = DashStyle.Dash;
+                                    g.DrawLine(pp, 16, 16, 25, 7);                                   // radius line
+                                }
+                                using (Font rf = new Font("Segoe UI", 11, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("R", rf, bi, new RectangleF(1, 18, 14, 14), sf);
                                 break;
                             }
                         case Tool.Bubble:

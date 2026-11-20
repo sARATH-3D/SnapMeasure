@@ -42,8 +42,9 @@ namespace SnapMeasure
         Panel rowHl, rowMarkStart, rowTextStyle, gLine, gFill, gFont, gHeads, gShadow, props, rowStamp, rowMarkup, gDash, rowForm, rowCallout, rowClosed, rowFrame;
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
-        CheckBox cBold, cItalic, cAlignL, cAlignC, cAlignR;
-        ToolStripMenuItem bRulers, bPanel;
+        CheckBox cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR;
+        ToolStripMenuItem bRulers;
+        ToolStripButton bPanel;
         ToolStripStatusLabel lVersion;
         readonly ToolTip tip = new ToolTip();
         ListView lv, lvText;
@@ -52,36 +53,39 @@ namespace SnapMeasure
         string lastSaved;
         DateTime lastStyleUndo = DateTime.MinValue;
 
+        // status bar: one short, plain sentence per tool (what to do first)
         static readonly Dictionary<Tool, string> Hints = new Dictionary<Tool, string>
         {
-            { Tool.Select, "Click to select · Shift+click or drag a box = select several · Ctrl+A = all · right-click = copy / paste / order · green knob = rotate · Home = fit" },
-            { Tool.Rect, "Drag to draw a rectangle · Shift = square · select it to rotate with the green knob" },
-            { Tool.Ellipse, "Drag to draw an ellipse · Shift = circle · the centre mark snaps to points for exact placement" },
-            { Tool.Line, "Drag to draw a line · Shift = 15° steps · snaps to existing points (Alt = no snap)" },
-            { Tool.Arrow, "Drag to draw an arrow · Shift = 15° steps" },
-            { Tool.Freehand, "Drag to draw freehand" },
-            { Tool.Marker, "Highlighter pen: drag over the text to mark · Shift = straight stroke · colour, width and opacity on the style bar" },
-            { Tool.Text, "Click and type directly · Enter = new line · click outside or Ctrl+Enter = done · Esc = cancel" },
-            { Tool.Polygon, "Click to add corners (any number) · double-click / Enter / click first point = finish · Backspace = remove last · Shift = 15° steps" },
-            { Tool.Dimension, "Drag between two points to dimension · Shift = 15° steps · then drag the yellow handle to offset the dimension line" },
-            { Tool.Area, "Click corners to measure area + perimeter · double-click / Enter = finish · Backspace = remove last point" },
-            { Tool.Calibrate, "Draw a line over something of known length, then enter its real size to set the scale" },
-            { Tool.Counter, "Click to place number markers 1, 2, 3 … – they renumber automatically · 'Start at' on the right continues a series" },
-            { Tool.Letter, "Click to place letter markers A, B, C … (own series) – they re-letter automatically · 'Start at' on the right" },
-            { Tool.Angle, "Click the end of the first arm, the vertex, then the end of the second arm · Shift = 15° steps" },
-            { Tool.Pixelate, "Drag over sensitive information to pixelate it · line width = block size" },
-            { Tool.Crop, "Drag the area to keep · drag the handles or the frame to adjust · Enter = done · Delete = remove crop · Ctrl+Z = undo" },
-            { Tool.Highlight, "Drag an area · mode on the right: text marker, spotlight (darken outside), grayscale outside, magnify" },
-            { Tool.Bubble, "Drag (or click) to add a speech bubble, then type · drag the yellow handle to point the tail" },
-            { Tool.Polyline, "Click points along a run (sealant, gasket, coping) · total length · double-click / Enter = finish · Backspace = remove last" },
-            { Tool.Perimeter, "Length / perimeter: click points along a run · double-click / Enter = finish · tick 'Closed' on the style bar for a closed perimeter" },
-            { Tool.Coord, "Coordinates: the first click sets the origin 0,0 · then click points to get X / Y (Y up, like CAD)" },
-            { Tool.Cutout, "Click the corners of an opening inside an area · it is subtracted from that area (net area) · double-click = finish" },
-            { Tool.Cloud, "Drag a revision cloud around a change · line width = size of the scallops" },
-            { Tool.Stamp, "Click (or drag) to place a stamp · pick Approved / Revise / For information / Rejected / Custom on the style bar · double-click to edit the text" },
-            { Tool.Note, "Click to add a note that is shown here only – it is left out of saved, copied and pinned pictures" },
-            { Tool.Markup, "Drag over a line of text in the picture · underline / strike out / highlight (style bar) · snaps to the words" },
-            { Tool.Ocr, "Drag over text to copy it (Windows text recognition) · a click copies all the text in the picture" },
+            { Tool.Select, "Click a shape to select it. Drag a box to select several." },
+            { Tool.Rect, "Rectangle: drag from corner to corner. Shift = square." },
+            { Tool.Ellipse, "Ellipse: drag from corner to corner. Shift = circle." },
+            { Tool.Line, "Line: drag from start to end. Shift = 15° steps." },
+            { Tool.Arrow, "Arrow: drag from start to end. Shift = 15° steps." },
+            { Tool.Freehand, "Freehand: press and draw." },
+            { Tool.Marker, "Highlighter: drag over the text. Shift = straight." },
+            { Tool.Text, "Text: click and type, or drag a box." },
+            { Tool.Polygon, "Polygon: click the corners, double-click to finish." },
+            { Tool.Dimension, "Dimension: drag from one point to the other." },
+            { Tool.Area, "Area: click the corners, double-click to finish." },
+            { Tool.Calibrate, "Calibrate: draw over a known length, then type its size." },
+            { Tool.Counter, "Numbers: click each item to count it." },
+            { Tool.Letter, "Letters: click each item to count it." },
+            { Tool.Angle, "Angle: click arm, corner, arm." },
+            { Tool.Arc, "Arc: click start, a point on the arc, end." },
+            { Tool.Radius, "Radius: click 3 points on the curve." },
+            { Tool.Pixelate, "Pixelate: drag over what to hide." },
+            { Tool.Crop, "Crop: drag the part to keep, then press Enter." },
+            { Tool.Highlight, "Focus: drag over the area to bring out." },
+            { Tool.Bubble, "Speech bubble: drag or click, then type." },
+            { Tool.Polyline, "Length: click along the run, double-click to finish." },
+            { Tool.Perimeter, "Length: click along the run, double-click to finish." },
+            { Tool.Coord, "Coordinates: click the origin first, then the points." },
+            { Tool.Cutout, "Cut-out: click the corners of the opening inside an area." },
+            { Tool.Cloud, "Cloud: drag around the change." },
+            { Tool.Stamp, "Stamp: click where it goes." },
+            { Tool.Note, "Note: click where it goes (never printed)." },
+            { Tool.Markup, "Text markup: drag over a line of text." },
+            { Tool.Ocr, "Copy text: drag over the text (a click = all)." },
         };
 
         public EditorForm(Bitmap img, string title)
@@ -251,7 +255,6 @@ namespace SnapMeasure
             MenuItem(bCopy, "Copy text from the picture (OCR)", "ocr", (s, e) => CopyText(null));
             MenuItem(bCopy, "Copy all typed text", null, (s, e) => CopyAllText());
             MenuItem(bCopy, "Copy measurements (for Excel)", null, (s, e) => CopyMeasurements());
-            Ic(AddBtn(bar, "Pin", "Pin the picture on screen, always on top (Ctrl+P)", (s, e) => Pin()), "pin");
             bar.Items.Add(new ToolStripSeparator());
             bUndo = IconOnly(AddBtn(bar, "Undo", "Undo (Ctrl+Z)", (s, e) => cv.Undo()), "undo");
             bRedo = IconOnly(AddBtn(bar, "Redo", "Redo (Ctrl+Y)", (s, e) => cv.Redo()), "redo");
@@ -292,15 +295,23 @@ namespace SnapMeasure
             view.DropDownItems.Add(new ToolStripSeparator());
             bRulers = MenuItem(view, "Rulers   (Ctrl+R)", "rulers", (s, e) => ToggleRulers());
             bRulers.Checked = cv.ShowRulers;
-            bPanel = MenuItem(view, "Scale & measurements panel   (F4)", "panel", (s, e) => TogglePanel());
-            bPanel.Checked = Settings.GetBool("ShowPanel", true);
             view.DropDownItems.Add(new ToolStripSeparator());
             MenuItem(view, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler());
             MenuItem(view, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor());
             bar.Items.Add(view);
-            bar.Items.Add(new ToolStripSeparator());
-            Ic(AddBtn(bar, "Settings", "Settings: capture keys, what a capture does, save folder, file name, format – and About", (s, e) => Dialogs.ShowSettings(this, 0)), "settings");
-            IconOnly(AddBtn(bar, "About", "About SnapMeasure, shortcuts and the GitHub page", (s, e) => App.ShowAbout(this)), "help");
+
+            // right end, next to the window's own buttons: side panel, pin, settings, help (the first added sits furthest right)
+            ToolStripButton bHelp = IconOnly(AddBtn(bar, "About", "About SnapMeasure, shortcuts and the GitHub page", (s, e) => App.ShowAbout(this)), "help");
+            bHelp.Alignment = ToolStripItemAlignment.Right;
+            ToolStripButton bSet = Ic(AddBtn(bar, "Settings", "Settings: capture keys, what a capture does, save folder, file name, format – and About", (s, e) => Dialogs.ShowSettings(this, 0)), "settings");
+            bSet.Alignment = ToolStripItemAlignment.Right;
+            ToolStripButton bPin = Ic(AddBtn(bar, "Pin", "Pin the picture on screen, always on top (Ctrl+P) · in the pin, Ctrl+P or double-click brings the editor back", (s, e) => Pin()), "pin");
+            bPin.Alignment = ToolStripItemAlignment.Right;
+            bPanel = Ic(AddBtn(bar, "Panel", "Show or hide the side panel: scale, measurements & counts, texts (F4)", (s, e) => TogglePanel()), "panel");
+            bPanel.Alignment = ToolStripItemAlignment.Right;
+            bPanel.Checked = Settings.GetBool("ShowPanel", true);
+            ToolStripSeparator sepR = new ToolStripSeparator(); sepR.Alignment = ToolStripItemAlignment.Right;
+            bar.Items.Add(sepR);
         }
 
         /// <summary>Top-bar icon size in pixels (Settings → General → icon size, scaled for the screen).</summary>
@@ -384,13 +395,14 @@ namespace SnapMeasure
             AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
             AddTool(Tool.Perimeter, "Length / perimeter: open path, or tick 'Closed' for a perimeter (W)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
+            AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
             AddTool(Tool.Coord, "Coordinates: first click = origin 0,0, then points show X / Y (I)");
             AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
             AddHeading("COUNT");
             AddTool(Tool.Counter, "Number marker 1, 2, 3 … – counts (N)");
             AddTool(Tool.Letter, "Letter marker A, B, C … – counts (Shift+N)");
             AddHeading("MARK-UP");
-            AddTool(Tool.Highlight, "Highlight: marker / spotlight / grayscale / magnify / pixelate, in several shapes (H, B = pixelate)");
+            AddTool(Tool.Highlight, "Focus: spotlight / grayscale outside / magnify / pixelate, in several shapes (H, B = pixelate)");
             AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
             AddTool(Tool.Markup, "Text markup: underline / strike out / highlight text (Y)");
             AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
@@ -398,6 +410,7 @@ namespace SnapMeasure
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
             AddTool(Tool.Cloud, "Revision cloud, with or without a callout (U)");
             AddTool(Tool.Line, "Line (L)");
+            AddTool(Tool.Arc, "Arc – 3 points: start, a point on the arc, end (Shift+L)");
             AddTool(Tool.Arrow, "Arrow (A) – right-click it for more line ends");
             AddTool(Tool.Freehand, "Freehand, with arrowheads if you like (F)");
             AddHeading("TEXT");
@@ -732,7 +745,7 @@ namespace SnapMeasure
             tip.SetToolTip(bStroke, "Line colour (Alt+L) · quick colours: Alt+1 … Alt+9");
             tip.SetToolTip(bFill, "Fill colour (Alt+F) · quick colours: Alt+Shift+1 … 9 · Alt+Shift+0 = no fill");
             nWidth = new NumericUpDown();
-            nWidth.DecimalPlaces = 1; nWidth.Increment = 0.5m; nWidth.Minimum = 0; nWidth.Maximum = 40; nWidth.Width = S(52);
+            nWidth.DecimalPlaces = 1; nWidth.Increment = 0.5m; nWidth.Minimum = 0; nWidth.Maximum = 200; nWidth.Width = S(52);
             nWidth.ValueChanged += (s, e) => ApplyStyle(x => x.Width = (float)nWidth.Value);
             tip.SetToolTip(nWidth, "Line width");
             tSO = Slider(out lSO, (s, e) => { lSO.Text = tSO.Value + "%"; ApplyStyle(x => x.StrokeOpacity = tSO.Value); });
@@ -740,10 +753,12 @@ namespace SnapMeasure
             tip.SetToolTip(tSO, "Line opacity");
             tip.SetToolTip(tFO, "Fill opacity (for pictures: picture opacity)");
 
-            cHlMode = Combo(150, "Text marker", "Spotlight (darken outside)", "Grayscale outside", "Magnify ×2", "Pixelate (hide)");
+            // Focus modes (the yellow text marker is now the highlighter pen): list index + 1 = HighlightMode
+            cHlMode = Combo(150, "Spotlight (darken outside)", "Grayscale outside", "Magnify ×2", "Pixelate (hide)");
             cHlMode.SelectedIndexChanged += (s, e) =>
             {
-                int m = cHlMode.SelectedIndex;
+                if (cHlMode.SelectedIndex < 0) return;
+                int m = cHlMode.SelectedIndex + 1;
                 ApplyStyle(x => { x.Mode = m; if (m == (int)HighlightMode.Spotlight && x.FillOpacity < 20) x.FillOpacity = 45; });
                 LoadStyle();
             };
@@ -767,7 +782,7 @@ namespace SnapMeasure
             cMarkup = Combo(110, "Underline", "Strike out", "Highlight text");
             cMarkup.SelectedIndexChanged += (s, e) => { int m = cMarkup.SelectedIndex; if (m >= 0) { ApplyStyle(x => { if (x.Kind == ShapeKind.Markup) x.Mode = m; }); LoadStyle(); } };
             cDash = DashCombo();
-            cDash.SelectedIndexChanged += (s, e) => { int m = cDash.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.HasOutlineStyle) x.Dash = m; }); };
+            cDash.SelectedIndexChanged += (s, e) => { int m = cDash.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.HasOutlineStyle && (m != (int)LineStyle.Cloud || x.CanBeCloud)) x.Dash = m; }); };
             tip.SetToolTip(cDash, "Line style: solid, dashed, dotted, dash-dot, long dash or cloud");
             cForm = Combo(96, "Rectangle", "Ellipse", "Triangle", "Diamond", "Rounded");
             cForm.SelectedIndexChanged += (s, e) => { int m = cForm.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.Kind == ShapeKind.Highlight) x.Form = m; }); };
@@ -776,9 +791,15 @@ namespace SnapMeasure
             cCallout.SelectedIndexChanged += (s, e) => CalloutChanged();
             tip.SetToolTip(cCallout, "Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)");
             cClosed = new CheckBox();
-            cClosed.Text = "Closed (perimeter)";
+            cClosed.Text = "Closed";
             cClosed.AutoSize = true;
-            cClosed.CheckedChanged += (s, e) => { bool c = cClosed.Checked; ApplyStyle(x => { if (x.Kind == ShapeKind.Perimeter) x.Mode = c ? 0 : 1; }); };
+            cClosed.CheckedChanged += (s, e) =>
+            {
+                bool c = cClosed.Checked;
+                // perimeter: closed = perimeter, open = length · polygon: closed = polygon, open = polyline
+                ApplyStyle(x => { if (x.Kind == ShapeKind.Perimeter || x.Kind == ShapeKind.Polygon) x.Mode = c ? 0 : 1; });
+                LoadStyle();
+            };
             cFrame = new CheckBox();
             cFrame.Text = "Frame";
             cFrame.AutoSize = true;
@@ -788,6 +809,10 @@ namespace SnapMeasure
             cBold.CheckedChanged += (s, e) => ApplyStyle(x => x.Bold = cBold.Checked);
             cItalic = StyleToggle("I", "Italic", FontStyle.Italic);
             cItalic.CheckedChanged += (s, e) => ApplyStyle(x => x.Italic = cItalic.Checked);
+            cUnder = StyleToggle("U", "Underline", FontStyle.Underline);
+            cUnder.CheckedChanged += (s, e) => ApplyStyle(x => x.Underline = cUnder.Checked);
+            cStrike = StyleToggle("S", "Strike out", FontStyle.Strikeout);
+            cStrike.CheckedChanged += (s, e) => ApplyStyle(x => x.Strikeout = cStrike.Checked);
             cAlignL = AlignToggle(0, "Align left");
             cAlignC = AlignToggle(1, "Centre");
             cAlignR = AlignToggle(2, "Align right");
@@ -817,7 +842,7 @@ namespace SnapMeasure
             gLine = Grp("Line", bStroke, tSO, lSO, nWidth);
             gFill = Grp("Fill", bFill, tFO, lFO);
             gFont = Grp("Text", nFont);
-            rowTextStyle = Grp("", cBold, cItalic, cAlignL, cAlignC, cAlignR);
+            rowTextStyle = Grp("", cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR);
             gHeads = Grp("Start", cHeadS);
             Label lEnd = new Label();
             lEnd.Text = "End";
@@ -1087,60 +1112,50 @@ namespace SnapMeasure
             if (lHint.Text != t) lHint.Text = t;
         }
 
+        /// <summary>Status bar text: the next step in one short sentence.</summary>
         string GuideText()
         {
-            if (cv.IsEditingText) return "Type the text · Enter = new line · Esc, Ctrl+Enter or click outside = done (the text is kept)";
+            if (cv.IsEditingText) return "Typing. Esc or click outside = done.";
             Tool t = cv.CurrentTool;
             int n = cv.CreatingPoints;
             Shape sel = cv.Selected;
-            string h;
+            string name = ToolName(t), h;
             switch (t)
             {
                 case Tool.Select:
-                    if (cv.Sel.Count > 1) return cv.Sel.Count + " shapes selected · drag one to move them all · Del = delete · right-click = copy / order / line ends";
-                    if (sel == null) return Hints.TryGetValue(Tool.Select, out h) ? h : "";
-                    return KindName(sel) + " selected · " + SelectedHelp(sel);
+                    if (cv.Sel.Count > 1) return cv.Sel.Count + " shapes selected. Drag to move, Del to delete.";
+                    if (sel == null) return Hints[Tool.Select];
+                    return KindName(sel) + ": " + SelectedHelp(sel);
                 case Tool.Rect: case Tool.Ellipse: case Tool.Highlight: case Tool.Cloud: case Tool.Markup: case Tool.Pixelate: case Tool.Bubble:
                 case Tool.Crop: case Tool.Ocr: case Tool.Stamp:
-                    {
-                        string name = ToolName(t);
-                        if (n < 0) return name + " – step 1: press at one corner and drag to the opposite corner" +
-                                          (t == Tool.Stamp || t == Tool.Bubble ? " (or just click for the standard size)" : "") +
-                                          (t == Tool.Ocr ? " · a click reads the whole picture" : "");
-                        return name + " – step 2: release at the opposite corner" + (t == Tool.Ocr || t == Tool.Markup ? "" : " · Shift = square");
-                    }
+                    if (n < 0) return Hints.TryGetValue(t, out h) ? h : name + ": drag from corner to corner.";
+                    return name + ": release to finish.";
                 case Tool.Line: case Tool.Arrow: case Tool.Dimension: case Tool.Calibrate:
-                    if (n < 0) return ToolName(t) + " – step 1: press at the start point (it snaps to nearby points; Alt = no snap)";
-                    return ToolName(t) + " – step 2: drag to the end point and release · Shift = 15° steps" +
-                           (t == Tool.Calibrate ? " · then type the real length" : t == Tool.Dimension ? " · afterwards drag the yellow handle to move the dimension line out" : "");
+                    if (n < 0) return name + ": press at the start point.";
+                    return name + ": release at the end point." + (t == Tool.Calibrate ? " Then type the real length." : "");
                 case Tool.Polygon: case Tool.Area: case Tool.Perimeter: case Tool.Cutout: case Tool.Polyline:
-                    {
-                        string name = ToolName(t);
-                        if (n < 0) return name + " – step 1: click the first point" + (t == Tool.Cutout ? " of the opening, inside an area" : "");
-                        if (n <= 2) return name + " – step 2: click the next point · Backspace = undo the last point · Esc = cancel";
-                        return name + " – click more points · double-click or Enter = finish" +
-                               (t == Tool.Perimeter && cv.Styles[Tool.Perimeter].Mode == 1 ? "" : " · click the first point to close") + " · Backspace = undo the last point";
-                    }
+                    if (n < 0) return Hints.TryGetValue(t, out h) ? h : name + ": click the first point.";
+                    return name + ": click the next point. Double-click to finish.";
                 case Tool.Angle:
-                    if (n < 0) return "Angle – step 1: click the end of the first arm";
-                    if (n == 2) return "Angle – step 2: click the vertex (the corner of the angle)";
-                    return "Angle – step 3: click the end of the second arm · Shift = 15° steps";
+                    if (n < 0) return "Angle: click the end of the first arm.";
+                    if (n == 2) return "Angle: click the corner.";
+                    return "Angle: click the end of the second arm.";
+                case Tool.Arc: case Tool.Radius:
+                    if (n < 0) return name + ": click the start.";
+                    if (n == 2) return name + ": click a point on the curve.";
+                    return name + ": click the end.";
                 case Tool.Freehand:
-                    return n < 0 ? "Freehand – press and draw; release to finish · line ends (arrowheads) on the style bar" : "Freehand – release to finish";
+                    return n < 0 ? Hints[Tool.Freehand] : "Freehand: release to finish.";
                 case Tool.Marker:
-                    return n < 0 ? "Highlighter pen – drag over the text to mark it · hold Shift for a straight stroke" : "Highlighter pen – release to finish · Shift = straight";
+                    return n < 0 ? Hints[Tool.Marker] : "Highlighter: release to finish.";
                 case Tool.Coord:
-                    return !cv.HasOrigin ? "Coordinates – step 1: click the origin (0,0)" :
-                           "Coordinates – click a point to get its X / Y from the origin (Y up) · drag the origin and all values update · right-click a point = make it the origin";
+                    return !cv.HasOrigin ? "Coordinates: click the origin (0,0)." : "Coordinates: click a point.";
                 case Tool.Text:
-                    return n < 0 ? "Text – click where the text starts (it grows as you type) – or drag a box · line width = frame (0 = none)" : "Text – release to set the box, then type";
-                case Tool.Note:
-                    return "Note – click where the note goes, then type it (shown here only, never on saved pictures)";
+                    return n < 0 ? Hints[Tool.Text] : "Text: release, then type.";
                 default:
                     return Hints.TryGetValue(t, out h) ? h : "";
             }
         }
-
         static string ToolName(Tool t)
         {
             switch (t)
@@ -1155,43 +1170,45 @@ namespace SnapMeasure
                 case Tool.Cutout: return "Cut-out";
                 case Tool.Polyline: return "Path length";
                 case Tool.Marker: return "Highlighter pen";
+                case Tool.Radius: return "Radius / diameter";
+                case Tool.Highlight: return "Focus";
                 default: return t.ToString();
             }
         }
 
+        /// <summary>What you can do with the selected shape, in a few words.</summary>
         static string SelectedHelp(Shape s)
         {
             switch (s.Kind)
             {
-                case ShapeKind.Line: case ShapeKind.Arrow:
-                    return "drag an end point to change it · drag the line to move it · right-click = start / end heads · Del = delete";
+                case ShapeKind.Line: case ShapeKind.Arrow: case ShapeKind.Arc:
+                    return "drag a point to change it. Right-click for line ends.";
                 case ShapeKind.Dimension:
-                    return "drag the end points · yellow handle = offset · double-click = label · right-click = end ticks / arrows";
-                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Perimeter: case ShapeKind.Polyline:
-                    return "drag a corner to move it · double-click an edge = add a corner · Ctrl+click a corner = remove it · green knob = rotate" +
-                           (s.IsMeasure ? " · double-click inside = label" : "") + (s.Kind == ShapeKind.Area ? " · X = add a cut-out" : "");
+                    return "drag the yellow knob to move the line. Double-click to label.";
+                case ShapeKind.Area: case ShapeKind.Perimeter:
+                    return "drag a corner, or the yellow knob to move the label. Double-click to label.";
+                case ShapeKind.Polygon: case ShapeKind.Polyline:
+                    return "drag a corner. Double-click an edge to add one.";
+                case ShapeKind.Radius: case ShapeKind.Angle:
+                    return "drag a point to change it. Double-click to label.";
                 case ShapeKind.Text:
-                    return "double-click = edit the text · 8 handles = resize the box (the text wraps) · green knob = rotate · line width = frame (0 = none)";
-                case ShapeKind.Stamp:
-                    return "double-click = type on the stamp · stamp type on the style bar · handles = resize · green knob = rotate";
+                    return "double-click to edit. Handles resize the box.";
+                case ShapeKind.Stamp: case ShapeKind.Note:
+                    return "double-click to edit the text.";
                 case ShapeKind.Cloud:
-                    return "handles = resize · callout on the style bar" + (s.Mode != 0 ? " · yellow handle = move the callout · double-click = edit its text" : "");
+                    return s.Mode != 0 ? "drag the yellow knob to move the callout." : "handles resize it.";
                 case ShapeKind.Coord:
-                    return "drag the point (its label follows) · drag the yellow handle to move the label · right-click = make it the origin · double-click = label";
+                    return "drag the point. Right-click to make it the origin.";
                 case ShapeKind.Origin:
-                    return "drag it to move the origin – every coordinate updates";
+                    return "drag it: every coordinate updates.";
                 case ShapeKind.Counter:
-                    return "drag to move · double-click = say what this series counts · colour / size changes apply to the whole series";
-                case ShapeKind.Note:
-                    return "double-click = edit the note · it is never printed or saved in pictures";
-                case ShapeKind.Freehand:
-                    return s.IsMarkerPen ? "drag to move · green knob = rotate · colour, width and opacity on the style bar"
-                                         : "drag to move · green knob = rotate · line ends (arrowheads) on the style bar";
+                    return "double-click to name what this series counts.";
+                case ShapeKind.Image:
+                    return s.Text == "Mouse pointer" ? "drag to move it, or press Delete to remove it." : "drag a corner to resize it.";
                 default:
-                    return "drag inside to move · white handles = resize · green knob = rotate (where shown) · Del = delete · right-click for more";
+                    return "drag to move it. Del to delete.";
             }
         }
-
         Shape StyleTarget()
         {
             if (cv.EditingShape != null) return cv.EditingShape;
@@ -1217,8 +1234,10 @@ namespace SnapMeasure
                 case ShapeKind.Perimeter: return s.IsOpenPath ? "Length (open)" : "Perimeter (closed)";
                 case ShapeKind.Coord: return "Coordinate point";
                 case ShapeKind.Origin: return "Origin 0,0";
-                case ShapeKind.Highlight: return s.Mode == (int)HighlightMode.Pixelate ? "Highlight – pixelate" : "Highlight";
+                case ShapeKind.Highlight: return s.Mode == (int)HighlightMode.Pixelate ? "Pixelate" : s.Mode == 0 ? "Text marker" : "Focus";
                 case ShapeKind.Freehand: return s.IsMarkerPen ? "Highlighter pen" : "Freehand";
+                case ShapeKind.Polygon: return s.IsOpenPath ? "Polyline (open polygon)" : "Polygon";
+                case ShapeKind.Radius: return "Radius / diameter";
                 default: return s.Kind.ToString();
             }
         }
@@ -1240,10 +1259,11 @@ namespace SnapMeasure
                 lStyleFor.Text = KindName(s) + sel;
                 ShapeKind kd = s.Kind;
                 bool lineOnly = kd == ShapeKind.Line || kd == ShapeKind.Arrow || kd == ShapeKind.Freehand || kd == ShapeKind.Dimension || kd == ShapeKind.Angle ||
-                                kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter;
+                                kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Arc || kd == ShapeKind.Radius ||
+                                (kd == ShapeKind.Polygon && s.IsOpenPath);
                 gFill.Visible = !lineOnly && kd != ShapeKind.Note;
                 gLine.Visible = kd != ShapeKind.Note;
-                gFont.Visible = s.HasTextStyle || kd == ShapeKind.Counter || kd == ShapeKind.Dimension || kd == ShapeKind.Area || kd == ShapeKind.Angle ||
+                gFont.Visible = s.HasTextStyle || kd == ShapeKind.Counter || kd == ShapeKind.Dimension || kd == ShapeKind.Area || kd == ShapeKind.Angle || kd == ShapeKind.Radius ||
                                 kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Note;
                 gHeads.Visible = s.HasHeads;
                 if (s.HasHeads)
@@ -1256,12 +1276,19 @@ namespace SnapMeasure
                 rowMarkup.Visible = kd == ShapeKind.Markup;
                 if (rowMarkup.Visible) cMarkup.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
                 gDash.Visible = s.HasOutlineStyle;
-                if (gDash.Visible) cDash.SelectedIndex = Math.Max(0, Math.Min(5, s.Dash));
+                if (gDash.Visible)
+                {
+                    // "Cloud" is offered only for closed shapes (rectangle, ellipse, polygon, area, closed perimeter)
+                    bool cloudOk = s.CanBeCloud || s.Dash == (int)LineStyle.Cloud;
+                    if (cloudOk && cDash.Items.Count < DashNames.Length) cDash.Items.Add(DashNames[(int)LineStyle.Cloud]);
+                    if (!cloudOk && cDash.Items.Count == DashNames.Length) cDash.Items.RemoveAt((int)LineStyle.Cloud);
+                    cDash.SelectedIndex = Math.Max(0, Math.Min(cDash.Items.Count - 1, s.Dash));
+                }
                 rowForm.Visible = kd == ShapeKind.Highlight;
                 if (rowForm.Visible) cForm.SelectedIndex = Math.Max(0, Math.Min(4, s.Form));
                 rowCallout.Visible = kd == ShapeKind.Cloud;
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
-                rowClosed.Visible = kd == ShapeKind.Perimeter;
+                rowClosed.Visible = kd == ShapeKind.Perimeter || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
                 if (rowClosed.Visible) cClosed.Checked = s.Mode == 0;
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
                 rowFrame.Visible = false;
@@ -1276,11 +1303,13 @@ namespace SnapMeasure
                 cShadow.Enabled = s.CanShadow;
                 nFont.Value = Math.Max(nFont.Minimum, Math.Min(nFont.Maximum, (decimal)s.FontSize));
                 rowHl.Visible = s.Kind == ShapeKind.Highlight;
-                if (rowHl.Visible) cHlMode.SelectedIndex = Math.Max(0, Math.Min(4, s.Mode));
+                if (rowHl.Visible) cHlMode.SelectedIndex = s.Mode >= 1 ? Math.Min(3, s.Mode - 1) : -1;   // an old text marker shows no mode
                 rowMarkStart.Visible = s.Kind == ShapeKind.Counter;
                 rowTextStyle.Visible = s.HasTextStyle;
                 cBold.Checked = s.Bold;
                 cItalic.Checked = s.Italic;
+                cUnder.Checked = s.Underline;
+                cStrike.Checked = s.Strikeout;
                 cAlignL.Checked = s.Align == 0; cAlignC.Checked = s.Align == 1; cAlignR.Checked = s.Align == 2;
             }
             LoadMarker();
@@ -1591,8 +1620,12 @@ namespace SnapMeasure
         void Pin()
         {
             cv.EndTextEdit(true);
-            new PinForm(cv.Flatten(null)).Show();
+            FormWindowState was = WindowState;
+            PinForm pin = new PinForm(cv.Flatten(null));
+            pin.Source = this;                            // closing the pin (Esc, Ctrl+P, double-click) brings this editor back
+            pin.Show();
             dirty = false;
+            pin.SourceState = was == FormWindowState.Minimized ? FormWindowState.Normal : was;
             WindowState = FormWindowState.Minimized;      // the pin is what you want to see now; the editor waits on the task bar
         }
 

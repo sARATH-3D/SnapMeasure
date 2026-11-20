@@ -49,11 +49,76 @@ namespace SnapMeasure
         {
             Bitmap bmp = new Bitmap(Math.Max(1, r.Width), Math.Max(1, r.Height), PixelFormat.Format24bppRgb);
             using (Graphics g = Graphics.FromImage(bmp))
-            {
                 g.CopyFromScreen(r.Left, r.Top, 0, 0, r.Size, CopyPixelOperation.SourceCopy);
-                if (IncludeCursor) DrawCursor(g, r);
-            }
+            // the pointer is kept apart (a picture on top in the editor, so it can be moved or deleted)
+            if (IncludeCursor && pendingCursor == null) pendingCursor = SnapCursor();
             return bmp;
+        }
+
+        /// <summary>The mouse pointer at capture time: its picture (with transparency) and where its top-left was on screen.</summary>
+        public class CursorShot
+        {
+            public Bitmap Image;
+            public Point ScreenPos;
+        }
+
+        static CursorShot pendingCursor;
+
+        /// <summary>The pointer recorded by the last capture (null if none); the caller owns its picture.</summary>
+        public static CursorShot TakeCursor() { CursorShot c = pendingCursor; pendingCursor = null; return c; }
+
+        public static void ForgetCursor() { if (pendingCursor != null) { pendingCursor.Image.Dispose(); pendingCursor = null; } }
+
+        /// <summary>Draws the pointer on black and on white and works out its transparency from the difference.</summary>
+        static CursorShot SnapCursor()
+        {
+            try
+            {
+                CURSORINFO ci = new CURSORINFO();
+                ci.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(CURSORINFO));
+                if (!GetCursorInfo(ref ci) || ci.flags == 0 || ci.hCursor == IntPtr.Zero) return null;
+                ICONINFO ii;
+                int hx = 0, hy = 0;
+                if (GetIconInfo(ci.hCursor, out ii))
+                {
+                    hx = ii.xHotspot; hy = ii.yHotspot;
+                    if (ii.hbmMask != IntPtr.Zero) DeleteObject(ii.hbmMask);
+                    if (ii.hbmColor != IntPtr.Zero) DeleteObject(ii.hbmColor);
+                }
+                const int N = 128;
+                using (Bitmap onBlack = new Bitmap(N, N, PixelFormat.Format24bppRgb))
+                using (Bitmap onWhite = new Bitmap(N, N, PixelFormat.Format24bppRgb))
+                {
+                    foreach (Bitmap bg in new Bitmap[] { onBlack, onWhite })
+                        using (Graphics g = Graphics.FromImage(bg))
+                        {
+                            g.Clear(bg == onBlack ? Color.Black : Color.White);
+                            IntPtr hdc = g.GetHdc();
+                            try { DrawIconEx(hdc, 0, 0, ci.hCursor, 0, 0, 0, IntPtr.Zero, 3); }   // DI_NORMAL
+                            finally { g.ReleaseHdc(hdc); }
+                        }
+                    int minX = N, minY = N, maxX = -1, maxY = -1;
+                    Color[,] px = new Color[N, N];
+                    for (int y = 0; y < N; y++)
+                        for (int x = 0; x < N; x++)
+                        {
+                            Color b = onBlack.GetPixel(x, y), w = onWhite.GetPixel(x, y);
+                            int a = 255 - Math.Min(255, Math.Max(0, ((w.R - b.R) + (w.G - b.G) + (w.B - b.B)) / 3));
+                            if (a == 0) { px[x, y] = Color.Transparent; continue; }
+                            px[x, y] = Color.FromArgb(a, Math.Min(255, b.R * 255 / a), Math.Min(255, b.G * 255 / a), Math.Min(255, b.B * 255 / a));
+                            minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y);
+                        }
+                    if (maxX < 0) return null;
+                    Bitmap img = new Bitmap(maxX - minX + 1, maxY - minY + 1, PixelFormat.Format32bppArgb);
+                    for (int y = minY; y <= maxY; y++)
+                        for (int x = minX; x <= maxX; x++) img.SetPixel(x - minX, y - minY, px[x, y]);
+                    CursorShot c = new CursorShot();
+                    c.Image = img;
+                    c.ScreenPos = new Point(ci.pt.X - hx + minX, ci.pt.Y - hy + minY);
+                    return c;
+                }
+            }
+            catch (Exception) { return null; }
         }
 
         public static Bitmap Crop(Bitmap src, Rectangle r)
