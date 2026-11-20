@@ -18,6 +18,7 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Match properties** (`Ctrl+Shift+M`, brush under TOOLS): select a shape, then click other shapes to give them its colours,
   opacity, line width and style, text size and style, line ends and shadow (never its text or points). `Esc` or right-click ends it.
 * **Zoom to area** (`Shift+Z`, button next to *Fit*): drag a box and the view zooms to it.
+* **Add-ons ▾** in the top bar opens the on-screen ruler and protractor straight from the editor.
 * **Side scrolling:** the tilt / thumb wheel (e.g. Logitech MX) and `Shift`+wheel pan left and right.
 * **Arc** (`Shift+L`): a drawing tool – start, a point on the arc, end.
 * **Polyline** (`Shift+P`, next to Polygon): an open line through any number of points, with optional arrowheads (tick **Closed** for a polygon).
@@ -52,7 +53,7 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
   click again or press `F2` to edit it there (`↵` = new line). **Copy all text** puts them all on the clipboard.
 * **Settings → General:** choose your own **capture keys** (two per capture) and the **tool icon size** (small, medium, large).
 * **Tidier top row:** *New capture ▾* (blank canvas), *Save ▾* (save as), *Copy ▾* (picture, text, measurements), *Adjust ▾* (rotate,
-  mirror, effects) and *View ▾* (1:1, rulers, on-screen ruler and protractor). **Panel, Pin and Settings** sit at the right end.
+  mirror, effects), *View ▾* (1:1, rulers) and **Add-ons ▾** (on-screen ruler and protractor). **Panel, Pin and Settings** sit at the right end.
 * **Simpler status bar:** one short sentence for the next step.
 * **Shadows** fall only under lines and shapes, not under value boxes or labels.
 * The **Text markup** tool (`Y`) is gone: use the highlighter pen or a line. Markups in older files still show.
@@ -136,7 +137,7 @@ If Windows Snipping Tool owns `PrtSc`, SnapMeasure says so at start-up. Use the 
 or turn off *Settings → Accessibility → Keyboard → "Use the Print screen key to open screen capture"*.
 
 ## On-screen ruler & protractor (work over any app: PDF, CAD, browser …)
-Open them from the tray menu or **View ▾ → On-screen ruler / On-screen protractor** in the editor.
+Open them from the tray menu or **Add-ons ▾ → On-screen ruler / On-screen protractor** in the editor's top bar.
 * **Calibrate the ruler to real units:** put the red circle on one end of a known dimension (e.g. a 160 mm CAD dimension)
   and drag the **red marker** to the other end. Then right-click → *Calibrate: red marker = real length…* and type the length.
   The ticks and the readout switch to mm, cm, m, in or ft, and the scale is remembered.

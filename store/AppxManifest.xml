@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Microsoft Store package for SnapMeasure. The identity values come from Partner Center (app reserved 2026-11-20);
+     they must match exactly, or the Store refuses the upload. The version is filled in by build-store.cmd. -->
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <Identity Name="sARATH-3D.SnapMeasure"
+            Publisher="CN=39BEEBAC-EE46-442D-A1BF-CB003FA454C0"
+            Version="$VERSION$"
+            ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>SnapMeasure</DisplayName>
+    <PublisherDisplayName>sARATH-3D</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Screenshot, measuring and quantity takeoff tool</Description>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="SnapMeasure" Executable="SnapMeasure.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="SnapMeasure"
+                          Description="Screenshot, measuring and quantity takeoff tool"
+                          BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png"
+                          Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="snapm">
+            <uap:DisplayName>SnapMeasure project</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.snapm</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

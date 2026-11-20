@@ -308,10 +308,18 @@ namespace SnapMeasure
             view.DropDownItems.Add(new ToolStripSeparator());
             bRulers = MenuItem(view, "Rulers   (Ctrl+R)", "rulers", (s, e) => ToggleRulers());
             bRulers.Checked = cv.ShowRulers;
-            view.DropDownItems.Add(new ToolStripSeparator());
-            MenuItem(view, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler());
-            MenuItem(view, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor());
             bar.Items.Add(view);
+            bar.Items.Add(new ToolStripSeparator());
+
+            // add-ons: tools that float over any window, not just this picture
+            ToolStripDropDownButton addons = new ToolStripDropDownButton("Add-ons");
+            addons.Image = Icons.Cmd("ruler", CmdIcon);
+            addons.ImageScaling = ToolStripItemImageScaling.None;
+            addons.AutoToolTip = false;      // no tooltip: it would cover the menu
+            addons.DropDown.Font = Font;
+            MenuItem(addons, "On-screen ruler – measure anything on screen", "ruler", (s, e) => Overlays.ShowRuler());
+            MenuItem(addons, "On-screen protractor – measure an angle on screen", "protractor", (s, e) => Overlays.ShowProtractor());
+            bar.Items.Add(addons);
 
             // right end, next to the window's own buttons: side panel, pin, settings, help (the first added sits furthest right)
             ToolStripButton bHelp = IconOnly(AddBtn(bar, "About", "About SnapMeasure, shortcuts and the GitHub page", (s, e) => App.ShowAbout(this)), "help");
