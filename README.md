@@ -26,6 +26,13 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Focus** (`H`, was Highlight): spotlight, grayscale, magnify or pixelate; grayscale and pixelate work **inside or outside** the shape. The yellow marker mode is now the highlighter pen.
   A **Strength** slider sets how much magnify enlarges (×1.5 … ×6) and how coarse pixelate is (4 … 40 px blocks).
 * **Tool column in order of work:** Measure (calibrate first), Count, Draw (lines, then shapes), Highlight, Text, Tools.
+  On a short window or a large display scale it becomes two columns, so every tool stays visible.
+* **Keep inside** (lock button next to *Zoom to area*, `Ctrl+L`): drawing, moving, pasting, resizing and turning all stay
+  inside the screenshot (or its crop). Turning it on brings shapes that stick out back in. Measurements are judged by their points.
+* **Revision clouds can be rotated** (green knob) when they have no callout. A **polygon or area with a cloud outline** is filled
+  right out to its scallops.
+* **Strike-out** is as heavy as the letters (heavier for bold), not a hairline.
+* **Smoother drawing:** the rulers and the magnifier no longer redraw the whole picture on every mouse move.
 * **Marker labels stay on one line:** long numbers (1012) and double letters (BM, ABM) shrink to fit the circle.
 * **Safer saving:** pictures and projects are written to a temporary file and swapped in, so a failed save never spoils the old file.
   Unexpected errors are written to `%TEMP%\SnapMeasure-error.log` and the editor stays open so you can save.
@@ -261,7 +268,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 137 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 139 built-in checks.
 The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
 it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 

@@ -292,6 +292,12 @@ namespace SnapMeasure
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
             IconOnly(AddBtn(bar, "Zoom to area", "Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)", (s, e) => { cv.StartZoomBox(); cv.Focus(); }), "zoomarea");
             bar.Items.Add(new ToolStripSeparator());
+            // lock: everything drawn, moved, pasted or resized stays inside the picture
+            bLock = IconOnly(AddBtn(bar, "Keep inside", "Keep inside the picture: drawing, moving, pasting and resizing stay within the screenshot (Ctrl+L)", (s, e) => ToggleLock()), "lock");
+            bLock.CheckOnClick = false;
+            cv.LockInside = Settings.GetBool("LockInside", false);
+            bLock.Checked = cv.LockInside;
+            bar.Items.Add(new ToolStripSeparator());
 
             ToolStripDropDownButton view = new ToolStripDropDownButton("View");
             view.Image = Icons.Cmd("panel", CmdIcon);
@@ -442,9 +448,44 @@ namespace SnapMeasure
             bMatch.Margin = new Padding(0, S(1), 0, S(1));
             bMatch.Click += (s, e) => { ToggleMatch(); cv.Focus(); };
             toolBar.Items.Add(bMatch);
+            toolBar.SizeChanged += (s, e) => FitToolBar();
         }
 
-        ToolStripButton bMatch;
+        bool fittingToolBar, toolBarTwoCols;
+
+        /// <summary>A short window or a large display scale: when the tool column does not fit, it becomes two columns
+        /// without the headings, so every tool stays reachable (no hidden overflow).</summary>
+        void FitToolBar()
+        {
+            if (fittingToolBar || toolBar == null) return;
+            fittingToolBar = true;
+            try
+            {
+                int need = toolBar.Padding.Vertical;
+                foreach (ToolStripItem it in toolBar.Items) need += it.Height + it.Margin.Vertical;
+                bool two = need > toolBar.Height;
+                if (two == toolBarTwoCols) return;
+                toolBarTwoCols = two;
+                toolBar.SuspendLayout();
+                foreach (ToolStripItem it in toolBar.Items) if (it is ToolStripLabel) it.Visible = !two;
+                toolBar.LayoutStyle = two ? ToolStripLayoutStyle.Flow : ToolStripLayoutStyle.VerticalStackWithOverflow;
+                toolBar.Width = two ? S(2 * (IconSize + 24) + 8) : S(IconSize + 32);
+                toolBar.ResumeLayout(true);
+            }
+            finally { fittingToolBar = false; }
+        }
+
+        ToolStripButton bMatch, bLock;
+
+        void ToggleLock()
+        {
+            cv.LockInside = !cv.LockInside;
+            bLock.Checked = cv.LockInside;
+            Settings.Set("LockInside", cv.LockInside ? "1" : "0");
+            if (cv.LockInside) cv.KeepAllInside();
+            Flash(cv.LockInside ? "Locked: everything stays inside the picture" : "Unlocked: shapes may go outside the picture");
+            cv.Focus();
+        }
         void ToggleMatch()
         {
             if (cv.MatchActive) { cv.EndMatch(); return; }
@@ -630,8 +671,7 @@ namespace SnapMeasure
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 int x0 = e.Bounds.X + S(4), x1 = e.Bounds.X + S(inList ? 60 : 58), y = e.Bounds.Y + e.Bounds.Height / 2;
                 Shape tmp = new Shape(); tmp.Dash = e.Index;
-                Color col = (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : Color.FromArgb(40, 40, 45);
-                if (e.Index == (int)LineStyle.Cloud)
+                Color col = (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : Color.FromArgb(40, 40, 45);                if (e.Index == (int)LineStyle.Cloud)
                     using (System.Drawing.Drawing2D.GraphicsPath gp = Renderer.CloudPolyPath(new PointF[] { new PointF(x0, y + S(3)), new PointF(x1, y + S(3)) }, false, 0.5f * k))
                     using (Pen p = new Pen(col, Math.Max(1f, k))) g.DrawPath(p, gp);
                 else
@@ -651,6 +691,7 @@ namespace SnapMeasure
             {
                 if (x.Kind != ShapeKind.Cloud) return;
                 x.Mode = m;
+                if (m != 0) x.Angle = 0f;          // a cloud with a callout stays level
                 if (m != 0 && x.Pts.Count == 2 && cv.Shapes.Contains(x))
                 {
                     RectangleF r = Geo.Rect(x.Pts[0], x.Pts[1]);
@@ -1852,6 +1893,7 @@ namespace SnapMeasure
                 case Keys.Control | Keys.OemOpenBrackets: if (!inText) { cv.Order(2); return true; } break;
                 case Keys.Control | Keys.Shift | Keys.OemOpenBrackets: if (!inText) { cv.Order(3); return true; } break;
                 case Keys.Control | Keys.R: ToggleRulers(); return true;
+                case Keys.Control | Keys.L: if (!inText) { ToggleLock(); return true; } break;
                 case Keys.F4: TogglePanel(); return true;
                 case Keys.Alt | Keys.L: if (!cv.IsEditingText) { PickColor(true); return true; } break;
                 case Keys.Alt | Keys.F: if (!cv.IsEditingText) { PickColor(false); return true; } break;

@@ -232,6 +232,41 @@ namespace SnapMeasure
                   (rt9.Count == 3 ? rt9[0].Strength + "/" + rt9[1].Strength + "/" + rt9[2].Strength : "-"), "4.0|20|12|3|2.0|6/5/0");
             cv.Shapes.Remove(fz); cv.Shapes.Remove(fp);
 
+            // strike-out as heavy as the letters (picture for a visual check), and a filled cloud polygon
+            using (Bitmap sk = new Bitmap(700, 330))
+            using (Graphics sg = Graphics.FromImage(sk))
+            {
+                sg.Clear(Color.Black);
+                sg.SmoothingMode = SmoothingMode.AntiAlias; sg.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                Shape st1 = cv.Styles[Tool.Text].Clone(); st1.Pts.Clear(); st1.Pts.Add(new PointF(10, 10)); st1.Text = "fvxzsdgsedxfxhgf";
+                st1.FontSize = 60; st1.Bold = true; st1.Italic = true; st1.Strikeout = true; st1.Width = 0; st1.Stroke = Color.FromArgb(230, 30, 30);
+                Shape st2 = st1.Clone(); st2.Pts[0] = new PointF(10, 100); st2.Bold = false; st2.Italic = false; st2.Text = "Regular struck text";
+                Shape pc = cv.Styles[Tool.Polygon].Clone(); pc.Pts.Clear();
+                pc.Pts.AddRange(new PointF[] { new PointF(20, 200), new PointF(330, 250), new PointF(560, 180), new PointF(640, 300), new PointF(30, 320) });
+                pc.Dash = (int)LineStyle.Cloud; pc.Stroke = Color.Gold; pc.Fill = Color.Olive; pc.FillOpacity = 100;
+                Renderer.Draw(sg, st1, sk, cv.Scale, null); Renderer.Draw(sg, st2, sk, cv.Scale, null); Renderer.Draw(sg, pc, sk, cv.Scale, null);
+                sk.Save(Path.Combine(dir, "selftest_strike.png"), ImageFormat.Png);
+            }
+
+            // a plain revision cloud turns; one with a callout stays level
+            Shape cl = cv.Styles[Tool.Cloud].Clone(); cl.Mode = 0;
+            Shape clc = cl.Clone(); clc.Mode = 1;
+            check("Cloud rotates (no callout)", cl.Rotatable + "|" + clc.Rotatable, "True|False");
+
+            // lock: a shape sticking out is slid back inside; a measurement is judged by its points only
+            if (cv.Image != null)
+            {
+                Shape lk = Mk(cv, Tool.Rect, cv.Image.Width - 40, 10, cv.Image.Width + 60, 50);
+                Shape ld = Mk(cv, Tool.Dimension, 5, 5, 100, 5);
+                PointF ld0 = ld.Pts[0];
+                cv.LockInside = true;
+                cv.KeepAllInside();
+                cv.LockInside = false;
+                RectangleF lkb = ShapeOps.Bounds(lk);
+                check("Lock keeps shapes inside", (Math.Abs(lkb.Right - cv.Image.Width) < 0.01f) + "|" + P(ld.Pts[0]), "True|" + P(ld0));
+                cv.Shapes.Remove(lk); cv.Shapes.Remove(ld);
+            }
+
             // saving over an existing file swaps a finished file in (no half-written file, no temp file left)
             string safeP = Path.Combine(dir, "selftest_safe.png");
             using (Bitmap sb1 = new Bitmap(30, 20)) Output.SaveBitmap(sb1, safeP);
@@ -2885,6 +2920,18 @@ namespace SnapMeasure
                                 g.DrawEllipse(pp, 7.5f, 7.5f, 5f, 5f);
                                 pp.StartCap = pp.EndCap = LineCap.Round; pp.Width = 2f;
                                 g.DrawLine(pp, 12f, 12f, 14.5f, 14.5f);
+                            }
+                            break;
+                        case "lock":
+                            // padlock: shackle and body with a keyhole
+                            using (Pen pp = new Pen(ink, 1.6f))
+                            using (SolidBrush lb = new SolidBrush(ink))
+                            {
+                                g.DrawArc(pp, 4.5f, 1.5f, 7f, 8f, 180f, 180f);
+                                g.DrawLine(pp, 4.5f, 5.5f, 4.5f, 8f);
+                                g.DrawLine(pp, 11.5f, 5.5f, 11.5f, 8f);
+                                g.FillRectangle(lb, 2.5f, 7.5f, 11f, 7.5f);
+                                using (SolidBrush hole = new SolidBrush(Color.White)) g.FillEllipse(hole, 7f, 9.5f, 2f, 2.5f);
                             }
                             break;
                         case "actual":

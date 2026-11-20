@@ -192,7 +192,15 @@ namespace SnapMeasure
                        Kind == ShapeKind.Image || Kind == ShapeKind.Cloud || Kind == ShapeKind.Stamp || Kind == ShapeKind.Markup;
             }
         }
-        public bool Rotatable { get { return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp; } }
+        /// <summary>Shapes with a green rotate knob. A revision cloud turns when it has no callout (a callout's leader stays put).</summary>
+        public bool Rotatable
+        {
+            get
+            {
+                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp ||
+                       (Kind == ShapeKind.Cloud && Mode == 0);
+            }
+        }
         public bool HasHeads
         {
             get
@@ -787,6 +795,53 @@ namespace SnapMeasure
             return f;
         }
 
+        /// <summary>Text with its style. Strike-out is drawn here instead of by the font: the font's own line is a
+        /// hairline, this one is as heavy as the letters (heavier for bold).</summary>
+        public static void DrawStyledText(Graphics g, string text, float px, FontStyle st, Brush b, RectangleF r, StringFormat sf)
+        {
+            bool strike = (st & FontStyle.Strikeout) != 0;
+            Font f = GetFont(px, st & ~FontStyle.Strikeout);
+            g.DrawString(text ?? "", f, b, r, sf);
+            if (!strike || string.IsNullOrEmpty(text)) return;
+            FontFamily ff = f.FontFamily;
+            float em = f.Size;                                         // pixel size
+            float asc = em * ff.GetCellAscent(f.Style) / ff.GetEmHeight(f.Style);
+            float th = Math.Max(1f, em * ((st & FontStyle.Bold) != 0 ? 0.095f : 0.055f));
+            foreach (RectangleF ln in TextLines(g, text, f, r, sf))
+            {
+                float y = ln.Y + asc - em * 0.28f;                     // through the middle of the small letters
+                g.FillRectangle(b, ln.X, y - th / 2f, ln.Width, th);
+            }
+        }
+
+        /// <summary>Where each drawn line of text sits (left, top, width of its letters), as DrawString lays it out.</summary>
+        static List<RectangleF> TextLines(Graphics g, string text, Font f, RectangleF r, StringFormat sf)
+        {
+            List<RectangleF> lines = new List<RectangleF>();
+            using (StringFormat mf = new StringFormat(sf))
+            {
+                for (int start = 0; start < text.Length; start += 32)
+                {
+                    int n = Math.Min(32, text.Length - start);
+                    CharacterRange[] cr = new CharacterRange[n];
+                    for (int i = 0; i < n; i++) cr[i] = new CharacterRange(start + i, 1);
+                    mf.SetMeasurableCharacterRanges(cr);
+                    Region[] rg = g.MeasureCharacterRanges(text, f, r, mf);
+                    for (int i = 0; i < rg.Length; i++)
+                    {
+                        char ch = text[start + i];
+                        RectangleF cb = rg[i].GetBounds(g);
+                        rg[i].Dispose();
+                        if (char.IsWhiteSpace(ch) || cb.Width <= 0 || cb.Height <= 0) continue;
+                        int at = lines.FindIndex(l => Math.Abs(l.Y - cb.Y) < cb.Height * 0.5f);
+                        if (at < 0) lines.Add(new RectangleF(cb.X, cb.Y, cb.Width, cb.Height));
+                        else lines[at] = RectangleF.Union(lines[at], cb);
+                    }
+                }
+            }
+            return lines;
+        }
+
         /// <summary>Width of a text box the user dragged out (0 = grows with the text).</summary>
         public static float WrapWidth(Shape s)
         {
@@ -1046,7 +1101,7 @@ namespace SnapMeasure
                         using (StringFormat sf = new StringFormat())
                         {
                             sf.Alignment = HAlign(s.Align);
-                            g.DrawString(s.Text, f, b, new RectangleF(s.Pts[0].X, s.Pts[0].Y, sz.Width + 1f, sz.Height + 1f), sf);
+                            DrawStyledText(g, s.Text, s.FontSize, s.Style, b, new RectangleF(s.Pts[0].X, s.Pts[0].Y, sz.Width + 1f, sz.Height + 1f), sf);
                         }
                         break;
                     }
@@ -1059,13 +1114,31 @@ namespace SnapMeasure
                         if (pts.Length >= 3 && fill)
                             using (SolidBrush b = new SolidBrush(fCol))
                             {
-                                if (!holes) g.FillPolygon(b, pts);
+                                bool cloudFill = IsCloudStyle(s);
+                                if (!holes && !cloudFill) g.FillPolygon(b, pts);
+                                else if (!holes)
+                                    // a cloud outline is filled right out to its scallops, not just the straight polygon
+                                    using (GraphicsPath cp = CloudPolyPath(pts, true, w)) { cp.FillMode = FillMode.Winding; g.FillPath(b, cp); }
                                 else
                                     using (GraphicsPath gp = new GraphicsPath(FillMode.Alternate))
                                     {
-                                        gp.AddPolygon(pts);
-                                        foreach (List<PointF> h in s.Holes) if (h.Count >= 3) gp.AddPolygon(h.ToArray());
-                                        g.FillPath(b, gp);
+                                        if (cloudFill)
+                                            using (GraphicsPath cp = CloudPolyPath(pts, true, w))
+                                            {
+                                              cp.FillMode = FillMode.Winding;
+                                              using (Region rg = new Region(cp))
+                                              {
+                                                foreach (List<PointF> h in s.Holes)
+                                                    if (h.Count >= 3) using (GraphicsPath hp = new GraphicsPath()) { hp.AddPolygon(h.ToArray()); rg.Exclude(hp); }
+                                                g.FillRegion(b, rg);
+                                              }
+                                            }
+                                        else
+                                        {
+                                            gp.AddPolygon(pts);
+                                            foreach (List<PointF> h in s.Holes) if (h.Count >= 3) gp.AddPolygon(h.ToArray());
+                                            g.FillPath(b, gp);
+                                        }
                                     }
                             }
                         if (stroke && pts.Length >= 2)
@@ -1288,7 +1361,7 @@ namespace SnapMeasure
                             using (StringFormat sf = new StringFormat())
                             {
                                 sf.Alignment = HAlign(s.Align); sf.LineAlignment = StringAlignment.Center;
-                                g.DrawString(s.Text, GetFont(s.FontSize, s.Style), b, tr, sf);
+                                DrawStyledText(g, s.Text, s.FontSize, s.Style, b, tr, sf);
                             }
                         }
                         break;

@@ -451,6 +451,7 @@ namespace SnapMeasure
         {
             PushUndo(Snapshot());
             Shapes.Add(s);
+            KeepInside(new List<Shape> { s });
             Selected = s;
             FireDoc(); FireSel(); Invalidate();
         }
@@ -527,6 +528,7 @@ namespace SnapMeasure
             PushUndo(Snapshot());
             Sel.Clear();
             foreach (Shape s in list) { s.Offset(dx, dy); Shapes.Add(s); Sel.Add(s); }
+            KeepInside(list);
             if (tool != Tool.Select) CurrentTool = Tool.Select;
             FireDoc(); FireSel(); Invalidate();
             return true;
@@ -605,7 +607,61 @@ namespace SnapMeasure
             List<Shape> src = SelInOrder();
             Sel.Clear();
             foreach (Shape s in src) { Shape c = s.Clone(); c.Cache = null; c.Offset(12, 12); Shapes.Add(c); Sel.Add(c); }
+            KeepInside(new List<Shape>(Sel));
             FireDoc(); FireSel(); Invalidate();
+        }
+
+        // ---------- lock: keep everything inside the picture ----------
+        /// <summary>On: drawing, moving, pasting and resizing stay inside the picture (or its crop).</summary>
+        public bool LockInside;
+
+        RectangleF KeepArea { get { return CropRect.HasValue ? (RectangleF)CropRect.Value : new RectangleF(0, 0, Image.Width, Image.Height); } }
+
+        /// <summary>A point held inside the picture while the lock is on.</summary>
+        PointF Keep(PointF p)
+        {
+            if (!LockInside || Image == null) return p;
+            RectangleF a = KeepArea;
+            return new PointF(Geo.Clamp(p.X, a.X, a.Right), Geo.Clamp(p.Y, a.Y, a.Bottom));
+        }
+
+        /// <summary>Slides shapes back inside the picture as a group (lock on). Bigger than the picture = top-left aligned.</summary>
+        void KeepInside(List<Shape> list)
+        {
+            if (!LockInside || Image == null || list == null || list.Count == 0) return;
+            RectangleF a = KeepArea, b = KeepBounds(list[0]);
+            foreach (Shape s in list) b = RectangleF.Union(b, KeepBounds(s));
+            float dx = 0, dy = 0;
+            if (b.Right > a.Right) dx = a.Right - b.Right;
+            if (b.X + dx < a.X) dx = a.X - b.X;
+            if (b.Bottom > a.Bottom) dy = a.Bottom - b.Bottom;
+            if (b.Y + dy < a.Y) dy = a.Y - b.Y;
+            if (dx != 0 || dy != 0) foreach (Shape s in list) { s.Offset(dx, dy); s.Cache = null; }
+        }
+
+        /// <summary>What has to stay inside: a measurement's points (its value box may overhang a little, and moving it
+        /// would put it off the lines it measures); for everything else the whole drawn shape.</summary>
+        static RectangleF KeepBounds(Shape s)
+        {
+            if ((s.IsMeasure || s.IsPoly || s.Kind == ShapeKind.Line || s.Kind == ShapeKind.Arrow || s.Kind == ShapeKind.Arc) && s.Pts.Count > 0)
+            {
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                foreach (PointF p in s.Pts) { x0 = Math.Min(x0, p.X); y0 = Math.Min(y0, p.Y); x1 = Math.Max(x1, p.X); y1 = Math.Max(y1, p.Y); }
+                return RectangleF.FromLTRB(x0, y0, x1, y1);
+            }
+            return ShapeOps.Bounds(s);
+        }
+
+        /// <summary>Turning the lock on brings every shape that sticks out back inside (one undo step).</summary>
+        public void KeepAllInside()
+        {
+            if (!LockInside || Image == null) return;
+            RectangleF a = KeepArea;
+            List<Shape> outside = Shapes.FindAll(s => { RectangleF b = KeepBounds(s); return b.X < a.X - 0.5f || b.Y < a.Y - 0.5f || b.Right > a.Right + 0.5f || b.Bottom > a.Bottom + 0.5f; });
+            if (outside.Count == 0) return;
+            PushUndo(Snapshot());
+            foreach (Shape s in outside) KeepInside(new List<Shape> { s });
+            FireDoc(); Invalidate();
         }
 
         static RectangleF GroupBounds(List<Shape> list)
@@ -1206,7 +1262,7 @@ namespace SnapMeasure
                 s.Text = editOrigText;
                 PushUndo(editBefore);
                 if (s.Kind == ShapeKind.Text && text.Trim().Length == 0) { Shapes.Remove(s); Sel.Remove(s); FireSel(); }
-                else s.Text = text;
+                else { s.Text = text; KeepInside(new List<Shape> { s }); }     // lock: longer text stays on the picture
                 FireDoc();
             }
             else s.Text = editOrigText;
@@ -1350,6 +1406,7 @@ namespace SnapMeasure
             }
             Focus();
             PointF ip = ToImg(e.Location);
+            if (tool != Tool.Select && tool != Tool.Crop) ip = Keep(ip);     // lock: new shapes start inside the picture
             bool shift = (ModifierKeys & Keys.Shift) != 0, ctrl = (ModifierKeys & Keys.Control) != 0;
 
             if (e.Button == MouseButtons.Middle && e.Clicks == 2) { Fit(); return; }
@@ -1586,8 +1643,14 @@ namespace SnapMeasure
         {
             if (!showRulers) return;
             int rs = (int)RulerSize + 1;
-            Invalidate(new Rectangle(0, 0, Width, rs));
-            Invalidate(new Rectangle(0, 0, rs, Height));
+            // the rulers are drawn on top of the cached layer: no need to redraw the picture and shapes
+            lightInvalidate = true;
+            try
+            {
+                Invalidate(new Rectangle(0, 0, Width, rs));
+                Invalidate(new Rectangle(0, 0, rs, Height));
+            }
+            finally { lightInvalidate = false; }
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -1598,7 +1661,7 @@ namespace SnapMeasure
             mouseImg = ip;
             mouseScr = e.Location;
             InvalidateRulers();
-            if (LoupeTool(tool)) Invalidate();          // the magnifier follows the pointer
+            if (LoupeTool(tool)) InvalidateLight();     // the magnifier follows the pointer (drawn on top of the cached layer)
             if (CursorMoved != null) CursorMoved(ip);
             if (panning)
             {
@@ -1653,6 +1716,7 @@ namespace SnapMeasure
 
             if (creating != null)
             {
+                if (tool != Tool.Crop) ip = Keep(ip);
                 PointF sp = tool == Tool.Freehand || tool == Tool.Marker || tool == Tool.Crop || tool == Tool.Ocr || tool == Tool.Markup ? ip : Snap(ip);
                 int n = creating.Pts.Count;
                 PointF p0 = creating.Pts[0];
@@ -1714,7 +1778,7 @@ namespace SnapMeasure
             if (dragH.HasValue && Selected != null)
             {
                 Handle h = dragH.Value;
-                PointF p = h.Kind == HKind.Rotate || h.Kind == HKind.Box ? ip : Snap(ip);
+                PointF p = h.Kind == HKind.Rotate ? ip : h.Kind == HKind.Box ? Keep(ip) : Keep(Snap(ip));
                 if (shift && !snapPt.HasValue && h.Kind == HKind.Point && h.Index < 2 &&
                     (Selected.Kind == ShapeKind.Line || Selected.Kind == ShapeKind.Arrow || Selected.Kind == ShapeKind.Dimension))
                     p = Geo.SnapAngle(Selected.Pts[1 - h.Index], p, 15);
@@ -1729,6 +1793,7 @@ namespace SnapMeasure
                 if (dx != 0 || dy != 0)
                 {
                     foreach (Shape s in Sel) s.Offset(dx, dy);
+                    KeepInside(new List<Shape>(Sel));      // lock: the selection stops at the picture edge
                     dragLast = ip;
                     changedDuringDrag = true;
                     pendingSingle = null;
@@ -1934,6 +1999,7 @@ namespace SnapMeasure
             }
             if (dragH.HasValue || dragBody)
             {
+                if (changedDuringDrag && Sel.Count > 0) KeepInside(new List<Shape>(Sel));   // lock: e.g. a shape turned over the edge
                 if (changedDuringDrag && before != null) { PushUndo(before); FireDoc(); }
                 else if (pendingSingle != null) { Selected = pendingSingle; FireSel(); }
                 dragH = null; dragOrig = null; dragBody = false; changedDuringDrag = false; before = null; pendingSingle = null;
@@ -2101,6 +2167,7 @@ namespace SnapMeasure
             if (Sel.Count == 0) return;
             PushUndo(Snapshot());
             foreach (Shape s in Sel) s.Offset(dx, dy);
+            KeepInside(new List<Shape>(Sel));
             FireDoc(); Invalidate();
         }
 
