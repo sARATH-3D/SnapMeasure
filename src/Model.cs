@@ -95,6 +95,7 @@ namespace SnapMeasure
         public int Form;             // HighlightForm for Highlight shapes
         public bool Frame;           // Text: draw a frame round the text in the line colour and width
         public int Strength;         // Focus magnify / pixelate: 1..10; 0 = older files (pixel size from the line width, magnify ×2)
+        public int FromArea;         // open length made with the Area tool (Closed unticked): its Show setting + 1, so ticking Closed gives the area back
 
         /// <summary>Pixelate block size in picture pixels.</summary>
         public int PixelBlock { get { return Strength > 0 ? Math.Max(3, Strength * 4) : Math.Max(3, (int)Math.Round(Width * 4)); } }
@@ -2695,6 +2696,7 @@ namespace SnapMeasure
             if (s.Dash != 0) w.WriteAttributeString("dash", s.Dash.ToString(Inv));
             if (s.Form != 0) w.WriteAttributeString("form", s.Form.ToString(Inv));
             if (s.Strength != 0) w.WriteAttributeString("strength", s.Strength.ToString(Inv));
+            if (s.FromArea != 0) w.WriteAttributeString("fromarea", s.FromArea.ToString(Inv));
             if (s.LabelOffset.X != 0 || s.LabelOffset.Y != 0)
             {
                 w.WriteAttributeString("lx", F(s.LabelOffset.X));
@@ -2830,6 +2832,7 @@ namespace SnapMeasure
             s.Dash = Math.Max(0, Math.Min(5, s.Dash));
             s.Form = Math.Max(0, Math.Min(4, s.Form));
             s.Strength = Math.Max(0, Math.Min(10, s.Strength));
+            s.FromArea = s.Kind == ShapeKind.Perimeter ? Math.Max(0, Math.Min(3, s.FromArea)) : 0;
             if (s.Text != null && s.Text.Length > 100000) s.Text = s.Text.Substring(0, 100000);
             return true;
         }
@@ -2876,6 +2879,7 @@ namespace SnapMeasure
             s.Dash = PI(e.GetAttribute("dash"), 0);
             s.Form = PI(e.GetAttribute("form"), 0);
             s.Strength = PI(e.GetAttribute("strength"), 0);
+            s.FromArea = PI(e.GetAttribute("fromarea"), 0);
             if (e.HasAttribute("lx")) s.LabelOffset = new PointF(Finite(PF(e.GetAttribute("lx"), 0f), 0f, -100000f, 100000f), Finite(PF(e.GetAttribute("ly"), 0f), 0f, -100000f, 100000f));
             s.Frame = e.GetAttribute("frame") == "1";
             // since 1.3 a text's frame is its line width: older text without a frame gets width 0

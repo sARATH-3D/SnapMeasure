@@ -253,18 +253,69 @@ namespace SnapMeasure
             Shape clc = cl.Clone(); clc.Mode = 1;
             check("Cloud rotates (no callout)", cl.Rotatable + "|" + clc.Rotatable, "True|False");
 
-            // lock: a shape sticking out is slid back inside; a measurement is judged by its points only
+            // lock: nothing is moved; a shape wholly outside is hidden (and cannot be picked), one sticking out stays
             if (cv.Image != null)
             {
                 Shape lk = Mk(cv, Tool.Rect, cv.Image.Width - 40, 10, cv.Image.Width + 60, 50);
-                Shape ld = Mk(cv, Tool.Dimension, 5, 5, 100, 5);
-                PointF ld0 = ld.Pts[0];
-                cv.LockInside = true;
-                cv.KeepAllInside();
-                cv.LockInside = false;
-                RectangleF lkb = ShapeOps.Bounds(lk);
-                check("Lock keeps shapes inside", (Math.Abs(lkb.Right - cv.Image.Width) < 0.01f) + "|" + P(ld.Pts[0]), "True|" + P(ld0));
-                cv.Shapes.Remove(lk); cv.Shapes.Remove(ld);
+                Shape lo = Mk(cv, Tool.Rect, cv.Image.Width + 100, 10, cv.Image.Width + 200, 50);
+                RectangleF lk0 = ShapeOps.Bounds(lk);
+                cv.SetLock(true);
+                cv.SelectAll();
+                string r1 = (ShapeOps.Bounds(lk) == lk0) + "|" + cv.HiddenByLock(lk) + "|" + cv.HiddenByLock(lo) + "|" + cv.Sel.Contains(lo);
+                cv.SetLock(false);
+                cv.SelectAll();
+                string r2 = cv.HiddenByLock(lo) + "|" + cv.Sel.Contains(lo);
+                check("Lock hides outside shapes, moves nothing", r1 + "|" + r2, "True|False|True|False|False|True");
+                cv.Sel.Clear(); cv.Shapes.Remove(lk); cv.Shapes.Remove(lo);
+            }
+
+            // lock: zoomed in, the view cannot be scrolled past the picture's edge
+            if (cv.Image != null && cv.Width > 100 && cv.Height > 100)
+            {
+                cv.SetLock(true);
+                cv.ZoomCenter(8f);
+                cv.PanBy(100000, 100000);       // try to drag the picture far right / down
+                PointF tl = cv.ToScr(new PointF(0, 0));
+                bool edge = Math.Abs(tl.X - cv.RulerSize) < 0.5f && Math.Abs(tl.Y - cv.RulerSize) < 0.5f;
+                cv.PanBy(-200000, -200000);     // and far left / up
+                PointF br = cv.ToScr(new PointF(cv.Image.Width, cv.Image.Height));
+                edge = edge && Math.Abs(br.X - cv.Width) < 0.5f && Math.Abs(br.Y - cv.Height) < 0.5f;
+                cv.SetLock(false);
+                cv.Fit();
+                check("Lock keeps the view on the picture", edge.ToString(), "True");
+            }
+
+            // area tool, Closed unticked: the area becomes an open length (kept through saving) and comes back when ticked
+            {
+                Shape ao = Mk(cv, Tool.Area, 600, 500, 800, 500, 800, 650, 600, 650); ao.Mode = 2;
+                cv.Sel.Clear(); cv.Sel.Add(ao);
+                cv.SetAreaClosed(false);
+                List<Shape> rto = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { ao }));
+                string o1 = ao.Kind + "|" + ao.IsOpenPath + "|" + (rto.Count == 1 ? rto[0].Kind + "/" + rto[0].FromArea : "-");
+                cv.SetAreaClosed(true);
+                check("Area tool open / closed", o1 + "|" + ao.Kind + "/" + ao.Mode + "/" + ao.FromArea, "Perimeter|True|Perimeter/3|Area/2/0");
+                cv.Sel.Clear(); cv.Shapes.Remove(ao);
+            }
+
+            // pin: rotate and mirror carry the crop along (a marked pixel ends up where it should)
+            {
+                Bitmap pb = new Bitmap(40, 20);
+                using (Graphics pg = Graphics.FromImage(pb)) pg.Clear(Color.White);
+                pb.SetPixel(31, 2, Color.Red);
+                using (PinForm pf = new PinForm(pb))
+                {
+                    pf.ShownPart = new Rectangle(30, 0, 10, 8);
+                    bool a = pf.ShownPixel(1, 2).ToArgb() == Color.Red.ToArgb();
+                    pf.Turn(RotateFlipType.Rotate90FlipNone);
+                    string d1 = pf.Describe();
+                    bool b = pf.ShownPixel(5, 1).ToArgb() == Color.Red.ToArgb();
+                    pf.Turn(RotateFlipType.RotateNoneFlipX);
+                    bool c = pf.ShownPixel(2, 1).ToArgb() == Color.Red.ToArgb();
+                    pf.Turn(RotateFlipType.RotateNoneFlipX);
+                    pf.Turn(RotateFlipType.Rotate270FlipNone);
+                    string d2 = pf.Describe();
+                    check("Pin rotates and mirrors", a + "|" + d1 + "|" + b + "|" + c + "|" + d2, "True|20x40 12,30,8,10|True|True|40x20 30,0,10,8");
+                }
             }
 
             // saving over an existing file swaps a finished file in (no half-written file, no temp file left)
@@ -1585,6 +1636,7 @@ namespace SnapMeasure
             sb.AppendLine("  Ctrl+wheel = zoom   Space+drag or middle mouse = pan");
             sb.AppendLine("  Alt+1..9 line colour   Alt+Shift+1..9 fill colour   Alt+L / Alt+F pickers");
             sb.AppendLine("  Ctrl+S save picture (+ .snapm)   Ctrl+Shift+S save as   Ctrl+P pin   F4 scale panel");
+            sb.AppendLine("  Ctrl+L keep inside (lock)   In a pin: R / Shift+R rotate, H mirror, V flip, C crop");
             sb.AppendLine();
             sb.AppendLine("Settings file: " + Settings.FilePath);
             return sb.ToString();
@@ -1754,6 +1806,14 @@ namespace SnapMeasure
                 int pp = p;
                 size.DropDownItems.Add(p + "%", null, (s, e) => { z = pp / 100f; ApplySize(); });
             }
+            ToolStripMenuItem turn = new ToolStripMenuItem("Rotate / mirror");
+            turn.DropDownItems.Add("Rotate right 90°   (R)", null, (s, e) => Turn(RotateFlipType.Rotate90FlipNone));
+            turn.DropDownItems.Add("Rotate left 90°   (Shift+R)", null, (s, e) => Turn(RotateFlipType.Rotate270FlipNone));
+            turn.DropDownItems.Add("Rotate 180°", null, (s, e) => Turn(RotateFlipType.Rotate180FlipNone));
+            turn.DropDownItems.Add(new ToolStripSeparator());
+            turn.DropDownItems.Add("Mirror left ↔ right   (H)", null, (s, e) => Turn(RotateFlipType.RotateNoneFlipX));
+            turn.DropDownItems.Add("Flip upside down   (V)", null, (s, e) => Turn(RotateFlipType.RotateNoneFlipY));
+            m.Items.Add(turn);
             m.Items.Add(size);
             ToolStripMenuItem op = new ToolStripMenuItem("Opacity");
             foreach (int p in new int[] { 100, 80, 60, 40, 25 })
@@ -1767,6 +1827,37 @@ namespace SnapMeasure
             m.Opening += (s, e) => reset.Enabled = src.Width != img.Width || src.Height != img.Height;
             ContextMenuStrip = m;
         }
+
+        /// <summary>Rotates or mirrors the pinned picture (and its crop) about the pin's centre; the size stays the same.</summary>
+        public void Turn(RotateFlipType t)
+        {
+            if (cropping) return;
+            int W = img.Width, H = img.Height;
+            Rectangle r = src;
+            switch (t)
+            {
+                case RotateFlipType.Rotate90FlipNone: r = new Rectangle(H - src.Bottom, src.X, src.Height, src.Width); break;
+                case RotateFlipType.Rotate270FlipNone: r = new Rectangle(src.Y, W - src.Right, src.Height, src.Width); break;
+                case RotateFlipType.Rotate180FlipNone: r = new Rectangle(W - src.Right, H - src.Bottom, src.Width, src.Height); break;
+                case RotateFlipType.RotateNoneFlipX: r = new Rectangle(W - src.Right, src.Y, src.Width, src.Height); break;
+                case RotateFlipType.RotateNoneFlipY: r = new Rectangle(src.X, H - src.Bottom, src.Width, src.Height); break;
+                default: return;
+            }
+            Point c = new Point(Left + Width / 2, Top + Height / 2);
+            img.RotateFlip(t);
+            src = r;
+            ApplySize();
+            Location = new Point(c.X - Width / 2, c.Y - Height / 2);
+        }
+
+        /// <summary>For the self-test: the pinned picture's size and the shown part.</summary>
+        public string Describe() { return img.Width + "x" + img.Height + " " + src.X + "," + src.Y + "," + src.Width + "," + src.Height; }
+
+        /// <summary>The part of the picture shown (as after a crop).</summary>
+        public Rectangle ShownPart { get { return src; } set { src = Rectangle.Intersect(value, new Rectangle(0, 0, img.Width, img.Height)); ApplySize(); } }
+
+        /// <summary>For the self-test: the colour of a pixel of the shown part.</summary>
+        public Color ShownPixel(int x, int y) { return img.GetPixel(src.X + x, src.Y + y); }
 
         Bitmap ShownImage()
         {
@@ -1928,6 +2019,9 @@ namespace SnapMeasure
             else if (e.Control && e.KeyCode == Keys.P) Close();          // unpin: back to the editor
             else if (e.Control && e.KeyCode == Keys.C) CopyShown();
             else if (e.KeyCode == Keys.C && !e.Control && !e.Alt) StartCrop();
+            else if (e.KeyCode == Keys.R && !e.Control && !e.Alt) Turn(e.Shift ? RotateFlipType.Rotate270FlipNone : RotateFlipType.Rotate90FlipNone);
+            else if (e.KeyCode == Keys.H && !e.Control && !e.Alt) Turn(RotateFlipType.RotateNoneFlipX);
+            else if (e.KeyCode == Keys.V && !e.Control && !e.Alt) Turn(RotateFlipType.RotateNoneFlipY);
         }
 
         /// <summary>The editor this pin came from: it was minimized when pinning and comes back when the pin closes.</summary>
@@ -2114,9 +2208,12 @@ namespace SnapMeasure
                     int curIcon = SnapMeasure.Settings.GetInt("IconSize", 20);
                     iconSize.SelectedIndex = curIcon <= 16 ? 0 : (curIcon >= 24 ? 2 : 1);
                     iconSize.SetBounds(S(230), S(314), S(140), S(26));
-                    Label lin = new Label(); lin.Text = "Editor windows opened after this use the new size."; lin.AutoSize = true;
-                    lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(12), S(346));
-                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin });
+                    Label lin = new Label(); lin.Text = "(new editor windows)"; lin.AutoSize = true;
+                    lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(378), S(318));
+                    CheckBox cLock = new CheckBox(); cLock.Name = "lock"; cLock.AutoSize = true; cLock.Location = new Point(S(12), S(348));
+                    cLock.Text = "Editor: start with \"Keep inside\" locked (Ctrl+L switches it in the editor)";
+                    cLock.Checked = SnapMeasure.Settings.GetBool("LockInside", false);
+                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock });
                 }
 
                 // ---------- Capture ----------
@@ -2260,6 +2357,8 @@ namespace SnapMeasure
                     for (int i = 0; i < Hotkeys.Ids.Length; i++)
                         for (int slot = 0; slot < 2; slot++) Hotkeys.Set(i, slot, keyBox[i, slot].Value);
                     SnapMeasure.Settings.Set("IconSize", (iconSize.SelectedIndex == 0 ? 16 : iconSize.SelectedIndex == 2 ? 24 : 20).ToString(CultureInfo.InvariantCulture));
+                    CheckBox lockBox = tGen.Controls["lock"] as CheckBox;
+                    if (lockBox != null) SnapMeasure.Settings.Set("LockInside", lockBox.Checked ? "1" : "0");
 
                     string dir = folder.Text.Trim();
                     bool okDir = false;

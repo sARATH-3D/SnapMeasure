@@ -166,7 +166,7 @@ namespace SnapMeasure
 
             Controls.Add(cv);
             Controls.Add(props);
-            Controls.Add(toolBar);
+            Controls.Add(toolHost);
             Controls.Add(styleBar);
             Controls.Add(bar);
             Controls.Add(status);
@@ -408,7 +408,7 @@ namespace SnapMeasure
             AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
             AddTool(Tool.Dimension, "Dimension (D)");
             AddTool(Tool.Perimeter, "Length: path along a run; tick Closed for a closed perimeter (W)");
-            AddTool(Tool.Area, "Area / perimeter: closed outline, show area, perimeter or both (M; Q = perimeter only)");
+            AddTool(Tool.Area, "Area / perimeter: closed outline, show area, perimeter or both; untick Closed for an open polyline length (M; Q = perimeter only)");
             AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
@@ -448,42 +448,92 @@ namespace SnapMeasure
             bMatch.Margin = new Padding(0, S(1), 0, S(1));
             bMatch.Click += (s, e) => { ToggleMatch(); cv.Focus(); };
             toolBar.Items.Add(bMatch);
-            toolBar.SizeChanged += (s, e) => FitToolBar();
+
+            // the column sits in a holder that scrolls (mouse wheel) when even the compact column is too tall
+            toolHost = new Panel();
+            toolHost.Dock = DockStyle.Left;
+            toolHost.AutoScroll = true;
+            toolHost.BackColor = SystemColors.Control;
+            toolHost.Width = toolBar.Width;
+            toolBar.Dock = DockStyle.None;
+            toolBar.Location = Point.Empty;
+            toolHost.Controls.Add(toolBar);
+            toolHost.SizeChanged += (s, e) => FitToolBar();
+            toolBar.MouseWheel += (s, e) =>
+            {
+                if (!toolHost.VerticalScroll.Visible) return;
+                int y = Math.Max(0, Math.Min(toolHost.VerticalScroll.Maximum, -toolHost.AutoScrollPosition.Y - e.Delta / 120 * S(IconSize + 5) * 2));
+                toolHost.AutoScrollPosition = new Point(0, y);
+                HandledMouseEventArgs he = e as HandledMouseEventArgs;
+                if (he != null) he.Handled = true;    // not passed on to the holder as well
+            };
         }
 
-        bool fittingToolBar, toolBarTwoCols;
+        Panel toolHost;
+        bool fittingToolBar;
 
-        /// <summary>A short window or a large display scale: when the tool column does not fit, it becomes two columns
-        /// without the headings, so every tool stays reachable (no hidden overflow).</summary>
+        /// <summary>One column, always. A short window or a large display scale first gets the compact column
+        /// (the group titles become thin dividers, the buttons a little closer); if that still does not fit,
+        /// the column scrolls with the mouse wheel. No tool is ever hidden.</summary>
         void FitToolBar()
         {
-            if (fittingToolBar || toolBar == null) return;
+            if (fittingToolBar || toolBar == null || toolHost == null) return;
             fittingToolBar = true;
             try
             {
-                int need = toolBar.Padding.Vertical;
-                foreach (ToolStripItem it in toolBar.Items) need += it.Height + it.Margin.Vertical;
-                bool two = need > toolBar.Height;
-                if (two == toolBarTwoCols) return;
-                toolBarTwoCols = two;
+                int avail = toolHost.Height;
+                if (avail <= 0) return;
                 toolBar.SuspendLayout();
-                foreach (ToolStripItem it in toolBar.Items) if (it is ToolStripLabel) it.Visible = !two;
-                toolBar.LayoutStyle = two ? ToolStripLayoutStyle.Flow : ToolStripLayoutStyle.VerticalStackWithOverflow;
-                toolBar.Width = two ? S(2 * (IconSize + 24) + 8) : S(IconSize + 32);
+                SetToolBarCompact(false);
+                bool compact = ToolBarNeed() > avail;
+                if (compact) SetToolBarCompact(true);
+                int need = ToolBarNeed();
+                bool scroll = need > avail;
+                int w = S(IconSize + 32);
+                toolBar.Width = w;
+                toolBar.Height = scroll ? need : avail;
                 toolBar.ResumeLayout(true);
+                toolHost.Width = w + (scroll ? SystemInformation.VerticalScrollBarWidth : 0);
+                if (!scroll) toolHost.AutoScrollPosition = Point.Empty;
             }
             finally { fittingToolBar = false; }
+        }
+
+        int ToolBarNeed()
+        {
+            int need = toolBar.Padding.Vertical + S(2);
+            foreach (ToolStripItem it in toolBar.Items) if (it.Available) need += it.Height + it.Margin.Vertical;
+            return need;
+        }
+
+        void SetToolBarCompact(bool on)
+        {
+            foreach (ToolStripItem it in toolBar.Items)
+            {
+                if (it is ToolStripLabel)
+                {
+                    // the group title becomes a thin divider line
+                    if (it.Tag == null) it.Tag = it.Text;
+                    it.Text = on ? "" : (string)it.Tag;
+                    it.Height = on ? S(7) : S(13);
+                    it.Margin = new Padding(0, on ? S(1) : S(4), 0, 0);
+                }
+                else
+                {
+                    it.Height = on ? S(IconSize + 1) : S(IconSize + 3);
+                    it.Margin = on ? new Padding(0) : new Padding(0, S(1), 0, S(1));
+                }
+            }
         }
 
         ToolStripButton bMatch, bLock;
 
         void ToggleLock()
         {
-            cv.LockInside = !cv.LockInside;
+            // for this picture only; whether new editors start locked is set in Settings → Editor
+            cv.SetLock(!cv.LockInside);
             bLock.Checked = cv.LockInside;
-            Settings.Set("LockInside", cv.LockInside ? "1" : "0");
-            if (cv.LockInside) cv.KeepAllInside();
-            Flash(cv.LockInside ? "Locked: everything stays inside the picture" : "Unlocked: shapes may go outside the picture");
+            Flash(cv.LockInside ? "Locked: work stays inside the picture; anything outside is hidden until you unlock" : "Unlocked: shapes may go outside the picture");
             cv.Focus();
         }
         void ToggleMatch()
@@ -503,6 +553,15 @@ namespace SnapMeasure
             l.Size = new Size(S(IconSize + 28), S(13));
             l.TextAlign = ContentAlignment.BottomCenter;
             l.Margin = new Padding(0, S(4), 0, 0);
+            l.ToolTipText = text;
+            // compact column: no title, a short divider line instead
+            l.Paint += (s, e) =>
+            {
+                if (l.Text.Length > 0) return;
+                int y = l.Height / 2;
+                using (Pen p = new Pen(Color.FromArgb(185, 192, 202)))
+                    e.Graphics.DrawLine(p, S(8), y, l.Width - S(8), y);
+            };
             toolBar.Items.Add(l);
         }
 
@@ -896,9 +955,15 @@ namespace SnapMeasure
             cClosed.AutoSize = true;
             cClosed.CheckedChanged += (s, e) =>
             {
+                if (loading) return;
                 bool c = cClosed.Checked;
+                // area tool with nothing selected: Closed = area (default), unticked = open length
+                if (cv.Sel.Count == 0 && cv.EditingShape == null && cv.CurrentTool == Tool.Area) { cv.AreaOpen = !c; LoadStyle(); return; }
+                // selected areas become open lengths and back
+                if (cv.Sel.Count > 0) cv.SetAreaClosed(c);
                 // perimeter: closed = perimeter, open = length · polygon: closed = polygon, open = polyline
-                ApplyStyle(x => { if (x.Kind == ShapeKind.Perimeter || x.Kind == ShapeKind.Polygon) x.Mode = c ? 0 : 1; });
+                if (cv.Sel.Count == 0 || cv.Sel.Exists(x => x.Kind == ShapeKind.Polygon || (x.Kind == ShapeKind.Perimeter && x.FromArea == 0)))
+                    ApplyStyle(x => { if (x.Kind == ShapeKind.Polygon || (x.Kind == ShapeKind.Perimeter && x.FromArea == 0)) x.Mode = c ? 0 : 1; });
                 LoadStyle();
             };
             cFrame = new CheckBox();
@@ -1422,8 +1487,11 @@ namespace SnapMeasure
                 rowCallout.Visible = kd == ShapeKind.Cloud;
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
                 // length (W) and polygon: tick Closed to close the outline
-                rowClosed.Visible = kd == ShapeKind.Perimeter || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
-                rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout) || kd == ShapeKind.Radius;
+                // area (M): Closed ticked = area (default); unticked = an open polyline measured as a length
+                bool areaTool = cv.Sel.Count == 0 && cv.EditingShape == null && cv.CurrentTool == Tool.Area;
+                rowClosed.Visible = kd == ShapeKind.Perimeter || ((kd == ShapeKind.Polygon || kd == ShapeKind.Area) && cv.CurrentTool != Tool.Cutout);
+                rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout && !(areaTool && cv.AreaOpen)) || kd == ShapeKind.Radius;
+                if (areaTool && cv.AreaOpen) lStyleFor.Text = "Area tool – open length (tick Closed for an area)";
                 if (rowShow.Visible)
                 {
                     string[] items = kd == ShapeKind.Radius ? new[] { "Radius + diameter", "Radius only", "Diameter only" }
@@ -1431,7 +1499,7 @@ namespace SnapMeasure
                     if ((string)cShow.Items[0] != items[0]) { cShow.Items.Clear(); cShow.Items.AddRange(items); }
                     cShow.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
                 }
-                if (rowClosed.Visible) cClosed.Checked = s.Mode == 0;
+                if (rowClosed.Visible) cClosed.Checked = kd == ShapeKind.Area ? !(areaTool && cv.AreaOpen) : s.Mode == 0;
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
                 rowFrame.Visible = false;
                 tip.SetToolTip(nWidth, kd == ShapeKind.Text ? "Frame width – 0 = no frame" : "Line width");

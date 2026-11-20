@@ -241,7 +241,33 @@ namespace SnapMeasure
             s.Angle = 0;
             s.Pts.Add(p);
             if (s.Kind == ShapeKind.Stamp) s.Text = StampText(s.Mode, "");
+            if (t == Tool.Area && AreaOpen)
+            {
+                // area tool with Closed unticked: an open length in the area's colours
+                s.FromArea = s.Mode + 1;
+                s.Kind = ShapeKind.Perimeter;
+                s.Mode = 1;
+            }
             return s;
+        }
+
+        /// <summary>Area tool: Closed unticked = measure an open polyline (length) instead of an area. Closed is the default.</summary>
+        public bool AreaOpen;
+
+        /// <summary>Closed ticked / unticked on selected areas: an area becomes an open length and back (one undo step).</summary>
+        public bool SetAreaClosed(bool closed)
+        {
+            List<Shape> t = Sel.FindAll(x => closed ? (x.Kind == ShapeKind.Perimeter && x.FromArea > 0 && x.Pts.Count >= 3) : x.Kind == ShapeKind.Area);
+            if (t.Count == 0) return false;
+            PushUndo(Snapshot());
+            foreach (Shape x in t)
+            {
+                if (closed) { x.Kind = ShapeKind.Area; x.Mode = Math.Max(0, Math.Min(2, x.FromArea - 1)); x.FromArea = 0; }
+                else { x.FromArea = Math.Max(0, Math.Min(2, x.Mode)) + 1; x.Kind = ShapeKind.Perimeter; x.Mode = 1; }
+                x.Cache = null;
+            }
+            FireDoc(); FireSel(); Invalidate();
+            return true;
         }
 
         /// <summary>Stamp text: the stamp word, then the date (and anything the user adds below).</summary>
@@ -281,6 +307,15 @@ namespace SnapMeasure
             if (Image == null) return;
             RectangleF vr = ViewRect;
             float w = vr.Width * Zoom, h = vr.Height * Zoom, m = 60f * Dpi;
+            if (LockInside)
+            {
+                // lock on: the view never scrolls past the picture's edges; a picture smaller than the window stays centred
+                float rs = RulerSize, aw = Width - rs, ah = Height - rs;
+                float px = w <= aw ? rs + (aw - w) / 2f - vr.X * Zoom : Geo.Clamp(Pan.X, Width - w - vr.X * Zoom, rs - vr.X * Zoom);
+                float py = h <= ah ? rs + (ah - h) / 2f - vr.Y * Zoom : Geo.Clamp(Pan.Y, Height - h - vr.Y * Zoom, rs - vr.Y * Zoom);
+                Pan = new PointF(px, py);
+                return;
+            }
             Pan = new PointF(Geo.Clamp(Pan.X, m - w - vr.X * Zoom, Width - m - vr.X * Zoom),
                              Geo.Clamp(Pan.Y, m - h - vr.Y * Zoom, Height - m - vr.Y * Zoom));
         }
@@ -478,7 +513,7 @@ namespace SnapMeasure
             EndTextEdit(true);
             if (tool != Tool.Select) CurrentTool = Tool.Select;
             Sel.Clear();
-            Sel.AddRange(Shapes);
+            foreach (Shape s in Shapes) if (!HiddenByLock(s)) Sel.Add(s);
             FireSel(); Invalidate();
         }
 
@@ -652,16 +687,26 @@ namespace SnapMeasure
             return ShapeOps.Bounds(s);
         }
 
-        /// <summary>Turning the lock on brings every shape that sticks out back inside (one undo step).</summary>
-        public void KeepAllInside()
+        /// <summary>Lock on: a shape lying wholly outside the picture is hidden (not drawn, not picked) until the lock is off.
+        /// Nothing is moved; a shape that sticks out is only cut at the picture's edge.</summary>
+        public bool HiddenByLock(Shape s)
         {
-            if (!LockInside || Image == null) return;
-            RectangleF a = KeepArea;
-            List<Shape> outside = Shapes.FindAll(s => { RectangleF b = KeepBounds(s); return b.X < a.X - 0.5f || b.Y < a.Y - 0.5f || b.Right > a.Right + 0.5f || b.Bottom > a.Bottom + 0.5f; });
-            if (outside.Count == 0) return;
-            PushUndo(Snapshot());
-            foreach (Shape s in outside) KeepInside(new List<Shape> { s });
-            FireDoc(); Invalidate();
+            if (!LockInside || Image == null) return false;
+            return !KeepArea.IntersectsWith(ShapeOps.Bounds(s));
+        }
+
+        /// <summary>Switch the lock: shapes stay where they are; outside parts are hidden and the view stays on the picture.</summary>
+        public void SetLock(bool on)
+        {
+            LockInside = on;
+            if (on)
+            {
+                Sel.RemoveAll(HiddenByLock);
+                FireSel();
+            }
+            ClampPan();
+            Invalidate();
+            if (ViewChanged != null) ViewChanged(this, EventArgs.Empty);
         }
 
         static RectangleF GroupBounds(List<Shape> list)
@@ -925,6 +970,8 @@ namespace SnapMeasure
 
         Shape HitShape(PointF ip)
         {
+            // lock on: what lies outside the picture is hidden, so it cannot be picked either
+            if (LockInside && Image != null && !KeepArea.Contains(ip)) return null;
             Shape p = Selected;
             if (p != null && ShapeOps.Hit(p, ip, Tol)) return p;
             for (int i = Shapes.Count - 1; i >= 0; i--) if (ShapeOps.Hit(Shapes[i], ip, Tol)) return Shapes[i];
@@ -1861,7 +1908,7 @@ namespace SnapMeasure
                 if (r.Width * Zoom > 3 || r.Height * Zoom > 3)
                 {
                     foreach (Shape s in Shapes)
-                        if (!Sel.Contains(s) && r.IntersectsWith(ShapeOps.Bounds(s))) Sel.Add(s);
+                        if (!Sel.Contains(s) && !HiddenByLock(s) && r.IntersectsWith(ShapeOps.Bounds(s))) Sel.Add(s);
                     FireSel();
                 }
                 Invalidate();
@@ -2018,6 +2065,20 @@ namespace SnapMeasure
             float step = e.Delta / 120f * 60f * Dpi;
             if ((ModifierKeys & Keys.Shift) != 0) Pan = new PointF(Pan.X + step, Pan.Y);
             else Pan = new PointF(Pan.X, Pan.Y + step);
+            ViewMoved();
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            // lock on: a bigger or smaller window still shows only the picture (centred when it fits)
+            if (LockInside && Image != null && Width > 10 && Height > 10) ViewMoved();
+        }
+
+        /// <summary>Moves the view by screen pixels (the limits still apply).</summary>
+        public void PanBy(float dx, float dy)
+        {
+            Pan = new PointF(Pan.X + dx, Pan.Y + dy);
             ViewMoved();
         }
 
@@ -2382,7 +2443,8 @@ namespace SnapMeasure
             if (Image == null) return;
 
             RectangleF vr = ViewRect;
-            bool clip = CropRect.HasValue && tool != Tool.Crop;
+            // lock on: whatever lies outside the picture is hidden until the lock is off
+            bool clip = (CropRect.HasValue && tool != Tool.Crop) || LockInside;
             Shape skip = (editShape != null && editShape.Kind == ShapeKind.Text) ? editShape : null;
             // the picture and the finished shapes come from a cached layer while only the pointer moves
             // (drawing a shape, the magnifier, snapping); any other change redraws the layer
@@ -2459,7 +2521,19 @@ namespace SnapMeasure
 
             if (creating != null && (creating.Kind == ShapeKind.Ellipse || creating.Kind == ShapeKind.Rect) && creating.Pts.Count >= 2 && tool != Tool.Crop)
                 DrawCenterMark(g, ToScr(Geo.Center(Geo.Rect(creating.Pts[0], creating.Pts[1]))));
-            if (Sel.Count > 0 && editBox == null) DrawSelection(g);
+            if (Sel.Count > 0 && editBox == null)
+            {
+                // lock on: the selection frame and handles stop at the picture too (a handle on the edge still shows)
+                GraphicsState ss = g.Save();
+                if (LockInside)
+                {
+                    PointF a = ToScr(new PointF(vr.X, vr.Y)), b = ToScr(new PointF(vr.Right, vr.Bottom));
+                    float m = 7f * Dpi;
+                    g.SetClip(RectangleF.FromLTRB(a.X - m, a.Y - m, b.X + m, b.Y + m));
+                }
+                DrawSelection(g);
+                g.Restore(ss);
+            }
             if (Sel.Count == 1 && Selected.Kind == ShapeKind.Note && editBox == null) DrawNotePopup(g, Selected);
             if (marquee)
             {

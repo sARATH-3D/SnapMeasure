@@ -26,9 +26,14 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Focus** (`H`, was Highlight): spotlight, grayscale, magnify or pixelate; grayscale and pixelate work **inside or outside** the shape. The yellow marker mode is now the highlighter pen.
   A **Strength** slider sets how much magnify enlarges (×1.5 … ×6) and how coarse pixelate is (4 … 40 px blocks).
 * **Tool column in order of work:** Measure (calibrate first), Count, Draw (lines, then shapes), Highlight, Text, Tools.
-  On a short window or a large display scale it becomes two columns, so every tool stays visible.
+  It stays one column: on a short window or a large display scale the group titles become thin dividers, and if it still
+  does not fit, the column scrolls with the mouse wheel.
 * **Keep inside** (lock button next to *Zoom to area*, `Ctrl+L`): drawing, moving, pasting, resizing and turning all stay
-  inside the screenshot (or its crop). Turning it on brings shapes that stick out back in. Measurements are judged by their points.
+  inside the screenshot (or its crop), and the view no longer scrolls past the picture. Nothing is moved: whatever lies outside
+  the picture is hidden until you unlock. Off by default; *Settings → General* sets whether new editors start locked.
+* **Area tool, open or closed** (`M`): untick **Closed** to measure an open polyline (a length) with the area tool; tick it
+  again to get the area back. Closed is the default.
+* **Pin: rotate and mirror** – right-click → *Rotate / mirror*, or `R` / `Shift+R` (rotate right / left), `H` (mirror), `V` (flip).
 * **Revision clouds can be rotated** (green knob) when they have no callout. A **polygon or area with a cloud outline** is filled
   right out to its scallops.
 * **Strike-out** is as heavy as the letters (heavier for bold), not a hairline.
@@ -147,7 +152,7 @@ Open them from the tray menu or **View ▾ → On-screen ruler / On-screen protr
 | Tool | Key | What it does |
 |---|---|---|
 | Dimension | `D` | CAD-style dimension: solid arrowheads that grow with the line width, end ticks, and the value **in the middle of the line**. Drag the yellow handle to offset it. Double-click to add a prefix. |
-| Area / perimeter | `M` | Click corners → label with area + perimeter, area only or perimeter only (**Show** on the style bar) (A1, A2 …) |
+| Area / perimeter | `M` | Click corners → label with area + perimeter, area only or perimeter only (**Show** on the style bar) (A1, A2 …). Untick **Closed** for an open polyline length. |
 | Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
 | Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …). Tick **Closed** for a closed perimeter. |
 | Perimeter | `Q` | The area tool set to perimeter only (P1, P2 …) |
@@ -237,6 +242,7 @@ or as **.snapm**, which stays fully editable and keeps the crop and guides.
 **Pin** (`Ctrl+P`) keeps a copy of the image on top of other windows. You can:
 * drag its edges or corners to resize it (it keeps its proportions);
 * press `C` (or right-click → *Crop*) and drag the part to keep; right-click → *Undo crop* brings the rest back;
+* rotate it 90° (`R`, `Shift+R`) or 180°, mirror it (`H`) or flip it upside down (`V`) – also under right-click → *Rotate / mirror*;
 * set the size from 25 % to 200 %, change the opacity, and copy it.
 
 ## Security
@@ -268,7 +274,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 139 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 142 built-in checks.
 The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
 it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 
