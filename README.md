@@ -20,7 +20,7 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Zoom to area** (`Shift+Z`, button next to *Fit*): drag a box and the view zooms to it.
 * **Side scrolling:** the tilt / thumb wheel (e.g. Logitech MX) and `Shift`+wheel pan left and right.
 * **Arc** (`Shift+L`): a drawing tool – start, a point on the arc, end.
-* **Polyline:** untick **Closed** on the Polygon tool for an open line through any number of points, with optional arrowheads.
+* **Polyline** (`Shift+P`, next to Polygon): an open line through any number of points, with optional arrowheads (tick **Closed** for a polygon).
 * **Highlighter pen** (`Shift+H`): a see-through yellow marker you drag over text; hold `Shift` for a straight stroke
   (line width up to 200 for large text).
 * **Focus** (`H`, was Highlight): spotlight, grayscale, magnify or pixelate; grayscale and pixelate work **inside or outside** the shape. The yellow marker mode is now the highlighter pen.
@@ -34,7 +34,7 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Texts list** in the right panel: every text, speech bubble, cloud callout and stamp in one place. Click a line to select it,
   click again or press `F2` to edit it there (`↵` = new line). **Copy all text** puts them all on the clipboard.
 * **Settings → General:** choose your own **capture keys** (two per capture) and the **tool icon size** (small, medium, large).
-* **Tidier top row:** *New capture ▾* (blank canvas), *Save ▾* (save as), *Copy ▾* (picture, text, measurements), *Image ▾* (rotate,
+* **Tidier top row:** *New capture ▾* (blank canvas), *Save ▾* (save as), *Copy ▾* (picture, text, measurements), *Adjust ▾* (rotate,
   mirror, effects) and *View ▾* (1:1, rulers, on-screen ruler and protractor). **Panel, Pin and Settings** sit at the right end.
 * **Simpler status bar:** one short sentence for the next step.
 * **Shadows** fall only under lines and shapes, not under value boxes or labels.
@@ -137,15 +137,16 @@ Open them from the tray menu or **View ▾ → On-screen ruler / On-screen protr
 | Dimension | `D` | CAD-style dimension: solid arrowheads that grow with the line width, end ticks, and the value **in the middle of the line**. Drag the yellow handle to offset it. Double-click to add a prefix. |
 | Area / perimeter | `M` | Click corners → label with area + perimeter, area only or perimeter only (**Show** on the style bar) (A1, A2 …) |
 | Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
-| Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …) |
+| Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …). Tick **Closed** for a closed perimeter. |
 | Perimeter | `Q` | The area tool set to perimeter only (P1, P2 …) |
 | Coordinates | `I` | The first click sets the origin 0,0; every point after it shows X / Y (**Y up, like CAD**). Drag the origin, or right-click a point → *Make this point the origin*, and every value updates. X and Y go to Excel. |
 | Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
 | Radius / diameter | `Shift+R` | **3 points** on a curve or circle edge → R, Ø and arc length (R1, R2 …), with a centre mark. **Show** R, Ø or both; the label can be moved. Listed under Measurements and in Excel. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
-| Letter marker | `Shift+N` | A, B, C … is **its own series**, separate from the numbers, also counted |
-| Polygon / polyline | `P` | Any number of edges, with fill colour and opacity. Untick **Closed** for an open polyline (arrowheads optional). |
+| Letter marker | `Shift+N` | A, B, C … Z, AA, AB … is **its own series**, separate from the numbers, also counted |
+| Polygon | `P` | Any number of edges, with fill colour and opacity. |
+| Polyline | `Shift+P` | Open line through any number of points; arrowheads optional. Tick **Closed** to make it a polygon. |
 | Focus | `H` | Spotlight, grayscale, magnify ×2, **pixelate** (`B`) – grayscale and pixelate inside or outside – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
 | Highlighter pen | `Shift+H` | Drag over text like a marker pen: see-through yellow, square ends. `Shift` = straight stroke. Colour, width and opacity on the style bar. |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |

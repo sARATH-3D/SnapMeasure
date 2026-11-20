@@ -534,7 +534,7 @@ namespace SnapMeasure
             cv.Scale.LetterStart = 3;
             check("Letters from C", lab(l1) + lab(l2), "CD");
             cv.Scale.LetterStart = 26;
-            check("Letters wrap Z-A", lab(l1) + lab(l2), "ZA");
+            check("Letters go on Z-AA", lab(l1) + "," + lab(l2) + "," + ScaleInfo.LetterName(51) + "," + ScaleInfo.LetterName(701) + "," + ScaleInfo.LetterNumber("ab"), "Z,AA,AZ,ZZ,28");
             cv.Scale.LetterStart = 1;
             cv.Shapes.Remove(l1); cv.Shapes.Remove(l2);
 
@@ -2538,6 +2538,15 @@ namespace SnapMeasure
                                 using (SolidBrush f = new SolidBrush(Color.FromArgb(130, 255, 215, 0))) g.FillPolygon(f, a);
                                 using (Pen pp = new Pen(amber, 2f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
                                 foreach (PointF q in a) g.FillRectangle(bi, q.X - 1.5f, q.Y - 1.5f, 3, 3);
+                                break;
+                            }
+                        case Tool.PolyDraw:
+                            {
+                                // open zig-zag line with points and an arrowhead
+                                PointF[] a = { new PointF(4, 26), new PointF(11, 10), new PointF(19, 22), new PointF(27, 6) };
+                                using (Pen pp = new Pen(red, 2.2f)) { pp.LineJoin = LineJoin.Round; pp.StartCap = LineCap.Round; g.DrawLines(pp, a); }
+                                using (SolidBrush rb = new SolidBrush(red)) g.FillPolygon(rb, new PointF[] { new PointF(29, 3), new PointF(28.5f, 11), new PointF(23, 7) });
+                                foreach (PointF q in new PointF[] { a[0], a[1], a[2] }) g.FillRectangle(bi, q.X - 1.5f, q.Y - 1.5f, 3, 3);
                                 break;
                             }
                         case Tool.Dimension:

@@ -66,6 +66,7 @@ namespace SnapMeasure
             { Tool.Marker, "Highlighter: drag over the text. Shift = straight." },
             { Tool.Text, "Text: click and type, or drag a box." },
             { Tool.Polygon, "Polygon: click the corners, double-click to finish." },
+            { Tool.PolyDraw, "Polyline: click the points, double-click to finish." },
             { Tool.Dimension, "Dimension: drag from one point to the other." },
             { Tool.Area, "Area: click the corners, double-click to finish." },
             { Tool.Calibrate, "Calibrate: draw over a known length, then type its size." },
@@ -262,7 +263,7 @@ namespace SnapMeasure
             bRedo = IconOnly(AddBtn(bar, "Redo", "Redo (Ctrl+Y)", (s, e) => cv.Redo()), "redo");
             bar.Items.Add(new ToolStripSeparator());
 
-            ToolStripDropDownButton img = new ToolStripDropDownButton("Image");
+            ToolStripDropDownButton img = new ToolStripDropDownButton("Adjust");     // rotate, mirror, border, shadow, torn edge, grayscale, invert
             img.Image = Icons.Cmd("rotate", CmdIcon);
             img.ImageScaling = ToolStripItemImageScaling.None;
             img.AutoToolTip = false;       // a tooltip would cover the first menu items
@@ -396,7 +397,7 @@ namespace SnapMeasure
             AddTool(Tool.Dimension, "Dimension (D)");
             AddTool(Tool.Area, "Area / perimeter: closed outline, show area, perimeter or both (M; Q = perimeter only)");
             AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
-            AddTool(Tool.Perimeter, "Length: open path along a run (W)");
+            AddTool(Tool.Perimeter, "Length: path along a run; tick Closed for a closed perimeter (W)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
             AddTool(Tool.Coord, "Coordinates: first click = origin 0,0, then points show X / Y (I)");
@@ -408,6 +409,7 @@ namespace SnapMeasure
             AddTool(Tool.Highlight, "Focus: spotlight / grayscale outside / magnify / pixelate, in several shapes (H, B = pixelate)");
             AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
             AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
+            AddTool(Tool.PolyDraw, "Polyline – an open line through any number of points, arrowheads optional (Shift+P)");
             AddTool(Tool.Rect, "Rectangle (R)");
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
             AddTool(Tool.Cloud, "Revision cloud, with or without a callout (U)");
@@ -1193,7 +1195,7 @@ namespace SnapMeasure
                 case Tool.Line: case Tool.Arrow: case Tool.Dimension: case Tool.Calibrate:
                     if (n < 0) return name + ": press at the start point.";
                     return name + ": release at the end point." + (t == Tool.Calibrate ? " Then type the real length." : "");
-                case Tool.Polygon: case Tool.Area: case Tool.Perimeter: case Tool.Cutout: case Tool.Polyline:
+                case Tool.Polygon: case Tool.PolyDraw: case Tool.Area: case Tool.Perimeter: case Tool.Cutout: case Tool.Polyline:
                     if (n < 0) return Hints.TryGetValue(t, out h) ? h : name + ": click the first point.";
                     return name + ": click the next point. Double-click to finish.";
                 case Tool.Angle:
@@ -1229,6 +1231,7 @@ namespace SnapMeasure
                 case Tool.Perimeter: return "Length / perimeter";
                 case Tool.Cutout: return "Cut-out";
                 case Tool.Polyline: return "Path length";
+                case Tool.PolyDraw: return "Polyline";
                 case Tool.Marker: return "Highlighter pen";
                 case Tool.Radius: return "Radius / diameter";
                 case Tool.Highlight: return "Focus";
@@ -1349,8 +1352,8 @@ namespace SnapMeasure
                 if (rowForm.Visible) cForm.SelectedIndex = Math.Max(0, Math.Min(4, s.Form));
                 rowCallout.Visible = kd == ShapeKind.Cloud;
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
-                // W is for open lengths; the Closed tick stays only to reopen a closed perimeter from an older file
-                rowClosed.Visible = (kd == ShapeKind.Perimeter && !s.IsOpenPath) || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
+                // length (W) and polygon: tick Closed to close the outline
+                rowClosed.Visible = kd == ShapeKind.Perimeter || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
                 rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout) || kd == ShapeKind.Radius;
                 if (rowShow.Visible)
                 {
@@ -1482,8 +1485,9 @@ namespace SnapMeasure
             int start = letters ? cv.Scale.LetterStart : cv.Scale.MarkerStart;
             if (letters)
             {
-                if (t.Length == 1 && char.IsLetter(t[0])) start = char.ToUpperInvariant(t[0]) - 'A' + 1;
-                start = Math.Max(1, Math.Min(26, start));
+                int n = ScaleInfo.LetterNumber(t);       // A, Z, AA, AB …
+                if (n > 0) start = n;
+                start = Math.Max(1, Math.Min(18278, start));
             }
             else
             {
@@ -1690,7 +1694,8 @@ namespace SnapMeasure
         protected override void Dispose(bool disposing)
         {
             if (disposing) tip.Dispose();
-            base.Dispose(disposing);
+            try { base.Dispose(disposing); }
+            catch (Exception ex) { CloseLog(ex); }     // a clean-up problem must never keep the editor on screen
         }
 
         void Pin()
@@ -1699,8 +1704,7 @@ namespace SnapMeasure
             FormWindowState was = WindowState;
             PinForm pin = new PinForm(cv.Flatten(null));
             pin.Source = this;                            // closing the pin (Esc, Ctrl+P, double-click) brings this editor back
-            pin.Show();
-            dirty = false;
+            pin.Show();       // a pin is not a save: closing the editor later still asks about unsaved work
             pin.SourceState = was == FormWindowState.Minimized ? FormWindowState.Normal : was;
             WindowState = FormWindowState.Minimized;      // the pin is what you want to see now; the editor waits on the task bar
         }
@@ -1857,7 +1861,8 @@ namespace SnapMeasure
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            cv.EndTextEdit(true);
+            if (closeConfirmed) { e.Cancel = false; base.OnFormClosing(e); e.Cancel = false; return; }
+            try { cv.EndTextEdit(true); cv.EndMatch(); } catch (Exception ex) { CloseLog(ex); }
             if (dirty && cv.Shapes.Count > 0 && e.CloseReason == CloseReason.UserClosing)
             {
                 // plain words on the buttons: "Cancel" used to be read as "close without saving"
@@ -1865,7 +1870,20 @@ namespace SnapMeasure
                                        "Save…", "Close without saving", "Keep editing");
                 if (r == 2 || r < 0 || (r == 0 && !SaveAs())) { e.Cancel = true; return; }
             }
+            // the choice is made: nothing may keep the window open any more
+            closeConfirmed = true;
+            e.Cancel = false;
             base.OnFormClosing(e);
+            e.Cancel = false;
+            // safety net: if the window is somehow still here a moment later, close it again without asking
+            App.Later(400, () => { if (!IsDisposed && Visible) { try { Close(); } catch (Exception ex) { CloseLog(ex); } if (!IsDisposed) Dispose(); } });
+        }
+
+        bool closeConfirmed;
+
+        static void CloseLog(Exception ex)
+        {
+            try { File.AppendAllText(Path.Combine(Path.GetTempPath(), "SnapMeasure-close.log"), DateTime.Now + "  " + ex + Environment.NewLine); } catch { }
         }
     }
 }

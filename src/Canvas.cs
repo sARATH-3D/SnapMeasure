@@ -128,6 +128,9 @@ namespace SnapMeasure
             d[Tool.Marker] = marker;
             d[Tool.Text] = St(ShapeKind.Text, red, 0, Color.White, 0, 20);   // line width 0 = no frame
             d[Tool.Polygon] = St(ShapeKind.Polygon, amber, 2, Color.Yellow, 35, 16);
+            d[Tool.PolyDraw] = St(ShapeKind.Polygon, red, 2, Color.Yellow, 0, 16);
+            d[Tool.PolyDraw].Mode = 1;                        // open polyline; heads optional; tick Closed for a polygon
+            d[Tool.PolyDraw].HeadEnd = 0;
             d[Tool.Dimension] = St(ShapeKind.Dimension, red, 1.5f, Color.White, 0, 15);
             d[Tool.Dimension].HeadStart = d[Tool.Dimension].HeadEnd = (int)HeadStyle.Filled;
             Color purple = Color.FromArgb(130, 60, 200), green = Color.FromArgb(30, 140, 60);
@@ -161,6 +164,7 @@ namespace SnapMeasure
         {
             if (s.Kind == ShapeKind.Counter && s.Mode == 1) return Tool.Letter;
             if (s.IsMarkerPen) return Tool.Marker;
+            if (s.Kind == ShapeKind.Polygon && s.IsOpenPath) return Tool.PolyDraw;
             return ToolFor(s.Kind);
         }
 
@@ -210,6 +214,13 @@ namespace SnapMeasure
                 tool = value;
                 // the highlight tool always starts as a rectangle; a shape picked on the style bar lasts while the tool is in use
                 if (value == Tool.Highlight && old != Tool.Highlight) Styles[Tool.Highlight].Form = (int)HighlightForm.Rectangle;
+                // a new drawing tool: let go of the last shape, so the style bar shows the tool's own style
+                // (the cut-out keeps its area selected, and crop / text recognition don't draw shapes)
+                if (value != old && value != Tool.Select && value != Tool.Cutout && value != Tool.Crop && value != Tool.Ocr && Sel.Count > 0)
+                {
+                    Sel.Clear();
+                    FireSel();
+                }
                 Cursor = tool == Tool.Select ? Cursors.Default : (tool == Tool.Text ? Cursors.IBeam : Cursors.Cross);
                 if (ToolChanged != null) ToolChanged(this, EventArgs.Empty);
                 if (CropRect.HasValue && ((old == Tool.Crop) != (value == Tool.Crop))) Fit();   // show the whole image while cropping
@@ -347,6 +358,7 @@ namespace SnapMeasure
         {
             if (disposing)
             {
+                if (layer != null) { layer.Dispose(); layer = null; }
                 if (editBox != null)
                 {
                     Font ef = editBox.Font;
@@ -760,13 +772,13 @@ namespace SnapMeasure
         {
             get
             {
-                return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
+                return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.PolyDraw || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
                        tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord ||
                        tool == Tool.Arc || tool == Tool.Radius;
             }
         }
 
-        static bool PolyTool(Tool t) { return t == Tool.Polygon || t == Tool.Area || t == Tool.Polyline || t == Tool.Perimeter || t == Tool.Cutout; }
+        static bool PolyTool(Tool t) { return t == Tool.Polygon || t == Tool.PolyDraw || t == Tool.Area || t == Tool.Polyline || t == Tool.Perimeter || t == Tool.Cutout; }
         static bool BoxTool(Tool t)
         {
             return t == Tool.Rect || t == Tool.Ellipse || t == Tool.Pixelate || t == Tool.Crop || t == Tool.Highlight || t == Tool.Bubble ||
@@ -1502,6 +1514,7 @@ namespace SnapMeasure
                         break;
                     }
                 case Tool.Polygon:
+                case Tool.PolyDraw:
                 case Tool.Area:
                 case Tool.Polyline:
                 case Tool.Perimeter:
@@ -1652,6 +1665,7 @@ namespace SnapMeasure
                         if (Geo.Dist(creating.Pts[n - 1], ip) > 1.2f / Zoom) creating.Pts.Add(ip);
                         break;
                     case Tool.Polygon:
+                    case Tool.PolyDraw:
                     case Tool.Area:
                     case Tool.Angle:
                     case Tool.Arc:
@@ -1691,7 +1705,7 @@ namespace SnapMeasure
                             break;
                         }
                 }
-                Invalidate();
+                InvalidateLight();     // the shape being drawn is not in the cached layer
                 return;
             }
 
@@ -1745,7 +1759,7 @@ namespace SnapMeasure
                 Cursor = tool == Tool.Text ? Cursors.IBeam : Cursors.Cross;
                 Snap(ip);
             }
-            if (!Nullable.Equals(oldSnap, snapPt) || tool != Tool.Select) Invalidate();
+            if (!Nullable.Equals(oldSnap, snapPt) || tool != Tool.Select) InvalidateLight();
         }
 
         void MouseUpCore(MouseEventArgs e)
@@ -2052,7 +2066,7 @@ namespace SnapMeasure
                 case Keys.U: CurrentTool = Tool.Cloud; break;
                 case Keys.Z: if (e.Shift) StartZoomBox(); else CurrentTool = Tool.Stamp; break;   // Shift+Z = zoom to area
                 case Keys.O: CurrentTool = Tool.Note; break;
-                case Keys.P: CurrentTool = Tool.Polygon; break;
+                case Keys.P: CurrentTool = e.Shift ? Tool.PolyDraw : Tool.Polygon; break;   // Shift+P = polyline
                 case Keys.D: CurrentTool = Tool.Dimension; break;
                 case Keys.M: if (Styles[Tool.Area].Mode == 2) Styles[Tool.Area].Mode = 0; CurrentTool = Tool.Area; break;
                 case Keys.G: CurrentTool = Tool.Angle; break;
@@ -2171,7 +2185,7 @@ namespace SnapMeasure
                 if (e.Button == MouseButtons.Left) { zbStart = e.Location; zbEnd = e.Location; }
                 return e.Button == MouseButtons.Left;
             }
-            if (what == 1) { if (zbStart.HasValue) { zbEnd = e.Location; Invalidate(); return true; } return false; }
+            if (what == 1) { if (zbStart.HasValue) { zbEnd = e.Location; InvalidateLight(); return true; } return false; }
             if (e.Button != MouseButtons.Left || !zbStart.HasValue) return false;
             zbEnd = e.Location;
             Rectangle r = ZoomBoxRect();
@@ -2235,14 +2249,27 @@ namespace SnapMeasure
             return true;
         }
 
-        void PaintCore(PaintEventArgs e)
-        {
-            Graphics g = e.Graphics;
-            g.Clear(BackColor);
-            if (Image == null) return;
+        // ---------- cached layer: background, picture and finished shapes ----------
+        Bitmap layer;
+        bool layerDirty = true, lightInvalidate;
+        object layerImg; float layerZoom; PointF layerPan; RectangleF layerVr; bool layerClip; Shape layerSkip;
 
-            RectangleF vr = ViewRect;
-            bool clip = CropRect.HasValue && tool != Tool.Crop;
+        /// <summary>Repaint for a pointer move only: the picture and the finished shapes have not changed.</summary>
+        void InvalidateLight()
+        {
+            lightInvalidate = true;
+            try { Invalidate(); } finally { lightInvalidate = false; }
+        }
+
+        protected override void OnInvalidated(InvalidateEventArgs e)
+        {
+            if (!lightInvalidate) layerDirty = true;     // something may have changed: redraw the layer next time
+            base.OnInvalidated(e);
+        }
+
+        void PaintStatic(Graphics g, RectangleF vr, bool clip, Shape skip)
+        {
+            g.Clear(BackColor);
             GraphicsState st = g.Save();
             g.TranslateTransform(Pan.X, Pan.Y);
             g.ScaleTransform(Zoom, Zoom);
@@ -2257,9 +2284,42 @@ namespace SnapMeasure
             g.InterpolationMode = InterpolationMode.Bilinear;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
-
-            Shape skip = (editShape != null && editShape.Kind == ShapeKind.Text) ? editShape : null;
             Renderer.DrawAll(g, Shapes, Image, Scale, skip);
+            g.Restore(st);
+        }
+
+        void PaintCore(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(BackColor);
+            if (Image == null) return;
+
+            RectangleF vr = ViewRect;
+            bool clip = CropRect.HasValue && tool != Tool.Crop;
+            Shape skip = (editShape != null && editShape.Kind == ShapeKind.Text) ? editShape : null;
+            // the picture and the finished shapes come from a cached layer while only the pointer moves
+            // (drawing a shape, the magnifier, snapping); any other change redraws the layer
+            if (layer == null || layerDirty || layer.Width != Width || layer.Height != Height || layerImg != Image || layerZoom != Zoom ||
+                layerPan != Pan || layerVr != vr || layerClip != clip || layerSkip != skip)
+            {
+                if (layer == null || layer.Width != Width || layer.Height != Height)
+                {
+                    if (layer != null) layer.Dispose();
+                    layer = new Bitmap(Math.Max(1, Width), Math.Max(1, Height), PixelFormat.Format32bppPArgb);
+                }
+                using (Graphics lg = Graphics.FromImage(layer)) PaintStatic(lg, vr, clip, skip);
+                layerDirty = false; layerImg = Image; layerZoom = Zoom; layerPan = Pan; layerVr = vr; layerClip = clip; layerSkip = skip;
+            }
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.DrawImageUnscaled(layer, 0, 0);
+            g.CompositingMode = CompositingMode.SourceOver;
+            GraphicsState st = g.Save();
+            g.TranslateTransform(Pan.X, Pan.Y);
+            g.ScaleTransform(Zoom, Zoom);
+            if (clip) g.SetClip(vr);
+            g.InterpolationMode = InterpolationMode.Bilinear;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.AntiAlias;
             if (editShape != null && editIsNew && (editShape.Kind == ShapeKind.Bubble || editShape.Kind == ShapeKind.Stamp || editShape.Kind == ShapeKind.Cloud))
             {
                 if (editShape.Shadow) Renderer.DrawShadow(g, editShape, Image, Scale, null);
@@ -2740,6 +2800,7 @@ namespace SnapMeasure
                     }
                     break;
                 case Tool.Polyline:
+                case Tool.PolyDraw:
                     if (p.Count >= 2)
                         t = "Segment " + Scale.Len(Geo.Dist(p[p.Count - 2], p[p.Count - 1])) + "\nTotal " + Scale.Len(Geo.Perimeter(p, false)) +
                             "\nDouble-click / Enter = finish · Backspace = undo point";

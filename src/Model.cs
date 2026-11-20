@@ -16,7 +16,7 @@ namespace SnapMeasure
                             Cloud, Stamp, Note, Markup, Polyline, Perimeter, Coord, Origin, Arc, Radius }
 
     public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle,
-                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius }
+                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius, PolyDraw }
 
     /// <summary>Focus modes. Grayscale = gray outside the shape, Pixelate = pixelate inside it; 1.3 adds the other side of each.</summary>
     public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4, GrayscaleInside = 5, PixelateOutside = 6 }
@@ -239,11 +239,31 @@ namespace SnapMeasure
         {
             if (letters)
             {
-                int v = ((Math.Max(1, LetterStart) - 1 + index) % 26 + 26) % 26;   // always one character: … Y, Z, A, B …
-                return ((char)('A' + v)).ToString();
+                return LetterName(Math.Max(1, LetterStart) - 1 + index);     // … Y, Z, AA, AB … AZ, BA … like spreadsheet columns
             }
             return (MarkerStart + index).ToString(CultureInfo.InvariantCulture);
         }
+
+        /// <summary>0 = A, 25 = Z, 26 = AA, 27 = AB … 701 = ZZ, 702 = AAA.</summary>
+        public static string LetterName(int n)
+        {
+            if (n < 0) n = 0;
+            string s = "";
+            n++;
+            while (n > 0) { int r = (n - 1) % 26; s = (char)('A' + r) + s; n = (n - 1) / 26; }
+            return s;
+        }
+
+        /// <summary>The number of a letter label (A = 1, Z = 26, AA = 27); 0 if it is not letters.</summary>
+        public static int LetterNumber(string s)
+        {
+            s = (s ?? "").Trim().ToUpperInvariant();
+            if (s.Length == 0 || s.Length > 4) return 0;
+            int n = 0;
+            foreach (char ch in s) { if (ch < 'A' || ch > 'Z') return 0; n = n * 26 + (ch - 'A' + 1); }
+            return n;
+        }
+
 
         public static string AngleText(double deg) { return deg.ToString("N1", CultureInfo.CurrentCulture) + "°"; }
 
@@ -2869,7 +2889,7 @@ namespace SnapMeasure
             if (sc.Upp <= 0 || double.IsNaN(sc.Upp) || double.IsInfinity(sc.Upp) || sc.Upp > 1e9) sc.Upp = 1.0;
             if (Array.IndexOf(ScaleInfo.Units, sc.Unit) < 0) sc.Unit = "px";
             sc.Decimals = Math.Max(0, Math.Min(6, sc.Decimals));
-            sc.LetterStart = Math.Max(1, Math.Min(26, sc.LetterStart));
+            sc.LetterStart = Math.Max(1, Math.Min(18278, sc.LetterStart));
             XmlNode imgNode = root.SelectSingleNode("image");
             if (imgNode == null) throw new InvalidDataException("The project has no image.");
             Bitmap img = DecodeImage(imgNode.InnerText);
