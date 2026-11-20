@@ -36,10 +36,11 @@ namespace SnapMeasure
         NumericUpDown nWidth, nFont, nDec;
         TrackBar tSO, tFO;
         CheckBox cShadow, cKeepScale;
-        ComboBox cUnit, cHlMode, cHeadS, cHeadE, cStamp, cMarkup, cDash, cForm, cCallout;
+        ComboBox cWhere;
+        ComboBox cUnit, cHlMode, cHeadS, cHeadE, cStamp, cMarkup, cDash, cForm, cCallout, cShow;
         CheckBox cClosed, cFrame;
         TextBox tUpp, tMarkStart;
-        Panel rowHl, rowMarkStart, rowTextStyle, gLine, gFill, gFont, gHeads, gShadow, props, rowStamp, rowMarkup, gDash, rowForm, rowCallout, rowClosed, rowFrame;
+        Panel rowHl, rowMarkStart, rowTextStyle, gLine, gFill, gFont, gHeads, gShadow, props, rowStamp, rowMarkup, gDash, rowForm, rowCallout, rowClosed, rowFrame, rowShow;
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
         CheckBox cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR;
@@ -754,14 +755,25 @@ namespace SnapMeasure
             tip.SetToolTip(tFO, "Fill opacity (for pictures: picture opacity)");
 
             // Focus modes (the yellow text marker is now the highlighter pen): list index + 1 = HighlightMode
-            cHlMode = Combo(150, "Spotlight (darken outside)", "Grayscale outside", "Magnify ×2", "Pixelate (hide)");
-            cHlMode.SelectedIndexChanged += (s, e) =>
+            cHlMode = Combo(130, "Spotlight", "Grayscale", "Magnify ×2", "Pixelate");
+            cWhere = Combo(80, "Inside", "Outside");
+            tip.SetToolTip(cWhere, "Gray or pixelate the marked area itself (inside) or everything around it (outside)");
+            EventHandler focusChanged = (s, e) =>
             {
-                if (cHlMode.SelectedIndex < 0) return;
-                int m = cHlMode.SelectedIndex + 1;
-                ApplyStyle(x => { x.Mode = m; if (m == (int)HighlightMode.Spotlight && x.FillOpacity < 20) x.FillOpacity = 45; });
+                if (loading || cHlMode.SelectedIndex < 0) return;
+                int b = cHlMode.SelectedIndex + 1;
+                bool inside = cWhere.SelectedIndex != 1;
+                ApplyStyle(x =>
+                {
+                    // keep each mode's usual side when switching mode; the Inside / Outside box picks the other side
+                    int m = FocusMode(b, s == cWhere ? inside : (b == (int)HighlightMode.Grayscale ? false : true));
+                    x.Mode = m;
+                    if (m == (int)HighlightMode.Spotlight && x.FillOpacity < 20) x.FillOpacity = 45;
+                });
                 LoadStyle();
             };
+            cHlMode.SelectedIndexChanged += focusChanged;
+            cWhere.SelectedIndexChanged += focusChanged;
             cShadow = new CheckBox();
             cShadow.Text = "Shadow";
             cShadow.AutoSize = true;
@@ -790,6 +802,14 @@ namespace SnapMeasure
             cCallout = Combo(130, "No callout", "Revision triangle", "Text box");
             cCallout.SelectedIndexChanged += (s, e) => CalloutChanged();
             tip.SetToolTip(cCallout, "Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)");
+            cShow = Combo(150, "Area + perimeter", "Area only", "Perimeter only");
+            cShow.SelectedIndexChanged += (s, e) =>
+            {
+                int m = cShow.SelectedIndex;
+                if (loading || m < 0) return;
+                ApplyStyle(x => { if (x.Kind == ShapeKind.Area || x.Kind == ShapeKind.Radius) x.Mode = m; });
+            };
+            tip.SetToolTip(cShow, "What the label shows");
             cClosed = new CheckBox();
             cClosed.Text = "Closed";
             cClosed.AutoSize = true;
@@ -852,7 +872,7 @@ namespace SnapMeasure
             gHeads.Controls.Add(lEnd);
             cHeadE.Margin = new Padding(0, S(2), S(3), 0);
             gHeads.Controls.Add(cHeadE);
-            rowHl = Grp("Mode", cHlMode);
+            rowHl = Grp("Mode", cHlMode, cWhere);
             rowMarkStart = Grp("Start at", tMarkStart);
             ComboBox cDate = Combo(150, Stamps.DateNames);
             cDate.SelectedIndex = Math.Max(0, Math.Min(Stamps.DateNames.Length - 1, Settings.GetInt("StampDate", 0)));
@@ -869,9 +889,10 @@ namespace SnapMeasure
             rowForm = Grp("Shape", cForm);
             rowCallout = Grp("Callout", cCallout);
             rowClosed = Grp("", cClosed);
+            rowShow = Grp("Show", cShow);
             rowFrame = Grp("", cFrame);
             gShadow = Grp("", cShadow);
-            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowForm, rowStamp, rowMarkup, rowCallout, rowClosed, rowMarkStart, gShadow, pal })
+            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart, gShadow, pal })
                 styleBar.Controls.Add(c);
             ReturnFocusToCanvas(styleBar);
         }
@@ -1012,6 +1033,22 @@ namespace SnapMeasure
 
         /// <summary>Shown in place of line breaks in the one-line text list (typed back, it becomes a line break again).</summary>
         const string LineMark = "↵";
+
+        /// <summary>Focus: the mode picked in the list (spotlight, grayscale, magnify, pixelate) without its side.</summary>
+        static int FocusBase(int mode)
+        {
+            if (mode == (int)HighlightMode.GrayscaleInside) return (int)HighlightMode.Grayscale;
+            if (mode == (int)HighlightMode.PixelateOutside) return (int)HighlightMode.Pixelate;
+            return mode;
+        }
+
+        /// <summary>Focus: the stored mode for a list mode and a side.</summary>
+        static int FocusMode(int baseMode, bool inside)
+        {
+            if (baseMode == (int)HighlightMode.Grayscale) return inside ? (int)HighlightMode.GrayscaleInside : (int)HighlightMode.Grayscale;
+            if (baseMode == (int)HighlightMode.Pixelate) return inside ? (int)HighlightMode.Pixelate : (int)HighlightMode.PixelateOutside;
+            return baseMode;
+        }
 
         /// <summary>Texts the list shows: text boxes, speech bubbles, cloud callouts and stamps, in drawing order.</summary>
         List<Shape> TextShapes()
@@ -1230,11 +1267,12 @@ namespace SnapMeasure
                 case ShapeKind.Cloud: return "Revision cloud";
                 case ShapeKind.Note: return "Note (not printed)";
                 case ShapeKind.Markup: return "Text markup";
-                case ShapeKind.Area: return s.Holes != null ? "Area with cut-outs" : "Area";
+                case ShapeKind.Area: return !s.ShowsArea ? "Perimeter (closed)" : s.Holes != null ? "Area with cut-outs" : "Area";
                 case ShapeKind.Perimeter: return s.IsOpenPath ? "Length (open)" : "Perimeter (closed)";
                 case ShapeKind.Coord: return "Coordinate point";
                 case ShapeKind.Origin: return "Origin 0,0";
-                case ShapeKind.Highlight: return s.Mode == (int)HighlightMode.Pixelate ? "Pixelate" : s.Mode == 0 ? "Text marker" : "Focus";
+                case ShapeKind.Highlight:
+                    return s.Mode == (int)HighlightMode.Pixelate || s.Mode == (int)HighlightMode.PixelateOutside ? "Pixelate" : s.Mode == 0 ? "Text marker" : "Focus";
                 case ShapeKind.Freehand: return s.IsMarkerPen ? "Highlighter pen" : "Freehand";
                 case ShapeKind.Polygon: return s.IsOpenPath ? "Polyline (open polygon)" : "Polygon";
                 case ShapeKind.Radius: return "Radius / diameter";
@@ -1251,7 +1289,7 @@ namespace SnapMeasure
             {
                 lStyleFor.Text = cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape";
                 rowHl.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
-                gDash.Visible = rowForm.Visible = rowCallout.Visible = rowClosed.Visible = rowFrame.Visible = false;
+                gDash.Visible = rowForm.Visible = rowCallout.Visible = rowClosed.Visible = rowFrame.Visible = rowShow.Visible = false;
             }
             else
             {
@@ -1288,7 +1326,16 @@ namespace SnapMeasure
                 if (rowForm.Visible) cForm.SelectedIndex = Math.Max(0, Math.Min(4, s.Form));
                 rowCallout.Visible = kd == ShapeKind.Cloud;
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
-                rowClosed.Visible = kd == ShapeKind.Perimeter || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
+                // W is for open lengths; the Closed tick stays only to reopen a closed perimeter from an older file
+                rowClosed.Visible = (kd == ShapeKind.Perimeter && !s.IsOpenPath) || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
+                rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout) || kd == ShapeKind.Radius;
+                if (rowShow.Visible)
+                {
+                    string[] items = kd == ShapeKind.Radius ? new[] { "Radius + diameter", "Radius only", "Diameter only" }
+                                                            : new[] { "Area + perimeter", "Area only", "Perimeter only" };
+                    if ((string)cShow.Items[0] != items[0]) { cShow.Items.Clear(); cShow.Items.AddRange(items); }
+                    cShow.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
+                }
                 if (rowClosed.Visible) cClosed.Checked = s.Mode == 0;
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
                 rowFrame.Visible = false;
@@ -1303,7 +1350,13 @@ namespace SnapMeasure
                 cShadow.Enabled = s.CanShadow;
                 nFont.Value = Math.Max(nFont.Minimum, Math.Min(nFont.Maximum, (decimal)s.FontSize));
                 rowHl.Visible = s.Kind == ShapeKind.Highlight;
-                if (rowHl.Visible) cHlMode.SelectedIndex = s.Mode >= 1 ? Math.Min(3, s.Mode - 1) : -1;   // an old text marker shows no mode
+                if (rowHl.Visible)
+                {
+                    int b = FocusBase(s.Mode);
+                    cHlMode.SelectedIndex = b >= 1 ? Math.Min(3, b - 1) : -1;   // an old text marker shows no mode
+                    cWhere.Visible = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate;
+                    cWhere.SelectedIndex = s.Mode == (int)HighlightMode.Grayscale || s.Mode == (int)HighlightMode.PixelateOutside ? 1 : 0;
+                }
                 rowMarkStart.Visible = s.Kind == ShapeKind.Counter;
                 rowTextStyle.Visible = s.HasTextStyle;
                 cBold.Checked = s.Bold;

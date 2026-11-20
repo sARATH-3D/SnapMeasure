@@ -18,7 +18,8 @@ namespace SnapMeasure
     public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle,
                        Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius }
 
-    public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4 }
+    /// <summary>Focus modes. Grayscale = gray outside the shape, Pixelate = pixelate inside it; 1.3 adds the other side of each.</summary>
+    public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4, GrayscaleInside = 5, PixelateOutside = 6 }
 
     /// <summary>Outline style for lines and shapes. Cloud = scalloped outline.</summary>
     public enum LineStyle { Solid = 0, Dashed = 1, Dotted = 2, DashDot = 3, LongDash = 4, Cloud = 5 }
@@ -149,6 +150,9 @@ namespace SnapMeasure
         /// <summary>Shapes built by clicking corners one after the other.</summary>
         public bool IsPoly { get { return Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter; } }
         /// <summary>Open path: path length, or a perimeter with "Closed" switched off (Mode 1).</summary>
+        /// <summary>Area shape: Mode 0 shows area and perimeter, 1 area only, 2 perimeter only.</summary>
+        public bool ShowsArea { get { return Kind == ShapeKind.Area && Mode != 2; } }
+        public bool ShowsPerimeter { get { return Kind == ShapeKind.Area ? Mode != 1 : Kind == ShapeKind.Perimeter; } }
         public bool IsOpenPath { get { return Kind == ShapeKind.Polyline || ((Kind == ShapeKind.Perimeter || Kind == ShapeKind.Polygon) && Mode == 1); } }
         public bool HasOutlineStyle
         {
@@ -582,6 +586,13 @@ namespace SnapMeasure
                     case ShapeKind.Area:
                         {
                             if (s.Pts.Count < 3) continue;
+                            if (!s.ShowsArea)
+                            {
+                                r.Type = "Perimeter"; r.Unit = sc.Unit;
+                                r.Value = Geo.Perimeter(s.Pts, true) * u;
+                                r.Display = sc.Len(Geo.Perimeter(s.Pts, true));
+                                break;
+                            }
                             r.Type = "Area"; r.Unit = sc.Unit + "²";
                             double net = NetArea(s), holes = HolesArea(s);
                             r.Value = net * u * u;
@@ -661,12 +672,55 @@ namespace SnapMeasure
         static Graphics mg;
         static Bitmap grayFor, grayCache;
 
-        /// <summary>Frees the grayscale copy made for 'img' (called when that picture is disposed).</summary>
+        static Bitmap pixFor, pixCache;
+        static int pixBlock;
+
+        /// <summary>Frees the grayscale / pixelated copies made for 'img' (called when that picture is disposed).</summary>
         public static void ReleaseCache(Bitmap img)
         {
-            if (img == null || !ReferenceEquals(grayFor, img)) return;
-            grayFor = null;
-            if (grayCache != null) { grayCache.Dispose(); grayCache = null; }
+            if (img == null) return;
+            if (ReferenceEquals(grayFor, img)) { grayFor = null; if (grayCache != null) { grayCache.Dispose(); grayCache = null; } }
+            if (ReferenceEquals(pixFor, img)) { pixFor = null; if (pixCache != null) { pixCache.Dispose(); pixCache = null; } }
+        }
+
+        /// <summary>A grayscale copy of the picture, kept while the picture is the same.</summary>
+        static Bitmap GrayOf(Bitmap img)
+        {
+            if (grayFor != img || grayCache == null)
+            {
+                Bitmap old = grayCache;
+                grayCache = Effects.Grayscale(img); grayFor = img;
+                if (old != null) old.Dispose();
+            }
+            return grayCache;
+        }
+
+        /// <summary>A pixelated copy of the whole picture (blocks of 'block' pixels), kept while nothing changes.</summary>
+        static Bitmap PixelatedOf(Bitmap img, int block)
+        {
+            if (pixFor != img || pixBlock != block || pixCache == null)
+            {
+                int sw = Math.Max(1, (img.Width + block - 1) / block), sh = Math.Max(1, (img.Height + block - 1) / block);
+                Bitmap big = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppArgb);
+                using (Bitmap small = new Bitmap(sw, sh, PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g2 = Graphics.FromImage(small))
+                    {
+                        g2.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                        g2.DrawImage(img, new Rectangle(0, 0, sw, sh), new Rectangle(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
+                    }
+                    using (Graphics g3 = Graphics.FromImage(big))
+                    {
+                        g3.InterpolationMode = InterpolationMode.NearestNeighbor;
+                        g3.PixelOffsetMode = PixelOffsetMode.Half;
+                        g3.DrawImage(small, new Rectangle(0, 0, sw * block, sh * block), new Rectangle(0, 0, sw, sh), GraphicsUnit.Pixel);
+                    }
+                }
+                Bitmap old = pixCache;
+                pixCache = big; pixFor = img; pixBlock = block;
+                if (old != null) old.Dispose();
+            }
+            return pixCache;
         }
 
         public static Graphics MeasureG
@@ -732,6 +786,7 @@ namespace SnapMeasure
             foreach (Shape s in shapes)
             {
                 if (s.Kind == ShapeKind.Dimension) d[s] = "D" + (++nd);
+                else if (s.Kind == ShapeKind.Area && !s.ShowsArea) d[s] = "P" + (++npm);   // perimeter only
                 else if (s.Kind == ShapeKind.Area) d[s] = "A" + (++na);
                 else if (s.Kind == ShapeKind.Angle) d[s] = "∠" + (++ng);
                 else if (s.Kind == ShapeKind.Polyline || (s.Kind == ShapeKind.Perimeter && s.IsOpenPath)) d[s] = "L" + (++npl);
@@ -819,8 +874,13 @@ namespace SnapMeasure
             sh.Fill = Color.Black;
             sh.StrokeOpacity = s.StrokeOpacity * 35 / 100;
             sh.FillOpacity = s.FillOpacity * 35 / 100;
-            Draw(g, sh, img, sc, name);
+            // the shadow falls under the lines only: value boxes and labels (A = …, R = …, 4.00 m) get none
+            shadowPass = true;
+            try { Draw(g, sh, img, sc, name); }
+            finally { shadowPass = false; }
         }
+
+        [ThreadStatic] static bool shadowPass;
 
         public static void Draw(Graphics g, Shape s, Bitmap img, ScaleInfo sc, string name)
         {
@@ -985,9 +1045,12 @@ namespace SnapMeasure
                         {
                             double per = Geo.Perimeter(s.Pts, true);
                             string head = string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n";
-                            string t = holes
-                                ? head + "Gross " + sc.Area(Measure.GrossArea(s)) + "\nCut-outs −" + sc.Area(Measure.HolesArea(s)) + "\nNet A = " + sc.Area(Measure.NetArea(s)) + "\nP = " + sc.Len(per)
-                                : head + "A = " + sc.Area(Measure.GrossArea(s)) + "\nP = " + sc.Len(per);
+                            // Mode: 0 = area and perimeter, 1 = area only, 2 = perimeter only
+                            string at = !s.ShowsArea ? "" : holes
+                                ? "Gross " + sc.Area(Measure.GrossArea(s)) + "\nCut-outs −" + sc.Area(Measure.HolesArea(s)) + "\nNet A = " + sc.Area(Measure.NetArea(s))
+                                : "A = " + sc.Area(Measure.GrossArea(s));
+                            string pt = s.ShowsPerimeter ? "P = " + sc.Len(per) : "";
+                            string t = head + at + (at.Length > 0 && pt.Length > 0 ? "\n" : "") + pt;
                             // the label can be dragged away from the middle (LabelOffset) and resized (text size); a thin line joins it back
                             PointF mid = Geo.Centroid(s.Pts);
                             PointF lc = new PointF(mid.X + s.LabelOffset.X, mid.Y + s.LabelOffset.Y);
@@ -1150,6 +1213,16 @@ namespace SnapMeasure
                                 DrawPixelate(g, s, img);
                                 g.Restore(st);
                             }
+                            else if (s.Mode == (int)HighlightMode.GrayscaleInside && img != null)
+                            {
+                                GraphicsState st = g.Save();
+                                g.SetClip(hp, CombineMode.Intersect);
+                                g.PixelOffsetMode = PixelOffsetMode.Half;
+                                RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
+                                g.DrawImage(GrayOf(img), all, all, GraphicsUnit.Pixel);
+                                g.Restore(st);
+                            }
+                            // PixelateOutside and Grayscale (outside) are drawn for the whole picture in DrawGlobalHighlights
                         }
                         break;
                     }
@@ -1654,30 +1727,40 @@ namespace SnapMeasure
         static void DrawGlobalHighlights(Graphics g, List<Shape> shapes, Bitmap img)
         {
             if (img == null) return;
-            List<Shape> spot = new List<Shape>(), gray = new List<Shape>();
+            List<Shape> spot = new List<Shape>(), gray = new List<Shape>(), pixOut = new List<Shape>();
             int spotOp = 0;
             foreach (Shape s in shapes)
             {
                 if (s.Kind != ShapeKind.Highlight || s.Pts.Count < 2) continue;
                 if (s.Mode == (int)HighlightMode.Spotlight) { spot.Add(s); spotOp = Math.Max(spotOp, s.FillOpacity); }
                 else if (s.Mode == (int)HighlightMode.Grayscale) gray.Add(s);
+                else if (s.Mode == (int)HighlightMode.PixelateOutside) pixOut.Add(s);
             }
             RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
+            if (pixOut.Count > 0)
+            {
+                // everything outside the shapes is pixelated (block size from the first one's line width)
+                int block = Math.Max(3, (int)Math.Round(pixOut[0].Width * 4));
+                using (Region rg = new Region(all))
+                {
+                    foreach (Shape s in pixOut) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
+                    GraphicsState st = g.Save();
+                    g.SetClip(rg, CombineMode.Intersect);
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(PixelatedOf(img, block), all, all, GraphicsUnit.Pixel);
+                    g.Restore(st);
+                }
+            }
             if (gray.Count > 0)
             {
-                if (grayFor != img)
-                {
-                    Bitmap old = grayCache;
-                    grayCache = Effects.Grayscale(img); grayFor = img;
-                    if (old != null) old.Dispose();
-                }
                 using (Region rg = new Region(all))
                 {
                     foreach (Shape s in gray) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
                     GraphicsState st = g.Save();
                     g.SetClip(rg, CombineMode.Intersect);
                     g.PixelOffsetMode = PixelOffsetMode.Half;
-                    g.DrawImage(grayCache, all, all, GraphicsUnit.Pixel);
+                    g.DrawImage(GrayOf(img), all, all, GraphicsUnit.Pixel);
                     g.Restore(st);
                 }
             }
@@ -1750,6 +1833,7 @@ namespace SnapMeasure
         /// <summary>Text along a line. centred = in the line's gap; otherwise just above the line, off = distance.</summary>
         static void DrawRotLabel(Graphics g, string t, PointF at, float ang, Font f, Color col, float off, bool centred)
         {
+            if (shadowPass) return;
             GraphicsState st = g.Save();
             g.TranslateTransform(at.X, at.Y);
             g.RotateTransform(ang);
@@ -1780,6 +1864,7 @@ namespace SnapMeasure
 
         static void DrawBoxAt(Graphics g, string t, RectangleF r, Font f, Color col)
         {
+            if (shadowPass) return;
             using (SolidBrush bg = new SolidBrush(Color.FromArgb(215, 255, 255, 255))) g.FillRectangle(bg, r);
             using (Pen p = new Pen(col, 1f)) g.DrawRectangle(p, r.X, r.Y, r.Width, r.Height);
             using (SolidBrush b = new SolidBrush(col))

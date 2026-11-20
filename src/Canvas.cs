@@ -1996,7 +1996,7 @@ namespace SnapMeasure
                 case Keys.T: CurrentTool = e.Shift ? Tool.Ocr : Tool.Text; break;
                 case Keys.W: Styles[Tool.Perimeter].Mode = 1; CurrentTool = Tool.Perimeter; break;   // open path length
                 case Keys.I: CurrentTool = Tool.Coord; break;
-                case Keys.Q: Styles[Tool.Perimeter].Mode = 0; CurrentTool = Tool.Perimeter; break;   // closed perimeter
+                case Keys.Q: Styles[Tool.Area].Mode = 2; CurrentTool = Tool.Area; break;   // closed perimeter = area tool showing the perimeter only
                 case Keys.X: CurrentTool = Tool.Cutout; break;
                 case Keys.U: CurrentTool = Tool.Cloud; break;
                 case Keys.Z: CurrentTool = Tool.Stamp; break;
@@ -2004,7 +2004,7 @@ namespace SnapMeasure
                 case Keys.O: CurrentTool = Tool.Note; break;
                 case Keys.P: CurrentTool = Tool.Polygon; break;
                 case Keys.D: CurrentTool = Tool.Dimension; break;
-                case Keys.M: CurrentTool = Tool.Area; break;
+                case Keys.M: if (Styles[Tool.Area].Mode == 2) Styles[Tool.Area].Mode = 0; CurrentTool = Tool.Area; break;
                 case Keys.G: CurrentTool = Tool.Angle; break;
                 case Keys.K: CurrentTool = Tool.Calibrate; break;
                 case Keys.N: CurrentTool = e.Shift ? Tool.Letter : Tool.Counter; break;
@@ -2102,7 +2102,7 @@ namespace SnapMeasure
                 else
                 {
                     if (creating.Shadow && creating.CanShadow) Renderer.DrawShadow(g, creating, Image, Scale, null);
-                    string nm = creating.Kind == ShapeKind.Area ? "A" + (CountKind(ShapeKind.Area) + 1)
+                    string nm = creating.Kind == ShapeKind.Area ? (creating.ShowsArea ? "A" : "P") + (CountLabels(creating.ShowsArea ? "A" : "P") + 1)
                               : creating.Kind == ShapeKind.Polyline ? "L" + (CountKind(ShapeKind.Polyline) + 1)
                               : creating.Kind == ShapeKind.Perimeter ? "P" + (CountKind(ShapeKind.Perimeter) + 1) : null;
                     if (tool == Tool.Text)
@@ -2376,6 +2376,13 @@ namespace SnapMeasure
             }
             g.SmoothingMode = sm;
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
+        }
+
+        int CountLabels(string prefix)
+        {
+            int n = 0;
+            foreach (string v in Renderer.Labels(Shapes, Scale).Values) if (v.StartsWith(prefix, StringComparison.Ordinal)) n++;
+            return n;
         }
 
         int CountKind(ShapeKind k)
