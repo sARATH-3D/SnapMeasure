@@ -24,6 +24,11 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Highlighter pen** (`Shift+H`): a see-through yellow marker you drag over text; hold `Shift` for a straight stroke
   (line width up to 200 for large text).
 * **Focus** (`H`, was Highlight): spotlight, grayscale, magnify or pixelate; grayscale and pixelate work **inside or outside** the shape. The yellow marker mode is now the highlighter pen.
+  A **Strength** slider sets how much magnify enlarges (×1.5 … ×6) and how coarse pixelate is (4 … 40 px blocks).
+* **Tool column in order of work:** Measure (calibrate first), Count, Draw (lines, then shapes), Highlight, Text, Tools.
+* **Marker labels stay on one line:** long numbers (1012) and double letters (BM, ABM) shrink to fit the circle.
+* **Safer saving:** pictures and projects are written to a temporary file and swapped in, so a failed save never spoils the old file.
+  Unexpected errors are written to `%TEMP%\SnapMeasure-error.log` and the editor stays open so you can save.
 * **Magnifier** at the pointer for every measuring tool, and while you drag a point of a measurement, so points land exactly on the lines.
 * **Text boxes have 8 handles**: corners and sides resize the box, the text wraps inside and keeps its size.
   **Line width is the frame:** 0 = no frame, any other width draws it. New **U** (underline) and **S** (strike out) buttons.
@@ -147,7 +152,7 @@ Open them from the tray menu or **View ▾ → On-screen ruler / On-screen protr
 | Letter marker | `Shift+N` | A, B, C … Z, AA, AB … is **its own series**, separate from the numbers, also counted |
 | Polygon | `P` | Any number of edges, with fill colour and opacity. |
 | Polyline | `Shift+P` | Open line through any number of points; arrowheads optional. Tick **Closed** to make it a polygon. |
-| Focus | `H` | Spotlight, grayscale, magnify ×2, **pixelate** (`B`) – grayscale and pixelate inside or outside – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
+| Focus | `H` | Spotlight, grayscale, magnify, **pixelate** (`B`) – grayscale and pixelate inside or outside, **Strength** slider for magnify (×1.5 … ×6) and pixelate (4 … 40 px) – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
 | Highlighter pen | `Shift+H` | Drag over text like a marker pen: see-through yellow, square ends. `Shift` = straight stroke. Colour, width and opacity on the style bar. |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |
 | Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops. **Callout:** none, revision triangle (number) or text box, on a leader |
@@ -256,7 +261,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 135 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 137 built-in checks.
 The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
 it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 

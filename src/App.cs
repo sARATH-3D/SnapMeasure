@@ -34,7 +34,9 @@ namespace SnapMeasure
             try { SetDllDirectory(""); } catch { }
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
             {
-                try { MessageBox.Show("SnapMeasure hit an unexpected problem and has to close:\n\n" + ((Exception)e.ExceptionObject).Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+                Exception ex = e.ExceptionObject as Exception;
+                ErrorLog.Write("fatal", ex);
+                try { MessageBox.Show("SnapMeasure hit an unexpected problem and has to close:\n\n" + (ex != null ? ex.Message : "unknown error") + "\n\nDetails: " + ErrorLog.FilePath, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
             };
             if (args.Length == 2 && args[0] == "--write-icon") { AppIcon.WriteIco(args[1]); return; }
 
@@ -48,7 +50,17 @@ namespace SnapMeasure
                 return;
             }
             Application.ThreadException += (s, e) =>
-                MessageBox.Show(e.Exception.Message + "\n\n" + e.Exception.StackTrace, "SnapMeasure – unexpected error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            {
+                ErrorLog.Write("error", e.Exception);
+                if (ErrorLog.Showing) return;          // never stack error boxes on top of each other
+                ErrorLog.Showing = true;
+                try
+                {
+                    MessageBox.Show("Something went wrong, but your work is still open:\n\n" + e.Exception.Message +
+                        "\n\nSave your work (Ctrl+S). Details were written to:\n" + ErrorLog.FilePath, "SnapMeasure – unexpected error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                finally { ErrorLog.Showing = false; }
+            };
             Settings.Load();
 
             bool first;
@@ -70,6 +82,25 @@ namespace SnapMeasure
                 foreach (string a in args) App.OpenFile(a);
                 Application.Run(tray);
             }
+        }
+    }
+
+    /// <summary>Unexpected errors go to %TEMP%\SnapMeasure-error.log (kept small) so a problem can be reported.</summary>
+    internal static class ErrorLog
+    {
+        public static bool Showing;
+        public static string FilePath { get { return Path.Combine(Path.GetTempPath(), "SnapMeasure-error.log"); } }
+
+        public static void Write(string what, Exception ex)
+        {
+            try
+            {
+                string p = FilePath;
+                if (File.Exists(p) && new FileInfo(p).Length > 256 * 1024) File.Delete(p);
+                File.AppendAllText(p, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " " + what + " (SnapMeasure " +
+                    Application.ProductVersion + ")" + Environment.NewLine + (ex != null ? ex.ToString() : "(no details)") + Environment.NewLine + Environment.NewLine);
+            }
+            catch { }
         }
     }
 
@@ -190,6 +221,24 @@ namespace SnapMeasure
             Shape mT = Mk(cv, Tool.Bubble, 50, 50, 150, 100); mT.Text = "keep";
             Canvas.MatchProps(mSrc, mT);
             check("Match properties", mT.Stroke.G + "|" + mT.Width + "|" + mT.FontSize + "|" + mT.Bold + "|" + mT.Text + "|" + P(mT.Pts[0]), "128|7|33|True|keep|50.00,50.00");
+
+            // focus strength: magnify factor and pixel size, round-trip, and older files keep their look
+            Shape fz = Mk(cv, Tool.Highlight, 50, 700, 150, 760); fz.Mode = (int)HighlightMode.Magnify; fz.Strength = 6;
+            Shape fp = Mk(cv, Tool.Highlight, 200, 700, 300, 760); fp.Mode = (int)HighlightMode.PixelateOutside; fp.Strength = 5;
+            Shape fold = fp.Clone(); fold.Strength = 0; fold.Width = 3;
+            List<Shape> rt9 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { fz, fp, fold }));
+            check("Focus strength", fz.MagnifyFactor.ToString("0.0", CultureInfo.InvariantCulture) + "|" + fp.PixelBlock + "|" + fold.PixelBlock + "|" +
+                  fold.ShownStrength(false) + "|" + cv.Styles[Tool.Highlight].MagnifyFactor.ToString("0.0", CultureInfo.InvariantCulture) + "|" +
+                  (rt9.Count == 3 ? rt9[0].Strength + "/" + rt9[1].Strength + "/" + rt9[2].Strength : "-"), "4.0|20|12|3|2.0|6/5/0");
+            cv.Shapes.Remove(fz); cv.Shapes.Remove(fp);
+
+            // saving over an existing file swaps a finished file in (no half-written file, no temp file left)
+            string safeP = Path.Combine(dir, "selftest_safe.png");
+            using (Bitmap sb1 = new Bitmap(30, 20)) Output.SaveBitmap(sb1, safeP);
+            using (Bitmap sb2 = new Bitmap(40, 25)) Output.SaveBitmap(sb2, safeP);
+            string safeR;
+            using (Bitmap back = new Bitmap(safeP)) safeR = back.Width + "x" + back.Height;
+            check("Safe save over a file", safeR + "|" + File.Exists(safeP + ".saving"), "40x25|False");
 
             // zoom to area: the middle of the chosen part comes to the middle of the window
             if (cv.Image != null && cv.Width > 100 && cv.Height > 100)

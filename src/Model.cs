@@ -94,6 +94,18 @@ namespace SnapMeasure
         public int Dash;             // LineStyle of the outline
         public int Form;             // HighlightForm for Highlight shapes
         public bool Frame;           // Text: draw a frame round the text in the line colour and width
+        public int Strength;         // Focus magnify / pixelate: 1..10; 0 = older files (pixel size from the line width, magnify ×2)
+
+        /// <summary>Pixelate block size in picture pixels.</summary>
+        public int PixelBlock { get { return Strength > 0 ? Math.Max(3, Strength * 4) : Math.Max(3, (int)Math.Round(Width * 4)); } }
+        /// <summary>Magnify factor: strength 1 = ×1.5 … 10 = ×6 (2 = ×2).</summary>
+        public float MagnifyFactor { get { return Strength > 0 ? 1f + Strength * 0.5f : 2f; } }
+        /// <summary>The strength the slider shows (older shapes: worked out from what they draw).</summary>
+        public int ShownStrength(bool magnify)
+        {
+            if (Strength > 0) return Math.Min(10, Strength);
+            return magnify ? 2 : Math.Max(1, Math.Min(10, (int)Math.Round(PixelBlock / 4.0)));
+        }
 
         /// <summary>Old on/off heads (1 = end, 2 = start), kept for files from 1.0.</summary>
         public int Heads
@@ -767,6 +779,8 @@ namespace SnapMeasure
             Font f;
             if (!fonts.TryGetValue(key, out f))
             {
+                // keep the cache small: fonts still in use stay valid (not disposed here; the finalizer frees them)
+                if (fonts.Count > 300) fonts.Clear();
                 f = new Font("Segoe UI", px, style, GraphicsUnit.Pixel);
                 fonts[key] = f;
             }
@@ -1197,12 +1211,17 @@ namespace SnapMeasure
                         if (fill) using (SolidBrush b = new SolidBrush(fCol)) g.FillEllipse(b, rr);
                         if (stroke) using (Pen p = new Pen(sCol, Math.Max(1.5f, Math.Min(w, r / 4f)))) g.DrawEllipse(p, rr);
                         string label = name ?? "?";
-                        float fs = label.Length > 2 ? r * 0.8f : r * 1.05f;
+                        // one line, always: the text shrinks to fit the circle (BM, 1012 … never wrap)
+                        float fs = r * 1.05f;
+                        SizeF tsz = g.MeasureString(label, GetFont(fs, true), PointF.Empty, StringFormat.GenericTypographic);
+                        float maxW = r * 1.55f;
+                        if (tsz.Width > maxW && tsz.Width > 0) fs = Math.Max(4f, fs * maxW / tsz.Width);
                         using (SolidBrush b = new SolidBrush(Color.FromArgb(Math.Max((int)sCol.A, (int)(s.StrokeOpacity * 2.55)), s.Stroke)))
-                        using (StringFormat sf = new StringFormat())
+                        using (StringFormat sf = new StringFormat(StringFormatFlags.NoWrap))
                         {
                             sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
-                            g.DrawString(label, GetFont(fs, true), b, rr, sf);
+                            RectangleF tr = RectangleF.Inflate(rr, r, 0);     // wide enough that nothing is clipped
+                            g.DrawString(label, GetFont(fs, true), b, tr, sf);
                         }
                         break;
                     }
@@ -1221,7 +1240,7 @@ namespace SnapMeasure
                             }
                             else if (s.Mode == (int)HighlightMode.Magnify && img != null && r.Width > 1 && r.Height > 1)
                             {
-                                const float factor = 2f;
+                                float factor = s.MagnifyFactor;
                                 PointF c = Geo.Center(r);
                                 RectangleF src = new RectangleF(c.X - r.Width / factor / 2f, c.Y - r.Height / factor / 2f, r.Width / factor, r.Height / factor);
                                 GraphicsState st = g.Save();
@@ -1770,8 +1789,8 @@ namespace SnapMeasure
             RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
             if (pixOut.Count > 0)
             {
-                // everything outside the shapes is pixelated (block size from the first one's line width)
-                int block = Math.Max(3, (int)Math.Round(pixOut[0].Width * 4));
+                // everything outside the shapes is pixelated (block size from the first one's strength)
+                int block = pixOut[0].PixelBlock;
                 using (Region rg = new Region(all))
                 {
                     foreach (Shape s in pixOut) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
@@ -1912,7 +1931,7 @@ namespace SnapMeasure
             Rectangle r = Rectangle.Round(Geo.Rect(s.Pts[0], s.Pts[1]));
             r.Intersect(new Rectangle(0, 0, img.Width, img.Height));
             if (r.Width < 1 || r.Height < 1) return;
-            int block = Math.Max(3, (int)Math.Round(s.Width * 4));
+            int block = s.PixelBlock;
             string key = r.ToString() + "|" + block + "|" + img.GetHashCode();
             if (s.Cache == null || s.CacheKey != key)
             {
@@ -2602,6 +2621,7 @@ namespace SnapMeasure
             }
             if (s.Dash != 0) w.WriteAttributeString("dash", s.Dash.ToString(Inv));
             if (s.Form != 0) w.WriteAttributeString("form", s.Form.ToString(Inv));
+            if (s.Strength != 0) w.WriteAttributeString("strength", s.Strength.ToString(Inv));
             if (s.LabelOffset.X != 0 || s.LabelOffset.Y != 0)
             {
                 w.WriteAttributeString("lx", F(s.LabelOffset.X));
@@ -2736,6 +2756,7 @@ namespace SnapMeasure
             s.Mode = Math.Max(0, Math.Min(Math.Max(20, Stamps.Custom), s.Mode));   // stamps go up to Custom
             s.Dash = Math.Max(0, Math.Min(5, s.Dash));
             s.Form = Math.Max(0, Math.Min(4, s.Form));
+            s.Strength = Math.Max(0, Math.Min(10, s.Strength));
             if (s.Text != null && s.Text.Length > 100000) s.Text = s.Text.Substring(0, 100000);
             return true;
         }
@@ -2781,6 +2802,7 @@ namespace SnapMeasure
             s.Text = e.GetAttribute("text");
             s.Dash = PI(e.GetAttribute("dash"), 0);
             s.Form = PI(e.GetAttribute("form"), 0);
+            s.Strength = PI(e.GetAttribute("strength"), 0);
             if (e.HasAttribute("lx")) s.LabelOffset = new PointF(Finite(PF(e.GetAttribute("lx"), 0f), 0f, -100000f, 100000f), Finite(PF(e.GetAttribute("ly"), 0f), 0f, -100000f, 100000f));
             s.Frame = e.GetAttribute("frame") == "1";
             // since 1.3 a text's frame is its line width: older text without a frame gets width 0
@@ -2825,6 +2847,12 @@ namespace SnapMeasure
         }
 
         public static void Save(string path, Bitmap img, List<Shape> shapes, ScaleInfo sc, ProjectExtras ex)
+        {
+            // written next to it first and swapped in: a failed save never spoils the old file
+            Output.WriteSafely(path, p => WriteProject(p, img, shapes, sc, ex));
+        }
+
+        static void WriteProject(string path, Bitmap img, List<Shape> shapes, ScaleInfo sc, ProjectExtras ex)
         {
             XmlWriterSettings set = new XmlWriterSettings();
             set.Indent = true;

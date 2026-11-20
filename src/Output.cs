@@ -142,6 +142,33 @@ namespace SnapMeasure
         public static void SaveBitmap(Bitmap b, string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
+            WriteSafely(path, p => SaveBitmapAs(b, p, ext));
+        }
+
+        /// <summary>Writes a temporary file next to the target and swaps it in, so a failed save
+        /// (disk full, USB stick pulled, encoder error) never leaves a broken or half-written file behind.</summary>
+        public static void WriteSafely(string path, Action<string> write)
+        {
+            string tmp = path + ".saving";
+            try
+            {
+                write(tmp);
+                if (File.Exists(path))
+                {
+                    try { File.Replace(tmp, path, null, true); }
+                    catch (PlatformNotSupportedException) { File.Copy(tmp, path, true); }   // FAT USB sticks
+                    catch (IOException) { File.Copy(tmp, path, true); }                     // some network shares
+                }
+                else File.Move(tmp, path);
+            }
+            finally
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            }
+        }
+
+        static void SaveBitmapAs(Bitmap b, string path, string ext)
+        {
             switch (ext)
             {
                 case ".jpg":

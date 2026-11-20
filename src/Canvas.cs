@@ -154,6 +154,8 @@ namespace SnapMeasure
             d[Tool.Pixelate] = St(ShapeKind.Pixelate, Color.Gray, 3, Color.Gray, 0, 16);
             d[Tool.Highlight] = St(ShapeKind.Highlight, red, 2, Color.Yellow, 45, 16);
             d[Tool.Highlight].Mode = (int)HighlightMode.Spotlight;     // Focus: the yellow marker is now the highlighter pen
+            d[Tool.Highlight].Strength = 2;                              // magnify ×2, pixelate 8 px (Strength slider)
+            d[Tool.Pixelate].Strength = 3;
             Shape bub = St(ShapeKind.Bubble, Color.FromArgb(40, 40, 40), 2, Color.White, 100, 16);
             bub.Align = 1;
             d[Tool.Bubble] = bub;
@@ -2127,9 +2129,26 @@ namespace SnapMeasure
             }
         }
 
+        bool paintErrorLogged;
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            PaintCore(e);
+            // a drawing error must never turn into an endless row of error boxes (each box repaints the canvas):
+            // log it once, show a short note on the canvas, and keep the editor usable so the work can be saved
+            try { PaintCore(e); }
+            catch (Exception ex)
+            {
+                if (!paintErrorLogged) { paintErrorLogged = true; ErrorLog.Write("paint", ex); }
+                layerDirty = true;
+                try
+                {
+                    e.Graphics.ResetTransform(); e.Graphics.ResetClip();
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(200, 40, 40)))
+                        e.Graphics.DrawString("Could not draw everything: " + ex.Message + "  (Ctrl+Z undoes the last change)", Font, b, 8, 8);
+                }
+                catch { }
+                return;
+            }
             if (zoomBox && zbStart.HasValue)
                 using (Pen p = new Pen(Color.FromArgb(0, 120, 215), 1.5f))
                 using (SolidBrush b = new SolidBrush(Color.FromArgb(30, 0, 120, 215)))
@@ -2232,6 +2251,7 @@ namespace SnapMeasure
             t.Bold = src.Bold; t.Italic = src.Italic; t.Underline = src.Underline; t.Strikeout = src.Strikeout;
             if (t.HasHeads && src.HasHeads) { t.HeadStart = src.HeadStart; t.HeadEnd = src.HeadEnd; }
             if (t.CanShadow) t.Shadow = src.Shadow;
+            if (src.Kind == t.Kind) t.Strength = src.Strength;
             t.Cache = null;
         }
 

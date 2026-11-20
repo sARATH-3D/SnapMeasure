@@ -40,6 +40,9 @@ namespace SnapMeasure
         ComboBox cUnit, cHlMode, cHeadS, cHeadE, cStamp, cMarkup, cDash, cForm, cCallout, cShow;
         CheckBox cClosed, cFrame;
         TextBox tUpp, tMarkStart;
+        TrackBar tStr;
+        Label lStr;
+        Panel rowStrength;
         Panel rowHl, rowMarkStart, rowTextStyle, gLine, gFill, gFont, gHeads, gShadow, props, rowStamp, rowMarkup, gDash, rowForm, rowCallout, rowClosed, rowFrame, rowShow;
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
@@ -393,38 +396,41 @@ namespace SnapMeasure
             toolBar.Padding = new Padding(S(2), S(3), S(2), S(3));
             toolBar.RenderMode = ToolStripRenderMode.System;
             AddTool(Tool.Select, "Select / move / rotate (V)");
+            // order of work: set the scale, measure (straight → paths → areas → angles), count,
+            // then draw (lines → shapes), highlight, write, and the picture tools last
             AddHeading("MEASURE");
+            AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
             AddTool(Tool.Dimension, "Dimension (D)");
+            AddTool(Tool.Perimeter, "Length: path along a run; tick Closed for a closed perimeter (W)");
             AddTool(Tool.Area, "Area / perimeter: closed outline, show area, perimeter or both (M; Q = perimeter only)");
             AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
-            AddTool(Tool.Perimeter, "Length: path along a run; tick Closed for a closed perimeter (W)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
             AddTool(Tool.Coord, "Coordinates: first click = origin 0,0, then points show X / Y (I)");
-            AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
             AddHeading("COUNT");
             AddTool(Tool.Counter, "Number marker 1, 2, 3 … – counts (N)");
             AddTool(Tool.Letter, "Letter marker A, B, C … – counts (Shift+N)");
-            AddHeading("MARK-UP");
-            AddTool(Tool.Highlight, "Focus: spotlight / grayscale outside / magnify / pixelate, in several shapes (H, B = pixelate)");
-            AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
-            AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
+            AddHeading("DRAW");
+            AddTool(Tool.Arrow, "Arrow (A) – right-click it for more line ends");
+            AddTool(Tool.Line, "Line (L)");
             AddTool(Tool.PolyDraw, "Polyline – an open line through any number of points, arrowheads optional (Shift+P)");
+            AddTool(Tool.Arc, "Arc – 3 points: start, a point on the arc, end (Shift+L)");
+            AddTool(Tool.Freehand, "Freehand, with arrowheads if you like (F)");
             AddTool(Tool.Rect, "Rectangle (R)");
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
+            AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
             AddTool(Tool.Cloud, "Revision cloud, with or without a callout (U)");
-            AddTool(Tool.Line, "Line (L)");
-            AddTool(Tool.Arc, "Arc – 3 points: start, a point on the arc, end (Shift+L)");
-            AddTool(Tool.Arrow, "Arrow (A) – right-click it for more line ends");
-            AddTool(Tool.Freehand, "Freehand, with arrowheads if you like (F)");
+            AddHeading("HIGHLIGHT");
+            AddTool(Tool.Highlight, "Focus: spotlight, grayscale, magnify or pixelate, in several shapes; Strength slider for magnify / pixelate (H, B = pixelate)");
+            AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
             AddHeading("TEXT");
             AddTool(Tool.Text, "Text – click and type, or drag a box (T)");
             AddTool(Tool.Bubble, "Speech bubble (S)");
             AddTool(Tool.Stamp, "Stamp: Approved / Revise / Draft / For construction … (Z)");
             AddTool(Tool.Note, "Note – shown here only, not printed (O)");
             AddHeading("TOOLS");
-            AddTool(Tool.Ocr, "Copy text from an area – text recognition (Shift+T)");
             AddTool(Tool.Crop, "Crop (C)");
+            AddTool(Tool.Ocr, "Copy text from an area – text recognition (Shift+T)");
             // match properties: not a drawing tool, a brush that stays on until Esc / right-click
             bMatch = new ToolStripButton();
             bMatch.Image = Icons.Cmd("match", S(IconSize));
@@ -777,7 +783,19 @@ namespace SnapMeasure
             tip.SetToolTip(tFO, "Fill opacity (for pictures: picture opacity)");
 
             // Focus modes (the yellow text marker is now the highlighter pen): list index + 1 = HighlightMode
-            cHlMode = Combo(130, "Spotlight", "Grayscale", "Magnify ×2", "Pixelate");
+            cHlMode = Combo(110, "Spotlight", "Grayscale", "Magnify", "Pixelate");
+            // strength: magnify ×1.5 … ×6, pixelate 4 … 40 px blocks
+            tStr = new TrackBar();
+            tStr.Minimum = 1; tStr.Maximum = 10; tStr.TickStyle = TickStyle.None; tStr.AutoSize = false;
+            tStr.Size = new Size(S(90), S(24));
+            lStr = new Label(); lStr.AutoSize = false; lStr.Size = new Size(S(44), S(22)); lStr.TextAlign = ContentAlignment.MiddleLeft;
+            tStr.ValueChanged += (s, e) =>
+            {
+                ShowStrength();
+                int v = tStr.Value;
+                ApplyStyle(x => { if (x.Kind == ShapeKind.Highlight || x.Kind == ShapeKind.Pixelate) { x.Strength = v; x.Cache = null; } });
+            };
+            tip.SetToolTip(tStr, "Strength: how much to magnify, or how big the pixel blocks are");
             cWhere = Combo(80, "Inside", "Outside");
             tip.SetToolTip(cWhere, "Gray or pixelate the marked area itself (inside) or everything around it (outside)");
             EventHandler focusChanged = (s, e) =>
@@ -895,6 +913,7 @@ namespace SnapMeasure
             cHeadE.Margin = new Padding(0, S(2), S(3), 0);
             gHeads.Controls.Add(cHeadE);
             rowHl = Grp("Mode", cHlMode, cWhere);
+            rowStrength = Grp("Strength", tStr, lStr);
             rowMarkStart = Grp("Start at", tMarkStart);
             ComboBox cDate = Combo(150, Stamps.DateNames);
             cDate.SelectedIndex = Math.Max(0, Math.Min(Stamps.DateNames.Length - 1, Settings.GetInt("StampDate", 0)));
@@ -914,7 +933,7 @@ namespace SnapMeasure
             rowShow = Grp("Show", cShow);
             rowFrame = Grp("", cFrame);
             gShadow = Grp("", cShadow);
-            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart, gShadow, pal })
+            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowStrength, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart, gShadow, pal })
                 styleBar.Controls.Add(c);
             ReturnFocusToCanvas(styleBar);
         }
@@ -1062,6 +1081,15 @@ namespace SnapMeasure
             if (mode == (int)HighlightMode.GrayscaleInside) return (int)HighlightMode.Grayscale;
             if (mode == (int)HighlightMode.PixelateOutside) return (int)HighlightMode.Pixelate;
             return mode;
+        }
+
+        bool strMagnify;
+
+        /// <summary>The value next to the Strength slider: ×2.5 for magnify, 12 px for pixelate.</summary>
+        void ShowStrength()
+        {
+            int v = tStr.Value;
+            lStr.Text = strMagnify ? "×" + (1 + v * 0.5).ToString("0.0", CultureInfo.InvariantCulture) : Math.Max(3, v * 4) + " px";
         }
 
         /// <summary>Focus: the stored mode for a list mode and a side.</summary>
@@ -1314,7 +1342,7 @@ namespace SnapMeasure
             if (s == null)
             {
                 lStyleFor.Text = cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape";
-                rowHl.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
+                rowHl.Visible = rowStrength.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
                 gDash.Visible = rowForm.Visible = rowCallout.Visible = rowClosed.Visible = rowFrame.Visible = rowShow.Visible = false;
             }
             else
@@ -1383,6 +1411,12 @@ namespace SnapMeasure
                     cWhere.Visible = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate;
                     cWhere.SelectedIndex = s.Mode == (int)HighlightMode.Grayscale || s.Mode == (int)HighlightMode.PixelateOutside ? 1 : 0;
                 }
+                bool magnify = kd == ShapeKind.Highlight && s.Mode == (int)HighlightMode.Magnify;
+                rowStrength.Visible = magnify || kd == ShapeKind.Pixelate ||
+                                      (kd == ShapeKind.Highlight && FocusBase(s.Mode) == (int)HighlightMode.Pixelate);
+                if (rowStrength.Visible) { strMagnify = magnify; tStr.Value = s.ShownStrength(magnify); ShowStrength(); }
+                // pixelate / magnify draw no outline of their own width: the Line group only matters for magnify's frame
+                if (rowStrength.Visible && !magnify) gLine.Visible = gFill.Visible = false;
                 rowMarkStart.Visible = s.Kind == ShapeKind.Counter;
                 rowTextStyle.Visible = s.HasTextStyle;
                 cBold.Checked = s.Bold;
@@ -1765,30 +1799,12 @@ namespace SnapMeasure
                 ex.VGuides.AddRange(cv.VGuides);
                 ProjectFile.Save(path, cv.Image, cv.Shapes, cv.Scale, ex);
             }
-            else if (ext == ".jpg" || ext == ".jpeg")
-            {
-                using (Bitmap b = cv.Flatten(Color.White))
-                {
-                    ImageCodecInfo jpg = Array.Find(ImageCodecInfo.GetImageEncoders(), c => c.FormatID == ImageFormat.Jpeg.Guid);
-                    using (EncoderParameters ep = new EncoderParameters(1))
-                    {
-                        ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)Output.JpegQuality);
-                        b.Save(path, jpg, ep);
-                    }
-                }
-            }
-            else if (ext == ".bmp")
-                using (Bitmap b = cv.Flatten(Color.White)) b.Save(path, ImageFormat.Bmp);
-            else if (ext == ".gif")
-                using (Bitmap b = cv.Flatten(Color.White)) Output.SaveGif(b, path);
-            else if (ext == ".tif" || ext == ".tiff")
-                using (Bitmap b = cv.Flatten(null)) b.Save(path, ImageFormat.Tiff);
-            else if (ext == ".pdf")
-                using (Bitmap b = cv.Flatten(Color.White)) Output.SavePdf(b, path, Output.JpegQuality);
-            else if (ext == ".ico")
-                using (Bitmap b = cv.Flatten(null)) Output.SaveIco(b, path);
             else
-                using (Bitmap b = cv.Flatten(null)) b.Save(path, ImageFormat.Png);
+            {
+                // formats without transparency get a white background; the save itself is done safely (temp file + swap)
+                bool opaque = ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".gif" || ext == ".pdf";
+                using (Bitmap b = cv.Flatten(opaque ? (Color?)Color.White : null)) Output.SaveBitmap(b, path);
+            }
             lastSaved = path;
             dirty = false;
             Text = "SnapMeasure – " + Path.GetFileName(path);
