@@ -23,6 +23,31 @@ namespace SnapMeasure
             get { Version v = typeof(AppInfo).Assembly.GetName().Version; return v.Major + "." + v.Minor + (v.Build > 0 ? "." + v.Build : ""); }
         }
 
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        static extern int GetCurrentPackageFullName(ref int length, StringBuilder name);
+
+        static int packaged = -1;
+
+        /// <summary>True when SnapMeasure runs as the Microsoft Store package: the Store does the updating,
+        /// so the GitHub update check is left out.</summary>
+        public static bool IsStoreApp
+        {
+            get
+            {
+                if (packaged < 0)
+                {
+                    try
+                    {
+                        int len = 0;
+                        int rc = GetCurrentPackageFullName(ref len, null);
+                        packaged = rc == 15700 ? 0 : 1;          // 15700 = APPMODEL_ERROR_NO_PACKAGE (a plain exe)
+                    }
+                    catch (Exception) { packaged = 0; }        // Windows without packages
+                }
+                return packaged == 1;
+            }
+        }
+
         /// <summary>Opens one of the fixed project web pages in the default browser.</summary>
         public static void OpenUrl(string url)
         {

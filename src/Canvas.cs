@@ -120,7 +120,12 @@ namespace SnapMeasure
             d[Tool.Arrow] = St(ShapeKind.Arrow, red, 3, Color.Yellow, 0, 16);
             d[Tool.Freehand] = St(ShapeKind.Freehand, red, 3, Color.Yellow, 0, 16);
             d[Tool.Freehand].HeadEnd = 0;                     // plain stroke; arrowheads are optional
-            d[Tool.Text] = St(ShapeKind.Text, red, 2, Color.White, 0, 20);
+            Shape marker = St(ShapeKind.Freehand, Color.FromArgb(255, 225, 0), 14, Color.Yellow, 0, 16);
+            marker.Mode = 1;                                  // highlighter pen: thick, see-through yellow
+            marker.StrokeOpacity = 45;
+            marker.HeadStart = marker.HeadEnd = 0;
+            d[Tool.Marker] = marker;
+            d[Tool.Text] = St(ShapeKind.Text, red, 0, Color.White, 0, 20);   // line width 0 = no frame
             d[Tool.Polygon] = St(ShapeKind.Polygon, amber, 2, Color.Yellow, 35, 16);
             d[Tool.Dimension] = St(ShapeKind.Dimension, red, 1.5f, Color.White, 0, 15);
             d[Tool.Dimension].HeadStart = d[Tool.Dimension].HeadEnd = (int)HeadStyle.Filled;
@@ -151,6 +156,7 @@ namespace SnapMeasure
         public static Tool ToolFor(Shape s)
         {
             if (s.Kind == ShapeKind.Counter && s.Mode == 1) return Tool.Letter;
+            if (s.IsMarkerPen) return Tool.Marker;
             return ToolFor(s.Kind);
         }
 
@@ -194,6 +200,8 @@ namespace SnapMeasure
                 marquee = false;
                 Tool old = tool;
                 tool = value;
+                // the highlight tool always starts as a rectangle; a shape picked on the style bar lasts while the tool is in use
+                if (value == Tool.Highlight && old != Tool.Highlight) Styles[Tool.Highlight].Form = (int)HighlightForm.Rectangle;
                 Cursor = tool == Tool.Select ? Cursors.Default : (tool == Tool.Text ? Cursors.IBeam : Cursors.Cross);
                 if (ToolChanged != null) ToolChanged(this, EventArgs.Empty);
                 if (CropRect.HasValue && ((old == Tool.Crop) != (value == Tool.Crop))) Fit();   // show the whole image while cropping
@@ -956,6 +964,17 @@ namespace SnapMeasure
             FireDoc(); Invalidate();
         }
 
+        /// <summary>Changes a shape's text from outside the canvas (the editor's text list), as one undo step.</summary>
+        public void SetShapeText(Shape s, string text)
+        {
+            if (s == null || !Shapes.Contains(s) || (s.Text ?? "") == text) return;
+            EndTextEdit(true);
+            PushUndo(Snapshot());
+            s.Text = text;
+            s.Cache = null;
+            FireDoc(); Invalidate();
+        }
+
         bool ClickBuilt(Shape s) { return s != null && (s.IsPoly || s.Kind == ShapeKind.Angle); }
 
         /// <summary>Text markup: tighten the dragged box to the words found under it (Windows text recognition).</summary>
@@ -1077,7 +1096,8 @@ namespace SnapMeasure
                 PointF a = ToScr(s.Pts[0]);
                 int w = Math.Max((int)(Renderer.WrapWidth(s) * Zoom) + 8, (int)(60 * Dpi));
                 Size need = TextRenderer.MeasureText(editBox.Text + "W", editBox.Font, new Size(w - 8, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
-                editBox.Bounds = new Rectangle((int)a.X - 3, (int)a.Y - 3, w, need.Height + 10);
+                int boxH = (int)((s.Pts[1].Y - s.Pts[0].Y) * Zoom) + 6;     // a box dragged taller keeps its height while typing
+                editBox.Bounds = new Rectangle((int)a.X - 3, (int)a.Y - 3, w, Math.Max(need.Height + 10, boxH));
                 return;
             }
             if (s.Kind == ShapeKind.Bubble)
@@ -1452,6 +1472,7 @@ namespace SnapMeasure
                         break;
                     }
                 case Tool.Freehand:
+                case Tool.Marker:
                     Sel.Clear(); FireSel();
                     creating = NewShape(tool, ip);
                     break;
@@ -1504,6 +1525,7 @@ namespace SnapMeasure
             mouseImg = ip;
             mouseScr = e.Location;
             InvalidateRulers();
+            if (LoupeTool(tool)) Invalidate();          // the magnifier follows the pointer
             if (CursorMoved != null) CursorMoved(ip);
             if (panning)
             {
@@ -1558,11 +1580,16 @@ namespace SnapMeasure
 
             if (creating != null)
             {
-                PointF sp = tool == Tool.Freehand || tool == Tool.Crop || tool == Tool.Ocr || tool == Tool.Markup ? ip : Snap(ip);
+                PointF sp = tool == Tool.Freehand || tool == Tool.Marker || tool == Tool.Crop || tool == Tool.Ocr || tool == Tool.Markup ? ip : Snap(ip);
                 int n = creating.Pts.Count;
                 PointF p0 = creating.Pts[0];
                 switch (tool)
                 {
+                    case Tool.Marker:
+                        // Shift = a straight stroke (e.g. along a line of text)
+                        if (shift) { creating.Pts.Clear(); creating.Pts.Add(p0); creating.Pts.Add(ip); }
+                        else if (Geo.Dist(creating.Pts[n - 1], ip) > 1.2f / Zoom) creating.Pts.Add(ip);
+                        break;
                     case Tool.Freehand:
                         if (Geo.Dist(creating.Pts[n - 1], ip) > 1.2f / Zoom) creating.Pts.Add(ip);
                         break;
@@ -1806,6 +1833,7 @@ namespace SnapMeasure
                             break;
                         }
                     case Tool.Freehand:
+                    case Tool.Marker:
                         if (c.Pts.Count >= 2) AddShape(c);
                         break;
                     case Tool.Bubble:
@@ -1931,7 +1959,7 @@ namespace SnapMeasure
                 case Keys.N: CurrentTool = e.Shift ? Tool.Letter : Tool.Counter; break;
                 case Keys.B: Styles[Tool.Highlight].Mode = (int)HighlightMode.Pixelate; CurrentTool = Tool.Highlight; break;   // pixelate = a highlight mode
                 case Keys.C: CurrentTool = Tool.Crop; break;
-                case Keys.H: CurrentTool = Tool.Highlight; break;
+                case Keys.H: CurrentTool = e.Shift ? Tool.Marker : Tool.Highlight; break;   // Shift+H = highlighter pen
                 case Keys.S: CurrentTool = Tool.Bubble; break;
                 default: return;
             }
@@ -2076,7 +2104,65 @@ namespace SnapMeasure
             else if (dragH.HasValue && dragH.Value.Kind == HKind.Rotate && Selected != null) DrawRotateReadout(g);
             else if (cropDrag >= 0 && CropRect.HasValue) ReadoutBox(g, CropRect.Value.Width + " × " + CropRect.Value.Height + " px");
             else if (guideAxis != 0) ReadoutBox(g, guideOverRuler ? "Release on the ruler to delete" : (guideAxis == 1 ? "Y = " : "X = ") + LenOrPx(guideVal));
+            DrawLoupe(g);
             DrawRulers(g);
+        }
+
+        /// <summary>Tools that place exact points: they get the magnifier at the pointer.</summary>
+        static bool LoupeTool(Tool t)
+        {
+            return t == Tool.Calibrate || t == Tool.Dimension || t == Tool.Area || t == Tool.Polyline || t == Tool.Perimeter ||
+                   t == Tool.Coord || t == Tool.Angle || t == Tool.Cutout;
+        }
+
+        /// <summary>Magnifier for the measuring tools: the picture around the pointer (or the point it snaps to) at 4× the
+        /// current zoom, with a cross-hair on the exact spot and the segment being drawn.</summary>
+        void DrawLoupe(Graphics g)
+        {
+            if (!LoupeTool(tool) || Image == null || panning || editBox != null) return;
+            float rs = RulerSize;
+            if (mouseScr.X < rs || mouseScr.Y < rs || mouseScr.X >= Width || mouseScr.Y >= Height) return;
+            int size = (int)(132 * Dpi);
+            const float mag = 4f;
+            float srcW = size / (Zoom * mag);                    // picture pixels shown across the loupe
+            PointF c = snapPt.HasValue ? snapPt.Value : mouseImg;
+            RectangleF src = new RectangleF(c.X - srcW / 2f, c.Y - srcW / 2f, srcW, srcW);
+            float gap = 26 * Dpi;
+            float x = mouseScr.X + gap, y = mouseScr.Y + gap;
+            if (x + size > Width - 4) x = mouseScr.X - gap - size;
+            if (y + size > Height - 4) y = mouseScr.Y - gap - size;
+            x = Math.Max(rs + 2, x); y = Math.Max(rs + 2, y);
+            RectangleF dst = new RectangleF(x, y, size, size);
+            Func<PointF, PointF> map = q => new PointF(dst.X + (q.X - src.X) / srcW * size, dst.Y + (q.Y - src.Y) / srcW * size);
+
+            GraphicsState st = g.Save();
+            g.SetClip(dst);
+            using (SolidBrush bg = new SolidBrush(Color.FromArgb(60, 60, 60))) g.FillRectangle(bg, dst);
+            // only the part that lies on the picture (no smeared edge pixels)
+            RectangleF onImg = RectangleF.Intersect(src, new RectangleF(0, 0, Image.Width, Image.Height));
+            if (onImg.Width > 0 && onImg.Height > 0)
+            {
+                PointF a = map(onImg.Location), b = map(new PointF(onImg.Right, onImg.Bottom));
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.DrawImage(Image, RectangleF.FromLTRB(a.X, a.Y, b.X, b.Y), onImg, GraphicsUnit.Pixel);
+                g.PixelOffsetMode = PixelOffsetMode.Default;
+            }
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            // the segment being drawn, so you can see where it will land
+            if (creating != null && creating.Pts.Count >= 2)
+                using (Pen sp = new Pen(Color.FromArgb(220, 255, 0, 200), 1.5f))
+                    g.DrawLine(sp, map(creating.Pts[creating.Pts.Count - 2]), map(creating.Pts[creating.Pts.Count - 1]));
+            PointF m = map(c);
+            using (Pen ch = new Pen(Color.FromArgb(230, 255, 40, 40), 1f))
+            {
+                g.DrawLine(ch, dst.X, m.Y, m.X - 5, m.Y); g.DrawLine(ch, m.X + 5, m.Y, dst.Right, m.Y);
+                g.DrawLine(ch, m.X, dst.Y, m.X, m.Y - 5); g.DrawLine(ch, m.X, m.Y + 5, m.X, dst.Bottom);
+            }
+            if (snapPt.HasValue) using (Pen sq = new Pen(Color.Lime, 2f)) g.DrawRectangle(sq, m.X - 6, m.Y - 6, 12, 12);
+            g.Restore(st);
+            using (Pen border = new Pen(Color.White, 2f)) g.DrawRectangle(border, dst.X, dst.Y, dst.Width, dst.Height);
+            using (Pen outer = new Pen(Color.FromArgb(90, 90, 90), 1f)) g.DrawRectangle(outer, dst.X - 1.5f, dst.Y - 1.5f, dst.Width + 3, dst.Height + 3);
         }
 
         string LenOrPx(float v) { return Scale.Calibrated ? Scale.Len(v) : v.ToString("N0") + " px"; }
@@ -2109,11 +2195,14 @@ namespace SnapMeasure
             }
         }
 
+        /// <summary>Guide lines (and their marks on the rulers) are magenta, so they stand out from blue / cyan drawings.</summary>
+        public static readonly Color GuideColor = Color.FromArgb(255, 0, 200);
+
         void DrawGuides(Graphics g)
         {
             if (HGuides.Count + VGuides.Count == 0 && guideAxis == 0) return;
             float rs = RulerSize;
-            using (Pen p = new Pen(Color.FromArgb(220, 0, 170, 255), 1f))
+            using (Pen p = new Pen(Color.FromArgb(230, GuideColor), 1f))
             {
                 for (int i = 0; i < HGuides.Count; i++)
                 {
@@ -2129,7 +2218,7 @@ namespace SnapMeasure
                 }
             }
             if (guideAxis != 0 && !guideOverRuler)
-                using (Pen p = new Pen(Color.FromArgb(255, 0, 140, 255), 1f))
+                using (Pen p = new Pen(GuideColor, 1f))
                 {
                     p.DashStyle = DashStyle.Dash;
                     if (guideAxis == 1) { float y = guideVal * Zoom + Pan.Y; g.DrawLine(p, rs, y, Width, y); }
@@ -2168,7 +2257,7 @@ namespace SnapMeasure
             using (Pen tp = new Pen(ink, 1f))
             using (Pen edge = new Pen(Color.FromArgb(170, 170, 170), 1f))
             using (Pen red = new Pen(Color.FromArgb(230, 30, 30), 2f))
-            using (Pen blue = new Pen(Color.FromArgb(0, 140, 255), 2f))
+            using (Pen blue = new Pen(GuideColor, 2f))           // guide marks on the rulers
             {
                 // top ruler
                 g.FillRectangle(bg, rs, 0, Width - rs, rs);

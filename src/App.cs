@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.2.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -89,6 +89,54 @@ namespace SnapMeasure
 
         /// <summary>Checks for the 1.2 features: coordinates, line styles, cloud callouts, highlight shapes / pixelate,
         /// text boxes and frames, open / closed perimeter, freehand arrows, saving captures without the editor.</summary>
+        /// <summary>Checks for 1.3: highlighter pen, text frame = line width, 8-handle text box, text list edits, capture key names.</summary>
+        static void V13(Canvas cv, string dir, Action<string, string, string> check)
+        {
+            List<Shape> saved = new List<Shape>(cv.Shapes);
+            cv.Shapes.Clear();
+
+            // highlighter pen: a see-through freehand stroke that survives save / paste and has no arrowheads
+            Shape mk = Mk(cv, Tool.Marker, 100, 520, 180, 522, 300, 519);
+            List<Shape> rt = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { mk }));
+            check("Highlighter pen round-trip", rt.Count + "|" + (rt.Count > 0 ? rt[0].IsMarkerPen + "/" + rt[0].StrokeOpacity + "/" + rt[0].HasHeads + "/" + Canvas.ToolFor(rt[0]) : "-"),
+                  "1|True/45/False/Marker");
+
+            // text: line width is the frame; a 1.2 text without a frame loads with width 0, one with a frame keeps its width
+            List<Shape> old = ProjectFile.ShapesFromXml("<shapes><shape kind=\"Text\" stroke=\"FFFF0000\" fill=\"FFFFFFFF\" width=\"2\" text=\"plain\"><p x=\"10\" y=\"10\"/></shape>" +
+                                                        "<shape kind=\"Text\" stroke=\"FFFF0000\" fill=\"FFFFFFFF\" width=\"3\" frame=\"1\" text=\"framed\"><p x=\"10\" y=\"60\"/></shape></shapes>");
+            check("1.2 text frame becomes line width", old.Count + "|" + (old.Count == 2 ? old[0].Width.ToString("F0") + "/" + old[1].Width.ToString("F0") : "-"), "2|0/3");
+            check("New text has no frame", cv.Styles[Tool.Text].Width.ToString("F0"), "0");
+
+            // text box: the bottom-right corner sets width and height; the text wraps and keeps its size
+            Shape tb = Mk(cv, Tool.Text, 100, 100, 260, 100); tb.Text = "Box"; tb.FontSize = 20;
+            Shape tb2 = tb.Clone();
+            ShapeOps.DragHandle(tb2, tb, new Handle(PointF.Empty, HKind.Box, 4), new PointF(364, 202), false);
+            SizeF sz = Renderer.TextSize(tb2);
+            check("Text box corner handle", Renderer.WrapWidth(tb2).ToString("F0") + "x" + sz.Height.ToString("F0") + "|" + tb2.FontSize.ToString("F0"), "260x100|20");
+            check("Text box has 8 handles", ShapeOps.Handles(tb2, 30f).FindAll(h => h.Kind == HKind.Box).Count.ToString(), "8");
+
+            // the editor's text list changes a text as one undo step
+            Shape bub = Mk(cv, Tool.Bubble, 400, 100, 560, 170); bub.Text = "Old";
+            cv.SetShapeText(bub, "New\nline");
+            string after = bub.Text;
+            cv.Undo();
+            check("Text list edit + undo", after.Replace("\n", "/") + "|" + cv.Shapes.Find(x => x.Kind == ShapeKind.Bubble).Text, "New/line|Old");
+
+            // capture keys: shown in words, and keys that would block typing are refused
+            check("Capture key names", Hotkeys.Text(Keys.PrintScreen) + "|" + Hotkeys.Text(Keys.Control | Keys.Shift | Keys.D1) + "|" + Hotkeys.Text(Keys.Alt | Keys.F9),
+                  "PrtSc|Ctrl+Shift+1|Alt+F9");
+            check("Keys that block typing are refused", Hotkeys.Usable(Keys.A) + "|" + Hotkeys.Usable(Keys.Shift | Keys.A) + "|" + Hotkeys.Usable(Keys.Control | Keys.A) + "|" + Hotkeys.Usable(Keys.F8),
+                  "False|False|True|True");
+
+            string err = "ok";
+            try { using (Bitmap fl = cv.Flatten(null)) fl.Save(Path.Combine(dir, "selftest_v13.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
+            check("1.3 shapes draw", err, "ok");
+
+            cv.Shapes.Clear();
+            cv.Shapes.AddRange(saved);
+            cv.Selected = null;
+        }
+
         static void V12(Canvas cv, string dir, Action<string, string, string> check)
         {
             CultureInfo cc = CultureInfo.CurrentCulture;
@@ -129,7 +177,7 @@ namespace SnapMeasure
             SizeF ts = Renderer.TextSize(tx);
             check("Text box wraps at its width", ts.Width.ToString("F0") + "|" + (ts.Height > tx.FontSize * 1.9f), "140|True");
             Shape tx2 = tx.Clone();
-            ShapeOps.DragHandle(tx2, tx, new Handle(PointF.Empty, HKind.Box, 3), new PointF(530, 270), false);
+            ShapeOps.DragHandle(tx2, tx, new Handle(PointF.Empty, HKind.Box, 3), new PointF(534, 270), false);   // handle sits 4 px outside the text
             check("Text box width handle", Renderer.WrapWidth(tx2).ToString("F0"), "200");
             string err = "ok";
             try { using (Bitmap f = cv.Flatten(null)) f.Save(Path.Combine(dir, "selftest_v12.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
@@ -655,6 +703,7 @@ namespace SnapMeasure
 
             V11(cv, dir, check);
             V12(cv, dir, check);
+            V13(cv, dir, check);
 
             // ---- adjustable crop ----
             {
@@ -872,7 +921,7 @@ namespace SnapMeasure
         /// <summary>About = the About tab of the settings window.</summary>
         public static void ShowAbout(IWin32Window owner)
         {
-            Dialogs.ShowSettings(owner, 2);
+            Dialogs.ShowSettings(owner, 3);       // tabs: General, Capture, Output, About
         }
 
         /// <summary>Empty canvas to draw and scribble on.</summary>
@@ -1029,12 +1078,134 @@ namespace SnapMeasure
             base.WndProc(ref m);
         }
 
-        public void Dispose()
+        public void UnregisterAll()
         {
             foreach (int id in ids) Native.UnregisterHotKey(Handle, id);
             ids.Clear();
+        }
+
+        public void Dispose()
+        {
+            UnregisterAll();
             DestroyHandle();
         }
+    }
+
+    /// <summary>The capture keys, two per capture (Settings → General). Stored as numbers in SnapMeasure.ini.</summary>
+    internal static class Hotkeys
+    {
+        public static readonly string[] Ids = { "Region", "Window", "Screen", "LastRegion", "Scrolling", "Text" };
+        public static readonly string[] Labels = { "Capture region / window", "Capture active window", "Capture screen under mouse",
+                                                   "Capture last region again", "Scrolling capture (long page)", "Capture text (OCR)" };
+        const Keys CS = Keys.Control | Keys.Shift;
+        static readonly Keys[] DefMain = { Keys.PrintScreen, Keys.Alt | Keys.PrintScreen, Keys.Control | Keys.PrintScreen, Keys.Shift | Keys.PrintScreen, Keys.None, Keys.None };
+        static readonly Keys[] DefAlt = { CS | Keys.D1, CS | Keys.D2, CS | Keys.D3, CS | Keys.D4, CS | Keys.D5, CS | Keys.D6 };
+
+        /// <summary>Set by the tray: true = let go of every capture key (while a key box is being filled in), false = take them again.</summary>
+        public static Action<bool> Pause;
+
+        static string Key(int i, int slot) { return "Hotkey" + Ids[i] + (slot == 0 ? "" : "2"); }
+
+        public static Keys Default(int i, int slot) { return slot == 0 ? DefMain[i] : DefAlt[i]; }
+
+        public static Keys Get(int i, int slot)
+        {
+            string v = Settings.Get(Key(i, slot), null);
+            int n;
+            if (v == null || !int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) return Default(i, slot);
+            return (Keys)n;
+        }
+
+        public static void Set(int i, int slot, Keys k) { Settings.Set(Key(i, slot), ((int)k).ToString(CultureInfo.InvariantCulture)); }
+
+        public static string Signature()
+        {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < Ids.Length; i++) sb.Append((int)Get(i, 0)).Append(',').Append((int)Get(i, 1)).Append(';');
+            return sb.ToString();
+        }
+
+        public static uint Mods(Keys k)
+        {
+            uint m = 0;
+            if ((k & Keys.Alt) != 0) m |= Native.MOD_ALT;
+            if ((k & Keys.Control) != 0) m |= Native.MOD_CONTROL;
+            if ((k & Keys.Shift) != 0) m |= Native.MOD_SHIFT;
+            return m;
+        }
+
+        /// <summary>A key on its own may only be one that never types text (PrtSc, F1–F24, Pause …).</summary>
+        public static bool Usable(Keys k)
+        {
+            Keys code = k & Keys.KeyCode;
+            if (code == Keys.None || code == Keys.ControlKey || code == Keys.ShiftKey || code == Keys.Menu || code == Keys.LWin || code == Keys.RWin) return false;
+            if ((k & (Keys.Control | Keys.Alt)) != 0) return true;
+            return code == Keys.PrintScreen || code == Keys.Pause || code == Keys.Scroll || (code >= Keys.F1 && code <= Keys.F24);
+        }
+
+        public static string Text(Keys k)
+        {
+            if (k == Keys.None) return "";
+            List<string> p = new List<string>();
+            if ((k & Keys.Control) != 0) p.Add("Ctrl");
+            if ((k & Keys.Shift) != 0) p.Add("Shift");
+            if ((k & Keys.Alt) != 0) p.Add("Alt");
+            Keys code = k & Keys.KeyCode;
+            string name;
+            if (code == Keys.PrintScreen) name = "PrtSc";
+            else if (code >= Keys.D0 && code <= Keys.D9) name = ((int)(code - Keys.D0)).ToString(CultureInfo.InvariantCulture);
+            else if (code >= Keys.NumPad0 && code <= Keys.NumPad9) name = "Num " + (int)(code - Keys.NumPad0);
+            else if (code == Keys.Scroll) name = "Scroll Lock";
+            else name = code.ToString();
+            p.Add(name);
+            return string.Join("+", p.ToArray());
+        }
+    }
+
+    /// <summary>A box that records a key combination: click it and press the keys; Delete or Backspace clears it.</summary>
+    internal class HotkeyBox : TextBox
+    {
+        Keys value;
+        public Label Note;                   // where a refused combination is explained
+
+        public HotkeyBox()
+        {
+            ReadOnly = true;
+            BackColor = SystemColors.Window;
+            Cursor = Cursors.Hand;
+            ShortcutsEnabled = false;
+        }
+
+        public Keys Value { get { return value; } set { this.value = value; Text = value == Keys.None ? "(none)" : Hotkeys.Text(value); } }
+
+        protected override void OnEnter(EventArgs e) { base.OnEnter(e); if (Hotkeys.Pause != null) Hotkeys.Pause(true); BackColor = Color.FromArgb(255, 250, 220); }
+        protected override void OnLeave(EventArgs e) { base.OnLeave(e); if (Hotkeys.Pause != null) Hotkeys.Pause(false); BackColor = SystemColors.Window; }
+
+        protected override bool IsInputKey(Keys keyData) { return (keyData & Keys.KeyCode) != Keys.Tab || (keyData & (Keys.Control | Keys.Alt)) != 0; }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            e.SuppressKeyPress = true; e.Handled = true;
+            Take(e.KeyData);
+        }
+
+        // Print Screen only sends key-up
+        protected override void OnKeyUp(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.PrintScreen) Take(e.KeyData);
+            e.Handled = true;
+        }
+
+        void Take(Keys k)
+        {
+            Keys code = k & Keys.KeyCode;
+            if ((code == Keys.Delete || code == Keys.Back) && (k & Keys.Modifiers) == 0) { Value = Keys.None; Say(""); return; }
+            if (code == Keys.ControlKey || code == Keys.ShiftKey || code == Keys.Menu) return;     // still choosing modifiers
+            if (!Hotkeys.Usable(k)) { Say(Hotkeys.Text(k) + " would block typing – add Ctrl or Alt, or use PrtSc / F-keys."); return; }
+            Value = k; Say("");
+        }
+
+        void Say(string s) { if (Note != null) Note.Text = s; }
     }
 
     internal class TrayContext : ApplicationContext
@@ -1052,16 +1223,22 @@ namespace SnapMeasure
             ni.Visible = true;
 
             ContextMenuStrip menu = new ContextMenuStrip();
-            ToolStripMenuItem region = Item(menu, "Capture region / window", "PrtSc", () => App.CaptureRegion());
+            ToolStripMenuItem region = Item(menu, "Capture region / window", "", () => App.CaptureRegion());
             region.Font = new Font(region.Font, FontStyle.Bold);
             region.Image = Icons.Cmd("region", 16);
-            Item(menu, "Capture active window", "Alt+PrtSc", () => App.CaptureActiveWindow(), false).Image = Icons.Cmd("window", 16);
-            Item(menu, "Capture screen under mouse", "Ctrl+PrtSc", () => App.CaptureScreenUnderCursor()).Image = Icons.Cmd("screen", 16);
+            ToolStripMenuItem win = Item(menu, "Capture active window", "", () => App.CaptureActiveWindow(), false);
+            win.Image = Icons.Cmd("window", 16);
+            ToolStripMenuItem scr = Item(menu, "Capture screen under mouse", "", () => App.CaptureScreenUnderCursor());
+            scr.Image = Icons.Cmd("screen", 16);
             Item(menu, "Capture all screens", "", () => App.CaptureAllScreens()).Image = Icons.Cmd("allscreens", 16);
-            Item(menu, "Capture last region again", "Shift+PrtSc", () => App.CaptureLastRegion()).Image = Icons.Cmd("lastregion", 16);
+            ToolStripMenuItem last = Item(menu, "Capture last region again", "", () => App.CaptureLastRegion());
+            last.Image = Icons.Cmd("lastregion", 16);
             Item(menu, "Capture region in 3 seconds", "", () => App.Later(3000, App.CaptureRegion)).Image = Icons.Cmd("timer", 16);
-            Item(menu, "Scrolling capture (long page)", "Ctrl+Shift+5", () => App.CaptureScrolling()).Image = Icons.Cmd("scroll", 16);
-            Item(menu, "Capture text (OCR) to clipboard", "Ctrl+Shift+6", CaptureTextNow).Image = Icons.Cmd("textcap", 16);
+            ToolStripMenuItem scroll = Item(menu, "Scrolling capture (long page)", "", () => App.CaptureScrolling());
+            scroll.Image = Icons.Cmd("scroll", 16);
+            ToolStripMenuItem text = Item(menu, "Capture text (OCR) to clipboard", "", CaptureTextNow);
+            text.Image = Icons.Cmd("textcap", 16);
+            keyItems = new ToolStripMenuItem[] { region, win, scr, last, scroll, text };
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "New blank canvas…", "", () => App.NewBlankCanvas(null), false).Image = Icons.Cmd("blank", 16);
             Item(menu, "Open image, PDF or project…", "", OpenDialog, false).Image = Icons.Cmd("open", 16);
@@ -1086,22 +1263,47 @@ namespace SnapMeasure
 
             hk = new HotkeyWindow();
             hk.Pressed += id => { Action a; if (actions.TryGetValue(id, out a)) a(); };
-            Reg(1, 0, Keys.PrintScreen, "PrtSc", App.CaptureRegion);
-            Reg(2, Native.MOD_ALT, Keys.PrintScreen, "Alt+PrtSc", App.CaptureActiveWindow);
-            Reg(3, Native.MOD_CONTROL, Keys.PrintScreen, "Ctrl+PrtSc", App.CaptureScreenUnderCursor);
-            Reg(4, Native.MOD_SHIFT, Keys.PrintScreen, "Shift+PrtSc", App.CaptureLastRegion);
-            Reg(5, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D1, "Ctrl+Shift+1", App.CaptureRegion);
-            Reg(6, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D2, "Ctrl+Shift+2", App.CaptureActiveWindow);
-            Reg(7, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D3, "Ctrl+Shift+3", App.CaptureScreenUnderCursor);
-            Reg(8, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D4, "Ctrl+Shift+4", App.CaptureLastRegion);
-            Reg(9, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D5, "Ctrl+Shift+5", App.CaptureScrolling);
-            Reg(10, Native.MOD_CONTROL | Native.MOD_SHIFT, Keys.D6, "Ctrl+Shift+6", CaptureTextNow);
+            RegisterKeys();
+            // a key box in Settings needs the keys itself; another SnapMeasure window may change them in the settings file
+            Hotkeys.Pause = p => { if (p) hk.UnregisterAll(); else RegisterKeys(); };
+            keyWatch = new System.Windows.Forms.Timer();
+            keyWatch.Interval = 2000;
+            keyWatch.Tick += (s, e) => { if (Hotkeys.Signature() != keySig) RegisterKeys(); };
+            keyWatch.Start();
 
+            string first = Hotkeys.Text(Hotkeys.Get(0, 0)), alt = Hotkeys.Text(Hotkeys.Get(0, 1));
             string msg = failedKeys.Count == 0
-                ? "Press Print Screen (or Ctrl+Shift+1) to capture. Right-click this icon for more."
+                ? "Press " + (first.Length > 0 ? first : alt) + " to capture. Right-click this icon for more."
                 : "Ready. These keys are taken by another app (e.g. Windows Snipping Tool or Greenshot): " + string.Join(", ", failedKeys.ToArray()) +
-                  ".\nUse Ctrl+Shift+1 to capture instead.";
+                  ".\nPick other keys in Settings → General.";
             ni.ShowBalloonTip(5000, "SnapMeasure is running", msg, failedKeys.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
+        }
+
+        ToolStripMenuItem[] keyItems;
+        System.Windows.Forms.Timer keyWatch;
+        string keySig = "";
+
+        /// <summary>(Re)registers the capture keys from Settings → General and shows them in the tray menu.</summary>
+        void RegisterKeys()
+        {
+            hk.UnregisterAll();
+            actions.Clear(); okKeys.Clear(); failedKeys.Clear();
+            Action[] runs = { App.CaptureRegion, App.CaptureActiveWindow, App.CaptureScreenUnderCursor, App.CaptureLastRegion, App.CaptureScrolling, CaptureTextNow };
+            int id = 1;
+            for (int i = 0; i < Hotkeys.Ids.Length; i++)
+            {
+                string shown = "";
+                for (int slot = 0; slot < 2; slot++)
+                {
+                    Keys k = Hotkeys.Get(i, slot);
+                    if (k == Keys.None || !Hotkeys.Usable(k)) continue;
+                    Reg(id++, Hotkeys.Mods(k), k & Keys.KeyCode, Hotkeys.Text(k), runs[i]);
+                    if (shown.Length == 0) shown = Hotkeys.Text(k);
+                }
+                if (keyItems != null && i < keyItems.Length) keyItems[i].ShortcutKeyDisplayString = shown;
+            }
+            keySig = Hotkeys.Signature();
+            App.FailedHotkeys = string.Join(", ", failedKeys.ToArray());
         }
 
         ToolStripMenuItem Item(ContextMenuStrip m, string text, string keys, Action a, bool delayed = true)
@@ -1166,6 +1368,8 @@ namespace SnapMeasure
                 f.Close();
                 if (!f.IsDisposed && f.Visible) return;   // user cancelled closing an unsaved editor
             }
+            keyWatch.Stop(); keyWatch.Dispose();
+            Hotkeys.Pause = null;
             hk.Dispose();
             ni.Visible = false;
             ni.Dispose();
@@ -1178,13 +1382,13 @@ namespace SnapMeasure
         public static string Shortcuts(string failed)
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("CAPTURE");
-            sb.AppendLine("  PrtSc / Ctrl+Shift+1\tRegion (or click a window)");
-            sb.AppendLine("  Alt+PrtSc / Ctrl+Shift+2\tActive window");
-            sb.AppendLine("  Ctrl+PrtSc / Ctrl+Shift+3\tScreen under mouse");
-            sb.AppendLine("  Shift+PrtSc / Ctrl+Shift+4\tLast region again");
-            sb.AppendLine("  Ctrl+Shift+5\t\t\tScrolling capture (Esc = stop)");
-            sb.AppendLine("  Ctrl+Shift+6\t\t\tCapture text (OCR) to the clipboard");
+            sb.AppendLine("CAPTURE   (your keys – change them in Settings → General)");
+            for (int i = 0; i < Hotkeys.Ids.Length; i++)
+            {
+                string a = Hotkeys.Text(Hotkeys.Get(i, 0)), b = Hotkeys.Text(Hotkeys.Get(i, 1));
+                string keys = a.Length > 0 && b.Length > 0 ? a + " / " + b : (a + b);
+                sb.AppendLine("  " + (keys.Length > 0 ? keys : "(no key)").PadRight(28) + Hotkeys.Labels[i] + (i == 4 ? "  (Esc = stop)" : ""));
+            }
             if (!string.IsNullOrEmpty(failed)) sb.AppendLine("  Not available (used by another app): " + failed);
             sb.AppendLine();
             sb.AppendLine("MEASURE & QUANTIFY");
@@ -1193,7 +1397,7 @@ namespace SnapMeasure
             sb.AppendLine("  Double-click a measurement or marker = label it · panel → Copy measurements (Excel)");
             sb.AppendLine();
             sb.AppendLine("MARK UP");
-            sb.AppendLine("  P Polygon   H Highlight   Y Text markup (underline / strike / highlight)");
+            sb.AppendLine("  P Polygon   H Highlight   Shift+H Highlighter pen   Y Text markup (underline / strike / highlight)");
             sb.AppendLine("  R Rectangle   E Ellipse   U Revision cloud   L Line   A Arrow   F Freehand");
             sb.AppendLine("  T Text   S Speech bubble   Z Stamp   O Note (not printed)");
             sb.AppendLine("  Right-click a line / arrow / dimension = start & end heads");
@@ -1664,7 +1868,7 @@ namespace SnapMeasure
         }
 
         /// <summary>Output settings: save folder, file name pattern, format, quality, and what else to do on save.</summary>
-        public static void OutputSettings(IWin32Window owner) { ShowSettings(owner, 1); }
+        public static void OutputSettings(IWin32Window owner) { ShowSettings(owner, 2); }
 
         /// <summary>
         /// Settings window: Capture (what PrtSc does, mouse pointer, sound, notifications, magnifier, delay),
@@ -1681,9 +1885,49 @@ namespace SnapMeasure
                 f.ShowIcon = true;
                 TabControl tabs = new TabControl();
                 tabs.SetBounds(S(8), S(8), S(544), S(408));
-                TabPage tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tAbout = new TabPage("About");
-                tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tAbout);
+                TabPage tGen = new TabPage("General"), tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tAbout = new TabPage("About");
+                tabs.TabPages.Add(tGen); tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tAbout);
                 f.Controls.Add(tabs);
+                f.FormClosed += (s, e) => { if (Hotkeys.Pause != null) Hotkeys.Pause(false); };   // never leave the keys switched off
+
+                // ---------- General: capture keys and icon size ----------
+                HotkeyBox[,] keyBox = new HotkeyBox[Hotkeys.Ids.Length, 2];
+                ComboBox iconSize = new ComboBox();
+                {
+                    Label intro = new Label(); intro.AutoSize = true; intro.MaximumSize = new Size(S(510), 0); intro.Location = new Point(S(12), S(12));
+                    intro.Text = "Capture keys – click a box and press the keys you want. Delete or Backspace clears it.";
+                    Label hk1 = new Label(); hk1.Text = "Key"; hk1.AutoSize = true; hk1.Location = new Point(S(232), S(40)); hk1.Font = new Font(f.Font, FontStyle.Bold);
+                    Label hk2 = new Label(); hk2.Text = "Also"; hk2.AutoSize = true; hk2.Location = new Point(S(382), S(40)); hk2.Font = new Font(f.Font, FontStyle.Bold);
+                    Label note = new Label(); note.AutoSize = true; note.MaximumSize = new Size(S(510), 0); note.ForeColor = Color.FromArgb(170, 60, 0);
+                    note.Location = new Point(S(12), S(62 + Hotkeys.Ids.Length * 30 + 4));
+                    tGen.Controls.AddRange(new Control[] { intro, hk1, hk2, note });
+                    for (int i = 0; i < Hotkeys.Ids.Length; i++)
+                    {
+                        Label l = new Label(); l.Text = Hotkeys.Labels[i]; l.AutoSize = true; l.Location = new Point(S(12), S(64 + i * 30));
+                        tGen.Controls.Add(l);
+                        for (int slot = 0; slot < 2; slot++)
+                        {
+                            HotkeyBox b = new HotkeyBox();
+                            b.SetBounds(S(230 + slot * 150), S(60 + i * 30), S(140), S(24));
+                            b.Value = Hotkeys.Get(i, slot);
+                            b.Note = note;
+                            keyBox[i, slot] = b;
+                            tGen.Controls.Add(b);
+                        }
+                    }
+                    Button reset = new Button(); reset.Text = "Default keys"; reset.SetBounds(S(380), S(62 + Hotkeys.Ids.Length * 30 + 26), S(140), S(26));
+                    reset.Click += (s, e) => { for (int i = 0; i < Hotkeys.Ids.Length; i++) for (int slot = 0; slot < 2; slot++) keyBox[i, slot].Value = Hotkeys.Default(i, slot); note.Text = ""; };
+                    Label sepG = new Label(); sepG.BorderStyle = BorderStyle.Fixed3D; sepG.SetBounds(S(12), S(300), S(510), 2);
+                    Label li = new Label(); li.Text = "Tool icon size"; li.AutoSize = true; li.Location = new Point(S(12), S(318));
+                    iconSize.DropDownStyle = ComboBoxStyle.DropDownList;
+                    iconSize.Items.AddRange(new object[] { "Small (16 px)", "Medium (20 px)", "Large (24 px)" });
+                    int curIcon = SnapMeasure.Settings.GetInt("IconSize", 20);
+                    iconSize.SelectedIndex = curIcon <= 16 ? 0 : (curIcon >= 24 ? 2 : 1);
+                    iconSize.SetBounds(S(230), S(314), S(140), S(26));
+                    Label lin = new Label(); lin.Text = "Editor windows opened after this use the new size."; lin.AutoSize = true;
+                    lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(12), S(346));
+                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin });
+                }
 
                 // ---------- Capture ----------
                 {
@@ -1792,6 +2036,13 @@ namespace SnapMeasure
                     iss.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.IssuesUrl);
                     Label us = new Label(); us.AutoSize = true; us.ForeColor = Color.FromArgb(90, 90, 90); us.Location = new Point(S(84), S(126));
                     upd.LinkClicked += (s, e) => { us.Text = "Checking GitHub…"; UpdateCheck.Start(f, m => us.Text = m); };
+                    if (AppInfo.IsStoreApp)
+                    {
+                        // the Microsoft Store keeps this copy up to date
+                        upd.Visible = false;
+                        us.Text = "Installed from the Microsoft Store – updates arrive through the Store.";
+                        iss.Location = upd.Location;
+                    }
                     TextBox keys = new TextBox(); keys.Multiline = true; keys.ReadOnly = true; keys.ScrollBars = ScrollBars.Vertical;
                     keys.BackColor = Color.FromArgb(247, 248, 250); keys.Font = Native.UiFont("Consolas", 8.5f, k);
                     keys.Text = AboutText.Shortcuts(App.FailedHotkeys).Replace("\r\n", "\n").Replace("\n", "\r\n");
@@ -1799,10 +2050,27 @@ namespace SnapMeasure
                     foreach (Control c in new Control[] { logo, name, sub, repo, upd, iss, us, keys }) tAbout.Controls.Add(c);
                 }
 
-                tabs.SelectedIndex = Math.Max(0, Math.Min(2, startTab));
+                tabs.SelectedIndex = Math.Max(0, Math.Min(tabs.TabCount - 1, startTab));
                 Buttons(f, k);
                 while (f.ShowDialog(owner) == DialogResult.OK)
                 {
+                    // the same key may not start two different captures
+                    Dictionary<Keys, string> used = new Dictionary<Keys, string>();
+                    string clash = null;
+                    for (int i = 0; i < Hotkeys.Ids.Length && clash == null; i++)
+                        for (int slot = 0; slot < 2; slot++)
+                        {
+                            Keys kk = keyBox[i, slot].Value;
+                            if (kk == Keys.None) continue;
+                            string other;
+                            if (used.TryGetValue(kk, out other) && other != Hotkeys.Labels[i]) { clash = Hotkeys.Text(kk) + " is set for both \"" + other + "\" and \"" + Hotkeys.Labels[i] + "\"."; break; }
+                            used[kk] = Hotkeys.Labels[i];
+                        }
+                    if (clash != null) { tabs.SelectedTab = tGen; MessageBox.Show(f, clash + "\n\nGive each capture its own keys.", "Settings"); continue; }
+                    for (int i = 0; i < Hotkeys.Ids.Length; i++)
+                        for (int slot = 0; slot < 2; slot++) Hotkeys.Set(i, slot, keyBox[i, slot].Value);
+                    SnapMeasure.Settings.Set("IconSize", (iconSize.SelectedIndex == 0 ? 16 : iconSize.SelectedIndex == 2 ? 24 : 20).ToString(CultureInfo.InvariantCulture));
+
                     string dir = folder.Text.Trim();
                     bool okDir = false;
                     try { okDir = dir.Length > 0 && Path.IsPathRooted(dir); if (okDir) Directory.CreateDirectory(dir); }
@@ -2144,6 +2412,19 @@ namespace SnapMeasure
                             }
                             break;
                         case Tool.Freehand: g.DrawBezier(pr, 4, 22, 11, 2, 18, 32, 28, 8); break;
+                        case Tool.Marker:
+                            {
+                                // a chisel highlighter over a yellow see-through stroke, with a small T: it marks text
+                                using (Font tf = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel))
+                                using (SolidBrush tb = new SolidBrush(Color.FromArgb(60, 60, 60)))
+                                    g.DrawString("T", tf, tb, new RectangleF(0, 0, 15, 18), sf);
+                                using (Pen hp = new Pen(Color.FromArgb(190, 255, 215, 0), 7f)) { hp.StartCap = hp.EndCap = LineCap.Square; g.DrawLine(hp, 4, 26, 16, 26); }
+                                PointF[] body = { new PointF(15, 17), new PointF(24, 8), new PointF(29, 13), new PointF(20, 22) };
+                                using (SolidBrush bb = new SolidBrush(Color.FromArgb(70, 70, 70))) g.FillPolygon(bb, body);
+                                PointF[] nib = { new PointF(15, 17), new PointF(20, 22), new PointF(14, 25), new PointF(12, 23) };
+                                using (SolidBrush nb = new SolidBrush(Color.FromArgb(250, 190, 0))) g.FillPolygon(nb, nib);
+                                break;
+                            }
                         case Tool.Text: using (Font mkFont = new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("T", mkFont, bi, new RectangleF(0, 0, 32, 32), sf); break;
                         case Tool.Polygon:
                             {

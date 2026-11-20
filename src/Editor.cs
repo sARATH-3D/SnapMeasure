@@ -43,10 +43,11 @@ namespace SnapMeasure
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
         CheckBox cBold, cItalic, cAlignL, cAlignC, cAlignR;
-        ToolStripButton bRulers, bPanel;
+        ToolStripMenuItem bRulers, bPanel;
         ToolStripStatusLabel lVersion;
         readonly ToolTip tip = new ToolTip();
-        ListView lv;
+        ListView lv, lvText;
+        bool textListEditing;
         bool loading, dirty;
         string lastSaved;
         DateTime lastStyleUndo = DateTime.MinValue;
@@ -59,6 +60,7 @@ namespace SnapMeasure
             { Tool.Line, "Drag to draw a line · Shift = 15° steps · snaps to existing points (Alt = no snap)" },
             { Tool.Arrow, "Drag to draw an arrow · Shift = 15° steps" },
             { Tool.Freehand, "Drag to draw freehand" },
+            { Tool.Marker, "Highlighter pen: drag over the text to mark · Shift = straight stroke · colour, width and opacity on the style bar" },
             { Tool.Text, "Click and type directly · Enter = new line · click outside or Ctrl+Enter = done · Esc = cancel" },
             { Tool.Polygon, "Click to add corners (any number) · double-click / Enter / click first point = finish · Backspace = remove last · Shift = 15° steps" },
             { Tool.Dimension, "Drag between two points to dimension · Shift = 15° steps · then drag the yellow handle to offset the dimension line" },
@@ -236,43 +238,42 @@ namespace SnapMeasure
             bar.GripStyle = ToolStripGripStyle.Hidden;
             bar.Padding = new Padding(S(4), S(2), S(4), S(2));
             bar.RenderMode = ToolStripRenderMode.System;
-            bar.ImageScalingSize = new Size(S(16), S(16));
-            Ic(AddBtn(bar, "New capture", "Capture a new region (Ctrl+N)", (s, e) => NewCapture()), "new");
-            Ic(AddBtn(bar, "Blank", "New empty canvas to draw and scribble on", (s, e) => App.NewBlankCanvas(this)), "blank");
-            Ic(AddBtn(bar, "Open…", "Open an image or .snapm project (Ctrl+O)", (s, e) => OpenFile()), "open");
+            bar.ImageScalingSize = new Size(CmdIcon, CmdIcon);
+            // a tidier top row: the main command on each button, related commands in its drop-down (▾)
+            ToolStripSplitButton bNew = Split("New capture", "Capture a new region (Ctrl+N) · ▾ = blank canvas", "new", (s, e) => NewCapture());
+            MenuItem(bNew, "Blank canvas…", "blank", (s, e) => App.NewBlankCanvas(this));
+            Ic(AddBtn(bar, "Open…", "Open an image, PDF page or .snapm project (Ctrl+O)", (s, e) => OpenFile()), "open");
             bar.Items.Add(new ToolStripSeparator());
-            Ic(AddBtn(bar, "Save", "Save the picture (and an editable .snapm) to your save folder (Ctrl+S) – folder, name and format in Settings", (s, e) => QuickSave()), "save");
-            Ic(AddBtn(bar, "Save as…", "PNG / JPG / BMP, or an editable .snapm project (Ctrl+Shift+S)", (s, e) => SaveAs()), "saveas");
-            Ic(AddBtn(bar, "Copy", "Copy the annotated image to the clipboard (Ctrl+C with nothing selected)", (s, e) => CopyImage()), "copy");
-            IconOnly(AddBtn(bar, "Copy text", "Copy text: all the text in the picture (Windows text recognition) · to pick an area use the OCR tool (Shift+T)", (s, e) => CopyText(null)), "ocr");
-            Ic(AddBtn(bar, "Pin", "Pin the image on screen, always on top (Ctrl+P)", (s, e) => Pin()), "pin");
+            ToolStripSplitButton bSave = Split("Save", "Save the picture (and an editable .snapm) to your save folder (Ctrl+S) · ▾ = Save as", "save", (s, e) => QuickSave());
+            MenuItem(bSave, "Save as…   (Ctrl+Shift+S)", "saveas", (s, e) => SaveAs());
+            ToolStripSplitButton bCopy = Split("Copy", "Copy the marked-up picture (Ctrl+C with nothing selected) · ▾ = copy text or measurements", "copy", (s, e) => CopyImage());
+            MenuItem(bCopy, "Copy picture", "copy", (s, e) => CopyImage());
+            MenuItem(bCopy, "Copy text from the picture (OCR)", "ocr", (s, e) => CopyText(null));
+            MenuItem(bCopy, "Copy all typed text", null, (s, e) => CopyAllText());
+            MenuItem(bCopy, "Copy measurements (for Excel)", null, (s, e) => CopyMeasurements());
+            Ic(AddBtn(bar, "Pin", "Pin the picture on screen, always on top (Ctrl+P)", (s, e) => Pin()), "pin");
             bar.Items.Add(new ToolStripSeparator());
-            bUndo = Ic(AddBtn(bar, "Undo", "Undo (Ctrl+Z)", (s, e) => cv.Undo()), "undo");
-            bRedo = Ic(AddBtn(bar, "Redo", "Redo (Ctrl+Y)", (s, e) => cv.Redo()), "redo");
+            bUndo = IconOnly(AddBtn(bar, "Undo", "Undo (Ctrl+Z)", (s, e) => cv.Undo()), "undo");
+            bRedo = IconOnly(AddBtn(bar, "Redo", "Redo (Ctrl+Y)", (s, e) => cv.Redo()), "redo");
             bar.Items.Add(new ToolStripSeparator());
 
-
-            ToolStripDropDownButton rot = new ToolStripDropDownButton("Rotate");
-            rot.Image = Icons.Cmd("rotate", S(16));
-            rot.AutoToolTip = false; // a tooltip would cover the first menu items
-            rot.DropDownItems.Add("Rotate right 90°", null, (s, e) => cv.ImageOp("rotcw"));
-            rot.DropDownItems.Add("Rotate left 90°", null, (s, e) => cv.ImageOp("rotccw"));
-            rot.DropDownItems.Add(new ToolStripSeparator());
-            rot.DropDownItems.Add("Mirror horizontally", null, (s, e) => cv.ImageOp("fliph"));
-            rot.DropDownItems.Add("Mirror vertically", null, (s, e) => cv.ImageOp("flipv"));
-            rot.DropDown.Font = Font;
-            bar.Items.Add(rot);
-            ToolStripDropDownButton fx = new ToolStripDropDownButton("Effects");
-            fx.Image = Icons.Cmd("effects", S(16));
-            fx.AutoToolTip = false;
-            fx.DropDownItems.Add("Border", null, (s, e) => cv.ImageOp("border"));
-            fx.DropDownItems.Add("Drop shadow", null, (s, e) => cv.ImageOp("shadow"));
-            fx.DropDownItems.Add("Torn edge", null, (s, e) => cv.ImageOp("torn"));
-            fx.DropDownItems.Add(new ToolStripSeparator());
-            fx.DropDownItems.Add("Grayscale", null, (s, e) => cv.ImageOp("gray"));
-            fx.DropDownItems.Add("Invert colours", null, (s, e) => cv.ImageOp("invert"));
-            fx.DropDown.Font = Font;
-            bar.Items.Add(fx);
+            ToolStripDropDownButton img = new ToolStripDropDownButton("Image");
+            img.Image = Icons.Cmd("rotate", CmdIcon);
+            img.ImageScaling = ToolStripItemImageScaling.None;
+            img.AutoToolTip = false;       // a tooltip would cover the first menu items
+            img.DropDown.Font = Font;
+            MenuItem(img, "Rotate right 90°", null, (s, e) => cv.ImageOp("rotcw"));
+            MenuItem(img, "Rotate left 90°", null, (s, e) => cv.ImageOp("rotccw"));
+            MenuItem(img, "Mirror horizontally", null, (s, e) => cv.ImageOp("fliph"));
+            MenuItem(img, "Mirror vertically", null, (s, e) => cv.ImageOp("flipv"));
+            img.DropDownItems.Add(new ToolStripSeparator());
+            MenuItem(img, "Border", "effects", (s, e) => cv.ImageOp("border"));
+            MenuItem(img, "Drop shadow", null, (s, e) => cv.ImageOp("shadow"));
+            MenuItem(img, "Torn edge", null, (s, e) => cv.ImageOp("torn"));
+            img.DropDownItems.Add(new ToolStripSeparator());
+            MenuItem(img, "Grayscale", null, (s, e) => cv.ImageOp("gray"));
+            MenuItem(img, "Invert colours", null, (s, e) => cv.ImageOp("invert"));
+            bar.Items.Add(img);
             bar.Items.Add(new ToolStripSeparator());
 
             IconOnly(AddBtn(bar, "Zoom out", "Zoom out (Ctrl+−, or Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(-1)), "zoomout");
@@ -280,17 +281,57 @@ namespace SnapMeasure
             bar.Items.Add(lZoomBar);
             IconOnly(AddBtn(bar, "Zoom in", "Zoom in (Ctrl++, or Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(1)), "zoomin");
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
-            Ic(AddBtn(bar, "1:1", "Actual pixels (Ctrl+1)", (s, e) => cv.ZoomCenter(1f)), "actual");
             bar.Items.Add(new ToolStripSeparator());
-            bRulers = IconOnly(AddBtn(bar, "Rulers", "Show rulers – drag from a ruler to add a guide, drag a guide back onto the ruler to remove it (Ctrl+R)", (s, e) => ToggleRulers()), "rulers");
+
+            ToolStripDropDownButton view = new ToolStripDropDownButton("View");
+            view.Image = Icons.Cmd("panel", CmdIcon);
+            view.ImageScaling = ToolStripItemImageScaling.None;
+            view.AutoToolTip = false;
+            view.DropDown.Font = Font;
+            MenuItem(view, "Actual pixels 1:1   (Ctrl+1)", "actual", (s, e) => cv.ZoomCenter(1f));
+            view.DropDownItems.Add(new ToolStripSeparator());
+            bRulers = MenuItem(view, "Rulers   (Ctrl+R)", "rulers", (s, e) => ToggleRulers());
             bRulers.Checked = cv.ShowRulers;
-            IconOnly(AddBtn(bar, "Ruler", "On-screen ruler: floats over any app (drag to move, green knob to rotate)", (s, e) => Overlays.ShowRuler()), "ruler");
-            IconOnly(AddBtn(bar, "Protractor", "On-screen protractor: floats over any app (drag the arm knobs to measure an angle)", (s, e) => Overlays.ShowProtractor()), "protractor");
-            bar.Items.Add(new ToolStripSeparator());
-            bPanel = Ic(AddBtn(bar, "Panel", "Show or hide the scale & measurements panel on the right (F4)", (s, e) => TogglePanel()), "panel");
+            bPanel = MenuItem(view, "Scale & measurements panel   (F4)", "panel", (s, e) => TogglePanel());
             bPanel.Checked = Settings.GetBool("ShowPanel", true);
-            Ic(AddBtn(bar, "Settings", "Settings: what a capture does, save folder, file name, format, quality – and About", (s, e) => Dialogs.ShowSettings(this, 0)), "settings");
+            view.DropDownItems.Add(new ToolStripSeparator());
+            MenuItem(view, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler());
+            MenuItem(view, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor());
+            bar.Items.Add(view);
+            bar.Items.Add(new ToolStripSeparator());
+            Ic(AddBtn(bar, "Settings", "Settings: capture keys, what a capture does, save folder, file name, format – and About", (s, e) => Dialogs.ShowSettings(this, 0)), "settings");
             IconOnly(AddBtn(bar, "About", "About SnapMeasure, shortcuts and the GitHub page", (s, e) => App.ShowAbout(this)), "help");
+        }
+
+        /// <summary>Top-bar icon size in pixels (Settings → General → icon size, scaled for the screen).</summary>
+        int CmdIcon { get { return S(Math.Max(12, IconSize - 4)); } }
+
+        /// <summary>Tool-column icon size chosen in Settings (16, 20 or 24 at 100 % scaling).</summary>
+        static int IconSize
+        {
+            get { int v = Settings.GetInt("IconSize", 20); return v <= 16 ? 16 : (v >= 24 ? 24 : 20); }
+        }
+
+        ToolStripSplitButton Split(string text, string tip, string icon, EventHandler h)
+        {
+            ToolStripSplitButton b = new ToolStripSplitButton(text);
+            b.ToolTipText = tip;
+            b.Image = Icons.Cmd(icon, CmdIcon);
+            b.ImageScaling = ToolStripItemImageScaling.None;
+            b.DisplayStyle = ToolStripItemDisplayStyle.ImageAndText;
+            b.ButtonClick += h;
+            b.DropDown.Font = Font;
+            bar.Items.Add(b);
+            return b;
+        }
+
+        ToolStripMenuItem MenuItem(ToolStripDropDownItem parent, string text, string icon, EventHandler h)
+        {
+            ToolStripMenuItem m = new ToolStripMenuItem(text);
+            if (icon != null) m.Image = Icons.Cmd(icon, S(16));
+            m.Click += h;
+            parent.DropDownItems.Add(m);
+            return m;
         }
 
         void TogglePanel()
@@ -302,7 +343,7 @@ namespace SnapMeasure
 
         ToolStripButton Ic(ToolStripButton b, string name)
         {
-            b.Image = Icons.Cmd(name, S(16));
+            b.Image = Icons.Cmd(name, CmdIcon);
             b.ImageScaling = ToolStripItemImageScaling.None;
             b.DisplayStyle = ToolStripItemDisplayStyle.ImageAndText;
             b.TextImageRelation = TextImageRelation.ImageBeforeText;
@@ -330,10 +371,10 @@ namespace SnapMeasure
             toolBar.Font = Font;
             toolBar.Dock = DockStyle.Left;
             toolBar.AutoSize = false;
-            toolBar.Width = S(52);
+            toolBar.Width = S(IconSize + 32);
             toolBar.GripStyle = ToolStripGripStyle.Hidden;
             toolBar.LayoutStyle = ToolStripLayoutStyle.VerticalStackWithOverflow;
-            toolBar.ImageScalingSize = new Size(S(20), S(20));
+            toolBar.ImageScalingSize = new Size(S(IconSize), S(IconSize));
             toolBar.Padding = new Padding(S(2), S(3), S(2), S(3));
             toolBar.RenderMode = ToolStripRenderMode.System;
             AddTool(Tool.Select, "Select / move / rotate (V)");
@@ -350,6 +391,7 @@ namespace SnapMeasure
             AddTool(Tool.Letter, "Letter marker A, B, C … – counts (Shift+N)");
             AddHeading("MARK-UP");
             AddTool(Tool.Highlight, "Highlight: marker / spotlight / grayscale / magnify / pixelate, in several shapes (H, B = pixelate)");
+            AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
             AddTool(Tool.Markup, "Text markup: underline / strike out / highlight text (Y)");
             AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
             AddTool(Tool.Rect, "Rectangle (R)");
@@ -375,7 +417,7 @@ namespace SnapMeasure
             l.Font = Native.UiFont("Segoe UI", 5.8f, k, FontStyle.Bold);
             l.ForeColor = Color.FromArgb(110, 120, 135);
             l.AutoSize = false;
-            l.Size = new Size(S(48), S(13));
+            l.Size = new Size(S(IconSize + 28), S(13));
             l.TextAlign = ContentAlignment.BottomCenter;
             l.Margin = new Padding(0, S(4), 0, 0);
             toolBar.Items.Add(l);
@@ -384,11 +426,11 @@ namespace SnapMeasure
         void AddTool(Tool t, string tip)
         {
             ToolStripButton b = new ToolStripButton();
-            b.Image = Icons.Make(t, S(20));
+            b.Image = Icons.Make(t, S(IconSize));
             b.ImageScaling = ToolStripItemImageScaling.None;
             b.DisplayStyle = ToolStripItemDisplayStyle.Image;
             b.AutoSize = false;
-            b.Size = new Size(S(44), S(23));
+            b.Size = new Size(S(IconSize + 24), S(IconSize + 3));
             b.ToolTipText = tip;
             b.Margin = new Padding(0, S(1), 0, S(1));
             b.Click += (s, e) => { cv.CurrentTool = t; cv.Focus(); };
@@ -879,7 +921,7 @@ namespace SnapMeasure
             lv.FullRowSelect = true;
             lv.HideSelection = false;
             lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-            lv.Size = new Size(S(236), S(260));
+            lv.Size = new Size(S(236), S(210));
             lv.Columns.Add("#", S(40));
             lv.Columns.Add("Value", S(96));
             lv.Columns.Add("Label / extra", S(96));
@@ -898,8 +940,102 @@ namespace SnapMeasure
             bCopyM.Click += (s, e) => CopyMeasurements();
             f.Controls.Add(bCopyM);
 
+            // every text on the picture in one list: click a line to select it, click again (or F2) to edit it here
+            f.Controls.Add(Header("TEXTS"));
+            lvText = new ListView();
+            lvText.View = View.Details;
+            lvText.FullRowSelect = true;
+            lvText.HideSelection = false;
+            lvText.LabelEdit = true;
+            lvText.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+            lvText.Size = new Size(S(236), S(170));
+            lvText.Columns.Add("Text", S(176));        // the editable column comes first (ListView edits column 0)
+            lvText.Columns.Add("#", S(40));
+            lvText.ShowItemToolTips = true;
+            lvText.SelectedIndexChanged += (s, e) =>
+            {
+                if (loading || lvText.SelectedItems.Count == 0) return;
+                Shape sh = lvText.SelectedItems[0].Tag as Shape;
+                if (sh != null && sh != cv.Selected) { cv.CurrentTool = Tool.Select; cv.SelectShape(sh); }
+                BeginInvoke((Action)(() => lvText.Focus()));     // keep the keyboard here so F2 / typing edits the line
+            };
+            lvText.MouseDoubleClick += (s, e) => { ListViewItem it = lvText.GetItemAt(e.X, e.Y); if (it != null) it.BeginEdit(); };
+            // while a line is being edited, Ctrl+A / Ctrl+V / Delete … belong to that edit box, not to the canvas
+            lvText.BeforeLabelEdit += (s, e) => textListEditing = true;
+            lvText.AfterLabelEdit += (s, e) =>
+            {
+                textListEditing = false;
+                if (e.Label == null) return;                      // edit cancelled
+                Shape sh = lvText.Items[e.Item].Tag as Shape;
+                if (sh == null) return;
+                string t = e.Label.Replace(" " + LineMark + " ", "\n").Replace(LineMark, "\n");
+                if (sh.Kind == ShapeKind.Text && t.Trim().Length == 0) { e.CancelEdit = true; return; }
+                cv.SetShapeText(sh, t);
+                BeginInvoke((Action)RefreshTexts);
+            };
+            lvText.KeyDown += (s, e) => { if (e.KeyCode == Keys.F2 && lvText.SelectedItems.Count > 0) lvText.SelectedItems[0].BeginEdit(); };
+            f.Controls.Add(lvText);
+            Button bCopyT = new Button();
+            bCopyT.Text = "Copy all text";
+            bCopyT.Size = new Size(S(236), S(28));
+            bCopyT.Click += (s, e) => CopyAllText();
+            f.Controls.Add(bCopyT);
+
             outer.Controls.Add(f);
             return outer;
+        }
+
+        /// <summary>Shown in place of line breaks in the one-line text list (typed back, it becomes a line break again).</summary>
+        const string LineMark = "↵";
+
+        /// <summary>Texts the list shows: text boxes, speech bubbles, cloud callouts and stamps, in drawing order.</summary>
+        List<Shape> TextShapes()
+        {
+            return cv.Shapes.FindAll(x => x.Kind == ShapeKind.Text || x.Kind == ShapeKind.Bubble || x.Kind == ShapeKind.Stamp ||
+                                          (x.Kind == ShapeKind.Cloud && x.Mode != 0));
+        }
+
+        static string TextKindTag(Shape s, int n)
+        {
+            switch (s.Kind)
+            {
+                case ShapeKind.Bubble: return "B" + n;
+                case ShapeKind.Stamp: return "S" + n;
+                case ShapeKind.Cloud: return "C" + n;
+                default: return "T" + n;
+            }
+        }
+
+        void RefreshTexts()
+        {
+            if (lvText == null) return;
+            bool old = loading;
+            loading = true;
+            lvText.BeginUpdate();
+            lvText.Items.Clear();
+            Dictionary<ShapeKind, int> num = new Dictionary<ShapeKind, int>();
+            foreach (Shape s in TextShapes())
+            {
+                int n; num.TryGetValue(s.Kind, out n); num[s.Kind] = ++n;
+                string shown = (s.Text ?? "").Replace("\r\n", "\n").Replace("\n", " " + LineMark + " ");
+                ListViewItem it = new ListViewItem(new string[] { shown, TextKindTag(s, n) });
+                it.ToolTipText = "Click again or press F2 to edit · " + LineMark + " = new line";
+                it.Tag = s;
+                if (s == cv.Selected) it.Selected = true;
+                lvText.Items.Add(it);
+            }
+            lvText.EndUpdate();
+            loading = old;
+        }
+
+        void CopyAllText()
+        {
+            List<string> parts = new List<string>();
+            foreach (Shape s in TextShapes())
+                if (!string.IsNullOrEmpty(s.Text) && s.Text.Trim().Length > 0) parts.Add(s.Text.Replace("\r\n", "\n").Replace("\n", "\r\n"));
+            if (parts.Count == 0) { Flash("There is no text on the picture yet"); return; }
+            if (!App.TrySetClipboardText(string.Join("\r\n", parts.ToArray()))) { Flash(ClipboardBusy); return; }
+            Flash(parts.Count + (parts.Count == 1 ? " text copied" : " texts copied"));
         }
 
         void BuildStatus()
@@ -991,11 +1127,13 @@ namespace SnapMeasure
                     return "Angle – step 3: click the end of the second arm · Shift = 15° steps";
                 case Tool.Freehand:
                     return n < 0 ? "Freehand – press and draw; release to finish · line ends (arrowheads) on the style bar" : "Freehand – release to finish";
+                case Tool.Marker:
+                    return n < 0 ? "Highlighter pen – drag over the text to mark it · hold Shift for a straight stroke" : "Highlighter pen – release to finish · Shift = straight";
                 case Tool.Coord:
                     return !cv.HasOrigin ? "Coordinates – step 1: click the origin (0,0)" :
                            "Coordinates – click a point to get its X / Y from the origin (Y up) · drag the origin and all values update · right-click a point = make it the origin";
                 case Tool.Text:
-                    return n < 0 ? "Text – click where the text starts (it grows as you type) – or drag a box to set its width" : "Text – release to set the box width, then type";
+                    return n < 0 ? "Text – click where the text starts (it grows as you type) – or drag a box · line width = frame (0 = none)" : "Text – release to set the box, then type";
                 case Tool.Note:
                     return "Note – click where the note goes, then type it (shown here only, never on saved pictures)";
                 default:
@@ -1016,6 +1154,7 @@ namespace SnapMeasure
                 case Tool.Perimeter: return "Length / perimeter";
                 case Tool.Cutout: return "Cut-out";
                 case Tool.Polyline: return "Path length";
+                case Tool.Marker: return "Highlighter pen";
                 default: return t.ToString();
             }
         }
@@ -1032,7 +1171,7 @@ namespace SnapMeasure
                     return "drag a corner to move it · double-click an edge = add a corner · Ctrl+click a corner = remove it · green knob = rotate" +
                            (s.IsMeasure ? " · double-click inside = label" : "") + (s.Kind == ShapeKind.Area ? " · X = add a cut-out" : "");
                 case ShapeKind.Text:
-                    return "double-click = edit the text · side handles = box width · green knob = rotate · Frame on the style bar";
+                    return "double-click = edit the text · 8 handles = resize the box (the text wraps) · green knob = rotate · line width = frame (0 = none)";
                 case ShapeKind.Stamp:
                     return "double-click = type on the stamp · stamp type on the style bar · handles = resize · green knob = rotate";
                 case ShapeKind.Cloud:
@@ -1046,7 +1185,8 @@ namespace SnapMeasure
                 case ShapeKind.Note:
                     return "double-click = edit the note · it is never printed or saved in pictures";
                 case ShapeKind.Freehand:
-                    return "drag to move · green knob = rotate · line ends (arrowheads) on the style bar";
+                    return s.IsMarkerPen ? "drag to move · green knob = rotate · colour, width and opacity on the style bar"
+                                         : "drag to move · green knob = rotate · line ends (arrowheads) on the style bar";
                 default:
                     return "drag inside to move · white handles = resize · green knob = rotate (where shown) · Del = delete · right-click for more";
             }
@@ -1078,6 +1218,7 @@ namespace SnapMeasure
                 case ShapeKind.Coord: return "Coordinate point";
                 case ShapeKind.Origin: return "Origin 0,0";
                 case ShapeKind.Highlight: return s.Mode == (int)HighlightMode.Pixelate ? "Highlight – pixelate" : "Highlight";
+                case ShapeKind.Freehand: return s.IsMarkerPen ? "Highlighter pen" : "Freehand";
                 default: return s.Kind.ToString();
             }
         }
@@ -1122,8 +1263,9 @@ namespace SnapMeasure
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
                 rowClosed.Visible = kd == ShapeKind.Perimeter;
                 if (rowClosed.Visible) cClosed.Checked = s.Mode == 0;
-                rowFrame.Visible = kd == ShapeKind.Text;
-                if (rowFrame.Visible) cFrame.Checked = s.Frame;
+                // text: the line width IS the frame (0 = no frame), so no separate Frame box
+                rowFrame.Visible = false;
+                tip.SetToolTip(nWidth, kd == ShapeKind.Text ? "Frame width – 0 = no frame" : "Line width");
                 gShadow.Visible = s.CanShadow;
                 SetColorButton(bStroke, s.Stroke);
                 SetColorButton(bFill, s.Fill);
@@ -1314,6 +1456,7 @@ namespace SnapMeasure
             lv.EndUpdate();
             loading = old;
             LoadScale();
+            RefreshTexts();
         }
 
         void SyncListSelection()
@@ -1321,6 +1464,7 @@ namespace SnapMeasure
             bool old = loading;
             loading = true;
             foreach (ListViewItem it in lv.Items) it.Selected = it.Tag == cv.Selected;
+            if (lvText != null) foreach (ListViewItem it in lvText.Items) it.Selected = it.Tag == cv.Selected;
             loading = old;
         }
 
@@ -1449,6 +1593,7 @@ namespace SnapMeasure
             cv.EndTextEdit(true);
             new PinForm(cv.Flatten(null)).Show();
             dirty = false;
+            WindowState = FormWindowState.Minimized;      // the pin is what you want to see now; the editor waits on the task bar
         }
 
         /// <summary>Ctrl+S: picture in the chosen format (+ an editable .snapm project), named by the output settings.</summary>
@@ -1546,7 +1691,7 @@ namespace SnapMeasure
                 SetPaletteColor(mods == Keys.Alt, code - Keys.D1);
                 return true;
             }
-            bool inText = ActiveControl is TextBoxBase || ActiveControl is NumericUpDown || cv.IsEditingText;
+            bool inText = ActiveControl is TextBoxBase || ActiveControl is NumericUpDown || cv.IsEditingText || textListEditing;
             switch (keyData)
             {
                 case Keys.Control | Keys.Z: if (!inText) { cv.Undo(); return true; } break;

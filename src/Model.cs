@@ -16,7 +16,7 @@ namespace SnapMeasure
                             Cloud, Stamp, Note, Markup, Polyline, Perimeter, Coord, Origin }
 
     public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle,
-                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord }
+                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker }
 
     public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4 }
 
@@ -157,7 +157,9 @@ namespace SnapMeasure
             }
         }
         public bool Rotatable { get { return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp; } }
-        public bool HasHeads { get { return Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Dimension || Kind == ShapeKind.Freehand; } }
+        public bool HasHeads { get { return Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Dimension || (Kind == ShapeKind.Freehand && !IsMarkerPen); } }
+        /// <summary>Highlighter pen: a freehand stroke drawn as a see-through marker (Mode 1).</summary>
+        public bool IsMarkerPen { get { return Kind == ShapeKind.Freehand && Mode == 1; } }
         public bool IsMeasure
         {
             get
@@ -570,7 +572,9 @@ namespace SnapMeasure
             if (wrap > 0)
             {
                 SizeF wz = MeasureG.MeasureString(t, GetFont(s.FontSize, s.Style), (int)Math.Ceiling(wrap));
-                return new SizeF(wrap, Math.Max(wz.Height, s.FontSize * 1.2f));
+                // the box is at least as tall as dragged (Pts[1] = bottom-right); it grows when the text needs more room
+                float boxH = s.Pts[1].Y - s.Pts[0].Y;
+                return new SizeF(wrap, Math.Max(Math.Max(wz.Height, s.FontSize * 1.2f), boxH));
             }
             SizeF sz = MeasureG.MeasureString(t, GetFont(s.FontSize, s.Style));
             return new SizeF(Math.Max(sz.Width, s.FontSize * 0.6f), sz.Height);
@@ -763,10 +767,13 @@ namespace SnapMeasure
                         if (!stroke) return;
                         using (Pen p = OutlinePen(s, sCol, w))
                         {
-                            p.StartCap = LineCap.Round; p.EndCap = LineCap.Round; p.LineJoin = LineJoin.Round;
+                            // highlighter pen: square ends like a chisel marker; one stroke, so overlaps don't darken
+                            LineCap cap = s.IsMarkerPen ? LineCap.Square : LineCap.Round;
+                            p.StartCap = cap; p.EndCap = cap; p.LineJoin = LineJoin.Round;
                             if (s.Pts.Count == 1) g.DrawLine(p, s.Pts[0], new PointF(s.Pts[0].X + 0.1f, s.Pts[0].Y));
                             else g.DrawLines(p, s.Pts.ToArray());
                         }
+                        if (s.IsMarkerPen) break;
                         if (s.Pts.Count >= 2 && (s.HeadStart > 0 || s.HeadEnd > 0))
                         {
                             // heads point along the last few pixels of the stroke
@@ -784,7 +791,7 @@ namespace SnapMeasure
                         if (fill)
                             using (SolidBrush b = new SolidBrush(fCol))
                                 g.FillRectangle(b, s.Pts[0].X - 4, s.Pts[0].Y - 2, sz.Width + 8, sz.Height + 4);
-                        if (s.Frame && s.Width > 0)
+                        if (s.Width > 0)          // line width 0 = no frame; any width draws the frame
                             using (Pen fp = OutlinePen(s, sCol, w))
                                 g.DrawRectangle(fp, s.Pts[0].X - 4 - w / 2f, s.Pts[0].Y - 2 - w / 2f, sz.Width + 8 + w, sz.Height + 4 + w);
                         using (SolidBrush b = new SolidBrush(sCol))
@@ -1748,10 +1755,10 @@ namespace SnapMeasure
                     {
                         RectangleF r = LocalRect(s);
                         PointF c = Center(s);
-                        h.Add(new Handle(Geo.Rot(new PointF(c.X, r.Y - rotDist), c, s.Angle), HKind.Rotate, 0));
-                        // left / right edges set the width of the text box (the text wraps inside)
-                        h.Add(new Handle(Geo.Rot(new PointF(r.Right + 4, r.Y + r.Height / 2f), c, s.Angle), HKind.Box, 3));
-                        h.Add(new Handle(Geo.Rot(new PointF(r.X - 4, r.Y + r.Height / 2f), c, s.Angle), HKind.Box, 7));
+                        h.Add(new Handle(Geo.Rot(new PointF(c.X, r.Y - rotDist - 2), c, s.Angle), HKind.Rotate, 0));
+                        // 8 handles on the text box (as drawn, with its padding): corners and sides resize it, the text wraps inside
+                        RectangleF fr = RectangleF.FromLTRB(r.X - 4, r.Y - 2, r.Right + 4, r.Bottom + 2);
+                        for (int i = 0; i < 8; i++) h.Add(new Handle(Geo.Rot(BoxPoint(fr, i), c, s.Angle), HKind.Box, i));
                         break;
                     }
                 case ShapeKind.Coord:
@@ -1828,16 +1835,21 @@ namespace SnapMeasure
                     {
                         if (s.Kind == ShapeKind.Text)
                         {
-                            // text box width: left / right edge only; the text wraps inside
+                            // text box: corners and sides resize the box; the text wraps inside and keeps its size.
+                            // The box never gets shorter than its text (TextSize grows it back).
                             PointF c1 = Center(orig);
                             PointF lp1 = Geo.Rot(p, c1, -orig.Angle);
                             RectangleF r1 = LocalRect(orig);
-                            float l1 = r1.X, rt1 = r1.Right;
-                            if (h.Index == 7) l1 = Math.Min(lp1.X, rt1 - 12f); else rt1 = Math.Max(lp1.X, l1 + 12f);
-                            PointF start = new PointF(l1, r1.Y);
-                            while (s.Pts.Count < 2) s.Pts.Add(start);
-                            s.Pts[0] = start;
-                            s.Pts[1] = new PointF(start.X + (rt1 - l1), start.Y);
+                            float l1 = r1.X, t1 = r1.Y, rt1 = r1.Right, bt1 = r1.Bottom;
+                            int hi = h.Index;
+                            float minW = Math.Max(12f, orig.FontSize * 0.8f), minH = orig.FontSize * 1.2f;
+                            if (hi == 0 || hi == 6 || hi == 7) l1 = Math.Min(lp1.X + 4f, rt1 - minW);
+                            if (hi == 2 || hi == 3 || hi == 4) rt1 = Math.Max(lp1.X - 4f, l1 + minW);
+                            if (hi == 0 || hi == 1 || hi == 2) t1 = Math.Min(lp1.Y + 2f, bt1 - minH);
+                            if (hi == 4 || hi == 5 || hi == 6) bt1 = Math.Max(lp1.Y - 2f, t1 + minH);
+                            while (s.Pts.Count < 2) s.Pts.Add(new PointF(l1, t1));
+                            s.Pts[0] = new PointF(l1, t1);
+                            s.Pts[1] = new PointF(rt1, bt1);
                             break;
                         }
                         PointF c0 = Center(orig);
@@ -2209,7 +2221,7 @@ namespace SnapMeasure
             }
             if (s.Dash != 0) w.WriteAttributeString("dash", s.Dash.ToString(Inv));
             if (s.Form != 0) w.WriteAttributeString("form", s.Form.ToString(Inv));
-            if (s.Frame) w.WriteAttributeString("frame", "1");
+            if (s.Kind == ShapeKind.Text ? s.Width > 0 : s.Frame) w.WriteAttributeString("frame", "1");   // 1.2 reads the frame from this
             w.WriteAttributeString("text", s.Text ?? "");
             if (s.Holes != null)
                 foreach (List<PointF> h in s.Holes)
@@ -2381,6 +2393,8 @@ namespace SnapMeasure
             s.Dash = PI(e.GetAttribute("dash"), 0);
             s.Form = PI(e.GetAttribute("form"), 0);
             s.Frame = e.GetAttribute("frame") == "1";
+            // since 1.3 a text's frame is its line width: older text without a frame gets width 0
+            if (s.Kind == ShapeKind.Text && !s.Frame) s.Width = 0f;
             XmlNodeList holes = e.SelectNodes("hole");
             if (holes.Count > 0)
             {
