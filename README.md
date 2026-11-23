@@ -7,8 +7,12 @@ drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, *
 plus an **on-screen ruler and protractor** that float over any app.
 One file, `SnapMeasure.exe` (~400 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
 (it uses the .NET Framework 4.x, the PDF reader and the text recognition that are built into Windows).
-**Download:** take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases) page, or build it yourself (see below).
+**Download:** install it from the [Microsoft Store](https://apps.microsoft.com/detail/9pgk12tn6wqj?mode=direct) (signed, updates
+itself, no "Windows protected your PC" warning), take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases)
+page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
+
+<a href="https://apps.microsoft.com/detail/9pgk12tn6wqj?mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get SnapMeasure from the Microsoft Store" width="200"></a>
 
 **What's new in 1.3:**
 * **Radius / diameter** (`Shift+R`): click 3 points on a curve or circle → R, Ø and the arc length (R1, R2 … in Excel).
