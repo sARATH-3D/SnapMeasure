@@ -87,6 +87,15 @@ namespace SnapMeasure
             return list;
         }
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
+        [DllImport("user32.dll")] public static extern bool RedrawWindow(IntPtr hWnd, IntPtr rect, IntPtr rgn, uint flags);
+        [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hWnd);
+
+        /// <summary>UI scale Windows uses for this window right now (0 if unknown, e.g. before Windows 10 1607).</summary>
+        public static float WindowScale(IntPtr hWnd)
+        {
+            try { uint d = GetDpiForWindow(hWnd); return d >= 48 ? d / 96f : 0f; }
+            catch (Exception) { return 0f; }
+        }
         [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr w, IntPtr l);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT value, int size);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out int value, int size);

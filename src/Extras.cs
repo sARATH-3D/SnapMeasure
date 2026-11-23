@@ -287,15 +287,24 @@ namespace SnapMeasure
             return r;
         }
 
+        /// <summary>A row that stayed put: nearly all of it unchanged. A sticky bar may still show something that changes
+        /// (the pointer position, a page number), so up to ~8 % of the row may differ.</summary>
+        static bool RowStill(float[] a, float[] b)
+        {
+            int off = 0, lim = Math.Max(1, a.Length / 12);
+            for (int i = 0; i < a.Length; i++) if (Math.Abs(a[i] - b[i]) > 2f && ++off > lim) return false;
+            return true;
+        }
+
         static int FindShift(float[][] prev, float[][] cur, out int header, out int footer, out int bestD, out double bestE, out double stillE)
         {
             bestD = -1; bestE = 0; stillE = 0;
-            const float same = 0.6f;
             int h = Math.Min(prev.Length, cur.Length);
+            // fixed bars at the top and bottom (at most a third of the height each)
             header = 0;
-            while (header < h && RowDiff(prev[header], cur[header]) < same) header++;
+            while (header < h / 3 && RowStill(prev[header], cur[header])) header++;
             footer = 0;
-            while (footer < h - header && RowDiff(prev[h - 1 - footer], cur[h - 1 - footer]) < same) footer++;
+            while (footer < h / 3 && RowStill(prev[h - 1 - footer], cur[h - 1 - footer])) footer++;
             if (header + footer >= h - 2) return 0;
             // rows that carry content (not plain background) decide the match
             int best = -1;
@@ -328,14 +337,24 @@ namespace SnapMeasure
             if (frames.Count == 0) return null;
             int w = frames[0].Width, h = frames[0].Height;
             List<float[][]> hashes = frames.ConvertAll(RowHashes);
-            // pieces: (frame index, first row, row count)
-            List<int[]> pieces = new List<int[]>();
-            int total = 0, lastEnd = -1, lastFrame = 0;     // output so far ends at row 'lastEnd' of frame 'lastFrame'
+            // the shifts first; the fixed bars are what stayed put in every step (content that only looks still for
+            // one step – a long vertical line, say – moves in another one)
+            List<int> shifts = new List<int>();
+            int header = h, footer = h;
             for (int i = 1; i < frames.Count; i++)
             {
                 int hd, ft;
                 int d = FindShift(hashes[i - 1], hashes[i], out hd, out ft);
                 if (d <= 0) break;
+                shifts.Add(d);
+                header = Math.Min(header, hd); footer = Math.Min(footer, ft);
+            }
+            // pieces: (frame index, first row, row count)
+            List<int[]> pieces = new List<int[]>();
+            int total = 0, lastEnd = -1, lastFrame = 0;     // output so far ends at row 'lastEnd' of frame 'lastFrame'
+            for (int i = 1; i <= shifts.Count; i++)
+            {
+                int d = shifts[i - 1], ft = footer;
                 if (lastEnd < 0)
                 {
                     lastEnd = h - ft;                         // the first frame, without any fixed bottom bar
@@ -343,7 +362,7 @@ namespace SnapMeasure
                     total = lastEnd;
                 }
                 int from = lastEnd - d, to = h - ft;           // the same place in the new frame, then the new rows
-                if (from < 0) from = 0;
+                if (from < header) from = header;              // never the fixed top bar again
                 if (to <= from) { lastEnd = Math.Max(0, lastEnd - d); lastFrame = i; continue; }
                 if (total + (to - from) > MaxHeight) break;
                 pieces.Add(new int[] { i, from, to - from });
@@ -365,29 +384,119 @@ namespace SnapMeasure
             return result;
         }
 
-        /// <summary>Scrolls the window under 'r' with the mouse wheel and stitches. Esc stops early.</summary>
+        [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
+
+        /// <summary>The small "Stop" bar shown while scrolling. It never takes the focus (the wheel must keep going to
+        /// the app) and is left out of screen grabs, so it may sit over the area.</summary>
+        sealed class StopBar : Form
+        {
+            public bool Stopped;
+            readonly Label l;
+            const string RunText = "Scrolling…  move the mouse to pause, Esc or Stop to finish";
+            const string PausedText = "Paused – Stop to finish, or point back at the page to go on";
+            public void Paused(bool on) { l.Text = on ? PausedText : RunText; l.Refresh(); }
+            public StopBar(Rectangle r)
+            {
+                FormBorderStyle = FormBorderStyle.None;
+                ShowInTaskbar = false; TopMost = true;
+                StartPosition = FormStartPosition.Manual;
+                BackColor = Color.FromArgb(32, 32, 32);
+                float k = 1f;
+                using (Graphics sg = Graphics.FromHwnd(IntPtr.Zero)) k = sg.DpiX / 96f;
+                AutoScaleMode = AutoScaleMode.None;
+                Font = new Font("Segoe UI", 13f * k, GraphicsUnit.Pixel);
+                l = new Label { Text = PausedText, ForeColor = Color.White, AutoSize = true, Location = new Point((int)(12 * k), (int)(10 * k)) };
+                Button b = new Button { Text = "■  Stop", FlatStyle = FlatStyle.Flat, ForeColor = Color.White, BackColor = Color.FromArgb(200, 40, 40), AutoSize = true };
+                b.FlatAppearance.BorderSize = 0;
+                b.Click += (s, e) => Stopped = true;
+                Controls.Add(l); Controls.Add(b);
+                int lw = TextRenderer.MeasureText(l.Text, Font).Width;
+                b.Location = new Point(l.Left + lw + (int)(12 * k), (int)(5 * k));
+                ClientSize = new Size(b.Right + (int)(6 * k), (int)(36 * k));
+                l.Text = RunText;       // sized for the longer text, so the bar never changes size
+                // under the area if there is room, else above it, else inside its bottom edge
+                Rectangle wa = Screen.FromRectangle(r).WorkingArea;
+                int x = Math.Max(wa.Left, Math.Min(wa.Right - Width, r.X + (r.Width - Width) / 2));
+                int y = r.Bottom + 8 + Height <= wa.Bottom ? r.Bottom + 8 : r.Top - 8 - Height >= wa.Top ? r.Top - 8 - Height : r.Bottom - Height - 8;
+                Location = new Point(x, y);
+            }
+            protected override bool ShowWithoutActivation { get { return true; } }
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    CreateParams cp = base.CreateParams;
+                    cp.ExStyle |= 0x08000000 | 0x00000080 | 0x00000008;    // WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+                    return cp;
+                }
+            }
+            protected override void OnHandleCreated(EventArgs e)
+            {
+                base.OnHandleCreated(e);
+                try { SetWindowDisplayAffinity(Handle, 0x11); } catch (Exception) { }    // WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+)
+            }
+        }
+
+        /// <summary>Waits while keeping the Stop bar clickable; true = the user asked to stop.</summary>
+        static bool Wait(int ms, StopBar bar)
+        {
+            int end = Environment.TickCount + ms;
+            do
+            {
+                if ((GetAsyncKeyState(0x1B) & 0x8000) != 0) return true;       // Esc
+                Application.DoEvents();
+                if (bar.Stopped) return true;
+                Thread.Sleep(10);
+            } while (unchecked(Environment.TickCount - end) < 0);
+            return false;
+        }
+
+        static bool busy;
+
+        /// <summary>Scrolls the window under 'r' with the mouse wheel and stitches. Esc or the Stop button stops early.</summary>
         public static Bitmap Capture(Rectangle r)
         {
+            if (busy) return null;
+            busy = true;
             List<Bitmap> frames = new List<Bitmap>();
             Point oldCursor = Cursor.Position;
+            StopBar bar = new StopBar(r);
             try
             {
                 SetCursorPos(r.X + r.Width / 2, r.Y + r.Height / 2);
                 Activate(new Point(r.X + r.Width / 2, r.Y + r.Height / 2));
-                Thread.Sleep(350);                       // let the area picker fade away first
+                bar.Show();
+                if (Wait(350, bar)) return null;         // let the area picker fade away first
                 frames.Add(ScreenCapture.Grab(r));
                 float[][] prevHash = RowHashes(frames[0]);
                 int height = r.Height, still = 0;
+                Point home = new Point(r.X + r.Width / 2, r.Y + r.Height / 2);
                 for (int step = 0; step < 200 && height < MaxHeight; step++)
                 {
-                    if ((GetAsyncKeyState(0x1B) & 0x8000) != 0) break;              // Esc
+                    // the user took the mouse away (on the way to the Stop button, say): pause and leave the pointer alone.
+                    // Stop or Esc finishes; putting the pointer back on the area carries on scrolling.
+                    Point now = Cursor.Position;
+                    if (step > 0 && (Math.Abs(now.X - home.X) > 40 || Math.Abs(now.Y - home.Y) > 40))
+                    {
+                        bar.Paused(true);
+                        bool stop = false;
+                        while (!(stop = Wait(100, bar)))
+                        {
+                            Point q = Cursor.Position;
+                            if (r.Contains(q) && !bar.Bounds.Contains(q)) break;
+                        }
+                        if (stop) break;
+                        bar.Paused(false);
+                        home = Cursor.Position;          // carry on from where the pointer came back
+                        if (Wait(250, bar)) break;
+                    }
                     // newer apps only route the wheel to what's under a mouse that has moved, so nudge it first
-                    SetCursorPos(r.X + r.Width / 2 + (step % 2 == 0 ? 2 : -2), r.Y + r.Height / 2 + 1);
-                    Thread.Sleep(30);
-                    SetCursorPos(r.X + r.Width / 2, r.Y + r.Height / 2);
-                    Thread.Sleep(30);
+                    SetCursorPos(home.X + (step % 2 == 0 ? 2 : -2), home.Y + 1);
+                    if (Wait(30, bar)) break;
+                    SetCursorPos(home.X, home.Y);
+                    if (Wait(30, bar)) break;
                     mouse_event(MOUSEEVENTF_WHEEL, 0, 0, -120 * 3, UIntPtr.Zero);
-                    Thread.Sleep(600);                   // smooth scrolling has to come to rest
+                    if (Wait(600, bar)) break;           // smooth scrolling has to come to rest
                     Bitmap f = ScreenCapture.Grab(r);
                     float[][] hsh = RowHashes(f);
                     int hd, ft;
@@ -410,7 +519,10 @@ namespace SnapMeasure
             finally
             {
                 foreach (Bitmap b in frames) b.Dispose();
-                SetCursorPos(oldCursor.X, oldCursor.Y);
+                bool stopped = bar.Stopped;
+                bar.Close(); bar.Dispose();
+                if (!stopped) SetCursorPos(oldCursor.X, oldCursor.Y);
+                busy = false;
             }
         }
     }

@@ -15,7 +15,7 @@ if not exist "%FW%\System.Runtime.WindowsRuntime.dll" set FW=%WINDIR%\Microsoft.
 set WM=%WINDIR%\System32\WinMetadata
 set REFS=%REFS% /r:"%FW%\System.Runtime.dll" /r:"%FW%\System.Runtime.WindowsRuntime.dll"
 set REFS=%REFS% /r:"%WM%\Windows.Foundation.winmd" /r:"%WM%\Windows.Data.winmd" /r:"%WM%\Windows.Storage.winmd"
-set REFS=%REFS% /r:"%WM%\Windows.Graphics.winmd" /r:"%WM%\Windows.Media.winmd" /r:"%WM%\Windows.Globalization.winmd"
+set REFS=%REFS% /r:"%WM%\Windows.Graphics.winmd" /r:"%WM%\Windows.Media.winmd" /r:"%WM%\Windows.Globalization.winmd" /r:"%WM%\Windows.ApplicationModel.winmd"
 set OPTS=/nologo /target:winexe /optimize+ /highentropyva+ /platform:anycpu /codepage:65001 /win32manifest:app.manifest
 
 if not exist app.ico (

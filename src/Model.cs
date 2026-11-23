@@ -1148,18 +1148,25 @@ namespace SnapMeasure
                                 p.LineJoin = LineJoin.Round;
                                 if (pts.Length >= 3 && IsCloudStyle(s)) using (GraphicsPath cp = CloudPolyPath(pts, true, w)) g.DrawPath(p, cp);
                                 else if (pts.Length >= 3) g.DrawPolygon(p, pts); else g.DrawLines(p, pts);
-                                if (holes)
+                                if (holes && s.Kind == ShapeKind.Polygon)      // a hollow section: its inner edge is a real edge
+                                    using (Pen hp = OutlinePen(s, sCol, w))
+                                    {
+                                        hp.LineJoin = LineJoin.Round;
+                                        foreach (List<PointF> h in s.Holes) if (h.Count >= 3) g.DrawPolygon(hp, h.ToArray());
+                                    }
+                                else if (holes)
                                     using (Pen hp = new Pen(sCol, Math.Max(1f, w * 0.8f)))
                                     {
                                         hp.DashStyle = DashStyle.Dash;
                                         foreach (List<PointF> h in s.Holes) if (h.Count >= 3) g.DrawPolygon(hp, h.ToArray());
                                     }
                             }
-                        if (s.Kind == ShapeKind.Area && pts.Length >= 3)
+                        if (s.Kind == ShapeKind.Area && s.Mode == 3) s.LabelRect = RectangleF.Empty;     // Show: None – no label on the picture
+                        else if (s.Kind == ShapeKind.Area && pts.Length >= 3)
                         {
                             double per = Geo.Perimeter(s.Pts, true);
                             string head = string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n";
-                            // Mode: 0 = area and perimeter, 1 = area only, 2 = perimeter only
+                            // Mode: 0 = area and perimeter, 1 = area only, 2 = perimeter only, 3 = no label (still listed as an area)
                             string at = !s.ShowsArea ? "" : holes
                                 ? "Gross " + sc.Area(Measure.GrossArea(s)) + "\nCut-outs −" + sc.Area(Measure.HolesArea(s)) + "\nNet A = " + sc.Area(Measure.NetArea(s))
                                 : "A = " + sc.Area(Measure.GrossArea(s));
@@ -2801,7 +2808,7 @@ namespace SnapMeasure
             if (!CleanPoints(s.Pts)) return false;
             if (s.Holes != null)
             {
-                if (s.Kind != ShapeKind.Area || s.Holes.Count > 1000) s.Holes = null;
+                if ((s.Kind != ShapeKind.Area && s.Kind != ShapeKind.Polygon) || s.Holes.Count > 1000) s.Holes = null;
                 else
                 {
                     s.Holes.RemoveAll(h => h == null || h.Count < 3 || !CleanPoints(h));

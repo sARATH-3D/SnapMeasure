@@ -15,6 +15,7 @@ namespace SnapMeasure
         public const string Name = "SnapMeasure";
         public const string Author = "sARATH";
         public const string RepoUrl = "https://github.com/sARATH-3D/SnapMeasure";
+        public const string StoreUrl = "https://apps.microsoft.com/detail/9pgk12tn6wqj";
         public const string ReleasesUrl = RepoUrl + "/releases";
         public const string IssuesUrl = RepoUrl + "/issues";
 
@@ -51,7 +52,7 @@ namespace SnapMeasure
         /// <summary>Opens one of the fixed project web pages in the default browser.</summary>
         public static void OpenUrl(string url)
         {
-            if (url != RepoUrl && url != ReleasesUrl && url != IssuesUrl) return;   // only our own pages
+            if (url != RepoUrl && url != ReleasesUrl && url != IssuesUrl && url != StoreUrl) return;   // only our own pages
             try { Process.Start(url); }
             catch (Exception ex) { MessageBox.Show("Couldn't open the browser: " + ex.Message, Name); }
         }

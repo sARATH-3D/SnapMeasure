@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.3.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.1.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -63,6 +63,12 @@ namespace SnapMeasure
             };
             Settings.Load();
 
+            // started at sign-in ("Start with Windows"): stay quiet in the tray
+            bool atStartup = Array.IndexOf(args, Startup.Arg) >= 0;
+            if (atStartup) args = Array.FindAll(args, a => a != Startup.Arg);
+            if (!atStartup && AppInfo.IsStoreApp) atStartup = StartedByStartupTask();
+            App.QuietStart = atStartup;
+
             bool first;
             using (Mutex m = new Mutex(true, "SnapMeasure.SingleInstance.v1", out first))
             {
@@ -73,7 +79,7 @@ namespace SnapMeasure
                         Form f = App.LoadEditor(args[0]);
                         if (f != null) Application.Run(f);
                     }
-                    else
+                    else if (!atStartup)
                         MessageBox.Show("SnapMeasure is already running.\n\nLook for its icon in the system tray (bottom-right, maybe under the ^ arrow), or press Print Screen.",
                             "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
@@ -82,6 +88,20 @@ namespace SnapMeasure
                 foreach (string a in args) App.OpenFile(a);
                 Application.Run(tray);
             }
+        }
+
+        /// <summary>Store package: true when Windows started us through the StartupTask at sign-in.</summary>
+        static bool StartedByStartupTask()
+        {
+            try
+            {
+                return WinRt.Run(() =>
+                {
+                    var a = Windows.ApplicationModel.AppInstance.GetActivatedEventArgs();
+                    return a != null && a.Kind == Windows.ApplicationModel.Activation.ActivationKind.StartupTask;
+                });
+            }
+            catch (Exception) { return false; }
         }
     }
 
@@ -467,6 +487,28 @@ namespace SnapMeasure
             check("Cut-out moves with the area", P(moved.Holes[0][0]) + "|" + P(area.Holes[0][0]), "210.00,155.00|200.00,150.00");
             List<Shape> rta = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { area }));
             check("Cut-out round-trip", rta.Count + "|" + (rta[0].Holes != null ? rta[0].Holes.Count + "|" + sc.Area(Measure.NetArea(rta[0])) : "none"), "1|1|" + (9.0).ToString("N2", cc) + " m²");
+
+            // a polygon with a hollow (1.3.1): the hole is kept, saved and left unfilled
+            {
+                Shape poly = new Shape { Kind = ShapeKind.Polygon, Fill = Color.Black, FillOpacity = 100, StrokeOpacity = 0 };
+                poly.Pts.AddRange(new[] { new PointF(10, 10), new PointF(90, 10), new PointF(90, 90), new PointF(10, 90) });
+                poly.Holes = new List<List<PointF>> { new List<PointF> { new PointF(30, 30), new PointF(70, 30), new PointF(70, 70), new PointF(30, 70) } };
+                List<Shape> rtp = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { poly }));
+                string px;
+                using (Bitmap hb = new Bitmap(100, 100))
+                {
+                    using (Graphics hg = Graphics.FromImage(hb)) { hg.Clear(Color.White); Renderer.Draw(hg, rtp[0], hb, sc, null); }
+                    px = hb.GetPixel(20, 20).R + "/" + hb.GetPixel(50, 50).R;
+                }
+                check("Polygon hollow: kept and unfilled", (rtp[0].Holes != null ? rtp[0].Holes.Count : 0) + "|" + Canvas.CanHaveHoles(poly) + "|" + px, "1|True|0/255");
+            }
+            // area Show: None hides the label, the area is still listed
+            {
+                Shape an = area.Clone(); an.Mode = 3;
+                using (Bitmap hb = new Bitmap(600, 400)) using (Graphics hg = Graphics.FromImage(hb)) Renderer.Draw(hg, an, hb, sc, "A9");
+                List<MeasureRow> nrow = Measure.Rows(new List<Shape> { an }, sc, false);
+                check("Area Show: None", an.LabelRect.IsEmpty + "|" + nrow.Count + "|" + (nrow.Count > 0 ? nrow[0].Type : "-"), "True|1|Area (net)");
+            }
 
             // counts, labels and the Excel export
             int numbers = Measure.Count(cv.Shapes, false);
@@ -976,6 +1018,8 @@ namespace SnapMeasure
 
         /// <summary>Tray notification (set by the tray icon).</summary>
         public static Action<string> Notify;
+        /// <summary>Started by Windows at sign-in: no welcome balloon.</summary>
+        public static bool QuietStart;
 
         static void Tell(string msg)
         {
@@ -1478,6 +1522,18 @@ namespace SnapMeasure
             copy.Checked = Settings.GetBool("CopyOnCapture", true);
             copy.Click += (s, e) => { copy.Checked = !copy.Checked; Settings.Set("CopyOnCapture", copy.Checked ? "1" : "0"); };
             menu.Items.Add(copy);
+            ToolStripMenuItem boot = new ToolStripMenuItem("Start with Windows");
+            boot.ToolTipText = "Start SnapMeasure in the tray when you sign in, so the capture keys always work";
+            boot.Click += (s, e) =>
+            {
+                string note;
+                boot.Checked = Startup.Set(!boot.Checked, out note);
+                if (note != null) MessageBox.Show(note, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+            menu.Items.Add(boot);
+            // read the state each time the menu opens (it can also be changed in Windows Settings → Apps → Startup)
+            menu.Opening += (s, e) => boot.Checked = Startup.IsOn;
+            Startup.RefreshPath();
             Item(menu, "Settings (capture, output)…", "", () => Dialogs.ShowSettings(null, 0), false).Image = Icons.Cmd("settings", 16);
             Item(menu, "Open save folder", "", OpenFolder, false).Image = Icons.Cmd("folderopen", 16);
             menu.Items.Add(new ToolStripSeparator());
@@ -1502,7 +1558,8 @@ namespace SnapMeasure
                 ? "Press " + (first.Length > 0 ? first : alt) + " to capture. Right-click this icon for more."
                 : "Ready. These keys are taken by another app (e.g. Windows Snipping Tool or Greenshot): " + string.Join(", ", failedKeys.ToArray()) +
                   ".\nPick other keys in Settings → General.";
-            ni.ShowBalloonTip(5000, "SnapMeasure is running", msg, failedKeys.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
+            if (!App.QuietStart || failedKeys.Count > 0)
+                ni.ShowBalloonTip(5000, "SnapMeasure is running", msg, failedKeys.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
         }
 
         ToolStripMenuItem[] keyItems;
@@ -1613,12 +1670,12 @@ namespace SnapMeasure
             {
                 string a = Hotkeys.Text(Hotkeys.Get(i, 0)), b = Hotkeys.Text(Hotkeys.Get(i, 1));
                 string keys = a.Length > 0 && b.Length > 0 ? a + " / " + b : (a + b);
-                sb.AppendLine("  " + (keys.Length > 0 ? keys : "(no key)").PadRight(28) + Hotkeys.Labels[i] + (i == 4 ? "  (Esc = stop)" : ""));
+                sb.AppendLine("  " + (keys.Length > 0 ? keys : "(no key)").PadRight(28) + Hotkeys.Labels[i] + (i == 4 ? "  (Esc or Stop = finish)" : ""));
             }
             if (!string.IsNullOrEmpty(failed)) sb.AppendLine("  Not available (used by another app): " + failed);
             sb.AppendLine();
             sb.AppendLine("MEASURE & QUANTIFY");
-            sb.AppendLine("  D Dimension   M Area   X Cut-out (opening in an area)   W Path length");
+            sb.AppendLine("  D Dimension   M Area   X Cut-out (opening in an area, hollow in a polygon)   W Path length");
             sb.AppendLine("  Q Perimeter   G Angle   K Calibrate scale   N / Shift+N count markers");
             sb.AppendLine("  Double-click a measurement or marker = label it · panel → Copy measurements (Excel)");
             sb.AppendLine();
@@ -1773,10 +1830,12 @@ namespace SnapMeasure
         Point cropA, cropB;
         bool cropDragging;
         const int Grip = 8;
+        readonly int B;         // the magenta frame round the pinned picture
 
         public PinForm(Bitmap b)
         {
             img = b;
+            B = Math.Max(2, (int)Math.Round(2 * Native.ScaleAt(Cursor.Position)));
             src = new Rectangle(0, 0, img.Width, img.Height);
             FormBorderStyle = FormBorderStyle.None;
             TopMost = true;
@@ -1875,7 +1934,7 @@ namespace SnapMeasure
 
         void ApplySize()
         {
-            ClientSize = new Size(Math.Max(16, (int)(src.Width * z)) + 2, Math.Max(16, (int)(src.Height * z)) + 2);
+            ClientSize = new Size(Math.Max(16, (int)(src.Width * z)) + 2 * B, Math.Max(16, (int)(src.Height * z)) + 2 * B);
             Invalidate();
         }
 
@@ -1895,8 +1954,14 @@ namespace SnapMeasure
             g.Clear(Color.White);
             g.InterpolationMode = Math.Abs(z - 1f) < 0.001f ? InterpolationMode.NearestNeighbor : InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.Half;
-            g.DrawImage(img, new Rectangle(1, 1, ClientSize.Width - 2, ClientSize.Height - 2), src, GraphicsUnit.Pixel);
-            using (Pen p = new Pen(Color.FromArgb(0, 120, 215))) g.DrawRectangle(p, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
+            g.DrawImage(img, new Rectangle(B, B, ClientSize.Width - 2 * B, ClientSize.Height - 2 * B), src, GraphicsUnit.Pixel);
+            g.PixelOffsetMode = PixelOffsetMode.Default;
+            using (SolidBrush mb = new SolidBrush(Color.Magenta))
+            using (Region fr = new Region(ClientRectangle))
+            {
+                fr.Exclude(new Rectangle(B, B, ClientSize.Width - 2 * B, ClientSize.Height - 2 * B));
+                g.FillRegion(mb, fr);
+            }
             if (cropping)
             {
                 Rectangle r = cropDragging ? ScreenCropRect : Rectangle.Empty;
@@ -1931,14 +1996,14 @@ namespace SnapMeasure
                 // keep the picture's proportions while resizing
                 Native.RECT rc = (Native.RECT)System.Runtime.InteropServices.Marshal.PtrToStructure(m.LParam, typeof(Native.RECT));
                 int edge = m.WParam.ToInt32();
-                int w = rc.Right - rc.Left - 2, h = rc.Bottom - rc.Top - 2;
+                int w = rc.Right - rc.Left - 2 * B, h = rc.Bottom - rc.Top - 2 * B;
                 float ratio = (float)src.Width / src.Height;
                 if (edge == 1 || edge == 2) h = (int)Math.Round(w / ratio);          // left / right
                 else if (edge == 3 || edge == 6) w = (int)Math.Round(h * ratio);     // top / bottom
                 else { if (w / ratio > h) h = (int)Math.Round(w / ratio); else w = (int)Math.Round(h * ratio); }
                 w = Math.Max(16, w); h = Math.Max(16, h);
-                if (edge == 1 || edge == 4 || edge == 7) rc.Left = rc.Right - w - 2; else rc.Right = rc.Left + w + 2;
-                if (edge == 3 || edge == 4 || edge == 5) rc.Top = rc.Bottom - h - 2; else rc.Bottom = rc.Top + h + 2;
+                if (edge == 1 || edge == 4 || edge == 7) rc.Left = rc.Right - w - 2 * B; else rc.Right = rc.Left + w + 2 * B;
+                if (edge == 3 || edge == 4 || edge == 5) rc.Top = rc.Bottom - h - 2 * B; else rc.Bottom = rc.Top + h + 2 * B;
                 System.Runtime.InteropServices.Marshal.StructureToPtr(rc, m.LParam, false);
                 z = (float)w / src.Width;
                 m.Result = (IntPtr)1;
@@ -1968,7 +2033,7 @@ namespace SnapMeasure
         {
             if (cropping && cropDragging)
             {
-                cropB = new Point(Math.Max(1, Math.Min(ClientSize.Width - 2, e.X)), Math.Max(1, Math.Min(ClientSize.Height - 2, e.Y)));
+                cropB = new Point(Math.Max(B, Math.Min(ClientSize.Width - B - 1, e.X)), Math.Max(B, Math.Min(ClientSize.Height - B - 1, e.Y)));
                 Invalidate();
             }
             base.OnMouseMove(e);
@@ -1984,15 +2049,15 @@ namespace SnapMeasure
                 Rectangle r = ScreenCropRect;
                 if (r.Width >= 4 && r.Height >= 4)
                 {
-                    float sx = (float)src.Width / (ClientSize.Width - 2), sy = (float)src.Height / (ClientSize.Height - 2);
+                    float sx = (float)src.Width / (ClientSize.Width - 2 * B), sy = (float)src.Height / (ClientSize.Height - 2 * B);
                     Point oldTopLeft = PointToScreen(r.Location);
-                    Rectangle ns = Rectangle.Round(new RectangleF(src.X + (r.X - 1) * sx, src.Y + (r.Y - 1) * sy, r.Width * sx, r.Height * sy));
+                    Rectangle ns = Rectangle.Round(new RectangleF(src.X + (r.X - B) * sx, src.Y + (r.Y - B) * sy, r.Width * sx, r.Height * sy));
                     ns.Intersect(src);
                     if (ns.Width >= 2 && ns.Height >= 2)
                     {
                         src = ns;
                         ApplySize();
-                        Location = new Point(oldTopLeft.X - 1, oldTopLeft.Y - 1);   // the kept part stays where it was
+                        Location = new Point(oldTopLeft.X - B, oldTopLeft.Y - B);   // the kept part stays where it was
                     }
                 }
                 Invalidate();
@@ -2318,6 +2383,10 @@ namespace SnapMeasure
                     sub.Text = "Portable screenshot, measuring & quantity takeoff tool\nMade by " + AppInfo.Author + "  ·  free and open source (MIT licence)";
                     LinkLabel repo = new LinkLabel(); repo.Text = AppInfo.RepoUrl.Replace("https://", ""); repo.AutoSize = true; repo.Location = new Point(S(84), S(84));
                     repo.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.RepoUrl);
+                    LinkLabel store = new LinkLabel(); store.Text = "Microsoft Store"; store.AutoSize = true;
+                    store.Location = new Point(S(84) + TextRenderer.MeasureText(repo.Text, f.Font).Width + S(24), S(84));
+                    store.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.StoreUrl);
+                    new ToolTip().SetToolTip(store, "SnapMeasure in the Microsoft Store: signed, and it updates itself");
                     LinkLabel upd = new LinkLabel(); upd.Text = "Check for updates"; upd.AutoSize = true; upd.Location = new Point(S(84), S(106));
                     LinkLabel iss = new LinkLabel(); iss.Text = "Report a problem or ask for a feature"; iss.AutoSize = true; iss.Location = new Point(S(220), S(106));
                     iss.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.IssuesUrl);
@@ -2334,7 +2403,7 @@ namespace SnapMeasure
                     keys.BackColor = Color.FromArgb(247, 248, 250); keys.Font = Native.UiFont("Consolas", 8.5f, k);
                     keys.Text = AboutText.Shortcuts(App.FailedHotkeys).Replace("\r\n", "\n").Replace("\n", "\r\n");
                     keys.SetBounds(S(12), S(150), S(512), S(220));
-                    foreach (Control c in new Control[] { logo, name, sub, repo, upd, iss, us, keys }) tAbout.Controls.Add(c);
+                    foreach (Control c in new Control[] { logo, name, sub, repo, store, upd, iss, us, keys }) tAbout.Controls.Add(c);
                 }
 
                 tabs.SelectedIndex = Math.Max(0, Math.Min(tabs.TabCount - 1, startTab));
@@ -2985,6 +3054,47 @@ namespace SnapMeasure
                                 g.FillPolygon(ab, Star(5, 3, 2.2f, 0.8f));
                                 g.FillPolygon(ab, Star(14, 11, 2.2f, 0.8f));
                             }
+                            break;
+                        case "rotcw":       // picture with a turning arrow (left: mirrored)
+                        case "rotccw":
+                            if (name == "rotccw") { g.TranslateTransform(16, 0); g.ScaleTransform(-1, 1); }
+                            g.FillRectangle(Brushes.White, 1.5f, 6.5f, 8, 8); g.DrawRectangle(p, 1.5f, 6.5f, 8, 8);
+                            using (Pen pp = new Pen(green, 1.6f)) { pp.StartCap = LineCap.Round; g.DrawArc(pp, 5, 1.5f, 9, 9, 200, 160); }
+                            using (SolidBrush gb = new SolidBrush(green)) g.FillPolygon(gb, new PointF[] { new PointF(11.5f, 5), new PointF(16, 5), new PointF(13.75f, 9) });
+                            break;
+                        case "fliph":       // two halves facing a dashed mirror line
+                        case "flipv":
+                            if (name == "flipv") { g.TranslateTransform(8, 8); g.RotateTransform(90); g.TranslateTransform(-8, -8); }
+                            using (Pen d = new Pen(blue, 1.2f)) { d.DashStyle = DashStyle.Dash; g.DrawLine(d, 8, 0.5f, 8, 15.5f); }
+                            g.FillPolygon(bi, new PointF[] { new PointF(6.5f, 3), new PointF(6.5f, 13), new PointF(1, 13) });
+                            using (SolidBrush lb = new SolidBrush(Color.FromArgb(185, 185, 190))) g.FillPolygon(lb, new PointF[] { new PointF(9.5f, 3), new PointF(9.5f, 13), new PointF(15, 13) });
+                            break;
+                        case "border":      // picture inside a thick frame
+                            using (Pen fp = new Pen(blue, 2.2f)) g.DrawRectangle(fp, 1.5f, 1.5f, 13, 13);
+                            using (SolidBrush sk = new SolidBrush(Color.FromArgb(150, 205, 245))) g.FillRectangle(sk, 4, 4, 8, 8);
+                            using (SolidBrush gr = new SolidBrush(green)) g.FillPolygon(gr, new PointF[] { new PointF(4, 12), new PointF(7, 8), new PointF(9, 10), new PointF(10.5f, 8.5f), new PointF(12, 12) });
+                            break;
+                        case "shadow":      // card with a soft shadow
+                            using (SolidBrush sb = new SolidBrush(Color.FromArgb(90, 0, 0, 0))) g.FillRectangle(sb, 4.5f, 4.5f, 10.5f, 10.5f);
+                            using (SolidBrush sb = new SolidBrush(Color.FromArgb(45, 0, 0, 0))) g.FillRectangle(sb, 5.5f, 5.5f, 10.5f, 10.5f);
+                            g.FillRectangle(Brushes.White, 1.5f, 1.5f, 10.5f, 10.5f); g.DrawRectangle(p, 1.5f, 1.5f, 10.5f, 10.5f);
+                            break;
+                        case "torn":        // page with a ragged bottom edge
+                            {
+                                PointF[] pg = { new PointF(2, 1.5f), new PointF(14, 1.5f), new PointF(14, 11), new PointF(12, 13.5f), new PointF(10, 11.5f), new PointF(8, 14), new PointF(6, 11.5f), new PointF(4, 13.5f), new PointF(2, 11) };
+                                g.FillPolygon(Brushes.White, pg); g.DrawPolygon(p, pg);
+                                using (Pen lp = new Pen(Color.FromArgb(150, 150, 155), 1f)) { g.DrawLine(lp, 4.5f, 4.5f, 11.5f, 4.5f); g.DrawLine(lp, 4.5f, 7.5f, 11.5f, 7.5f); }
+                                break;
+                            }
+                        case "gray":        // half colour, half gray circle
+                            using (SolidBrush cb = new SolidBrush(Color.FromArgb(235, 120, 40))) g.FillPie(cb, 1.5f, 1.5f, 13, 13, 90, 180);
+                            using (SolidBrush gb = new SolidBrush(Color.FromArgb(150, 150, 150))) g.FillPie(gb, 1.5f, 1.5f, 13, 13, -90, 180);
+                            g.DrawEllipse(p, 1.5f, 1.5f, 13, 13);
+                            break;
+                        case "invert":      // circle half black, half white
+                            g.FillEllipse(Brushes.White, 1.5f, 1.5f, 13, 13);
+                            g.FillPie(bi, 1.5f, 1.5f, 13, 13, -90, 180);
+                            g.DrawEllipse(p, 1.5f, 1.5f, 13, 13);
                             break;
                         case "zoomin":
                         case "zoomout":

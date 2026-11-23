@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -241,20 +241,11 @@ namespace SnapMeasure
             s.Angle = 0;
             s.Pts.Add(p);
             if (s.Kind == ShapeKind.Stamp) s.Text = StampText(s.Mode, "");
-            if (t == Tool.Area && AreaOpen)
-            {
-                // area tool with Closed unticked: an open length in the area's colours
-                s.FromArea = s.Mode + 1;
-                s.Kind = ShapeKind.Perimeter;
-                s.Mode = 1;
-            }
             return s;
         }
 
-        /// <summary>Area tool: Closed unticked = measure an open polyline (length) instead of an area. Closed is the default.</summary>
-        public bool AreaOpen;
-
-        /// <summary>Closed ticked / unticked on selected areas: an area becomes an open length and back (one undo step).</summary>
+        /// <summary>Open lengths made by the Area tool in 1.3.0 (Closed unticked): ticking Closed on them gives the area
+        /// back; also turns selected areas into such lengths (one undo step). The Area tool itself always draws areas.</summary>
         public bool SetAreaClosed(bool closed)
         {
             List<Shape> t = Sel.FindAll(x => closed ? (x.Kind == ShapeKind.Perimeter && x.FromArea > 0 && x.Pts.Count >= 3) : x.Kind == ShapeKind.Area);
@@ -262,7 +253,7 @@ namespace SnapMeasure
             PushUndo(Snapshot());
             foreach (Shape x in t)
             {
-                if (closed) { x.Kind = ShapeKind.Area; x.Mode = Math.Max(0, Math.Min(2, x.FromArea - 1)); x.FromArea = 0; }
+                if (closed) { x.Kind = ShapeKind.Area; x.Mode = Math.Max(0, Math.Min(3, x.FromArea - 1)); x.FromArea = 0; }
                 else { x.FromArea = Math.Max(0, Math.Min(2, x.Mode)) + 1; x.Kind = ShapeKind.Perimeter; x.Mode = 1; }
                 x.Cache = null;
             }
@@ -396,6 +387,8 @@ namespace SnapMeasure
             if (disposing)
             {
                 if (layer != null) { layer.Dispose(); layer = null; }
+                if (pic != null) { pic.Dispose(); pic = null; }
+                if (picTimer != null) { picTimer.Dispose(); picTimer = null; }
                 if (editBox != null)
                 {
                     Font ef = editBox.Font;
@@ -1018,12 +1011,12 @@ namespace SnapMeasure
         {
             PointF c = Geo.Centroid(pts);
             Shape target = null;
-            if (Selected != null && Selected.Kind == ShapeKind.Area && Geo.InPolygon(c, Selected.Pts)) target = Selected;
+            if (CanHaveHoles(Selected) && Geo.InPolygon(c, Selected.Pts)) target = Selected;
             for (int i = Shapes.Count - 1; i >= 0 && target == null; i--)
-                if (Shapes[i].Kind == ShapeKind.Area && Shapes[i].Pts.Count >= 3 && Geo.InPolygon(c, Shapes[i].Pts)) target = Shapes[i];
+                if (CanHaveHoles(Shapes[i]) && Geo.InPolygon(c, Shapes[i].Pts)) target = Shapes[i];
             if (target == null)
             {
-                if (Message != null) Message("Draw the cut-out inside an area (measure the area first with M)");
+                if (Message != null) Message("Draw the cut-out inside an area (M) or a polygon (P)");
                 Invalidate();
                 return;
             }
@@ -1032,7 +1025,15 @@ namespace SnapMeasure
             target.Holes.Add(new List<PointF>(pts));
             Selected = target;
             FireDoc(); FireSel(); Invalidate();
-            if (Message != null) Message("Cut-out subtracted: net area " + Scale.Area(Measure.NetArea(target)));
+            if (Message != null)
+                Message(target.Kind == ShapeKind.Area ? "Cut-out subtracted: net area " + Scale.Area(Measure.NetArea(target))
+                                                      : "Hollow cut out of the polygon (right-click → Remove cut-outs to undo all)");
+        }
+
+        /// <summary>Shapes a cut-out can go into: an area (an opening, subtracted) or a closed polygon (a hollow section).</summary>
+        public static bool CanHaveHoles(Shape s)
+        {
+            return s != null && s.Pts.Count >= 3 && (s.Kind == ShapeKind.Area || (s.Kind == ShapeKind.Polygon && !s.IsOpenPath));
         }
 
         /// <summary>Moves the origin onto a coordinate point; every other point is then measured from there.</summary>
@@ -1371,11 +1372,12 @@ namespace SnapMeasure
                             : one.Kind == ShapeKind.Note ? "Edit note…" : one.Kind == ShapeKind.Stamp ? "Edit stamp text…" : "Label…";
                 add(what, "double-click", true, () => EditLabel(one));
                 if (one.Kind == ShapeKind.Coord) add("Make this point the origin (0,0)", "", HasOrigin, () => MakeOrigin(one));
-                if (one.Kind == ShapeKind.Area)
-                {
-                    add("Add a cut-out (opening)", "X", true, () => CurrentTool = Tool.Cutout);
-                    if (one.Holes != null) add("Remove cut-outs", "", true, ClearCutouts);
-                }
+            }
+            if (CanHaveHoles(one))
+            {
+                if (one.Kind != ShapeKind.Area) m.Items.Add(new ToolStripSeparator());
+                add(one.Kind == ShapeKind.Area ? "Add a cut-out (opening)" : "Add a cut-out (hollow section)", "X", true, () => CurrentTool = Tool.Cutout);
+                if (one.Holes != null) add("Remove cut-outs", "", true, ClearCutouts);
             }
             m.Items.Add(new ToolStripSeparator());
             add("Bring to front", "Ctrl+Shift+]", any, () => Order(0));
@@ -2068,6 +2070,20 @@ namespace SnapMeasure
             ViewMoved();
         }
 
+        // when a bar above or beside the canvas grows or shrinks (the style bar changes with the selection), the canvas
+        // moves inside the window: move the view the other way so the picture stays put on the screen
+        Point placedAt = new Point(int.MinValue, 0);
+        protected override void OnLocationChanged(EventArgs e)
+        {
+            base.OnLocationChanged(e);
+            if (placedAt.X != int.MinValue && Image != null && (Left != placedAt.X || Top != placedAt.Y))
+            {
+                Pan = new PointF(Pan.X - (Left - placedAt.X), Pan.Y - (Top - placedAt.Y));
+                ViewMoved();
+            }
+            placedAt = Location;
+        }
+
         protected override void OnSizeChanged(EventArgs e)
         {
             base.OnSizeChanged(e);
@@ -2257,6 +2273,29 @@ namespace SnapMeasure
             }
         }
 
+        // does the picture have see-through pixels? (only then is the checkerboard drawn under it; asked once per picture)
+        object alphaImg; bool alphaSeen;
+        bool PictureHasAlpha()
+        {
+            if (alphaImg == Image) return alphaSeen;
+            alphaImg = Image;
+            alphaSeen = false;
+            if (!System.Drawing.Image.IsAlphaPixelFormat(Image.PixelFormat)) return false;
+            if (Image.PixelFormat != PixelFormat.Format32bppArgb && Image.PixelFormat != PixelFormat.Format32bppPArgb) return alphaSeen = true;
+            BitmapData d = Image.LockBits(new Rectangle(0, 0, Image.Width, Image.Height), ImageLockMode.ReadOnly, Image.PixelFormat);
+            try
+            {
+                int[] row = new int[Image.Width];
+                for (int y = 0; y < Image.Height && !alphaSeen; y++)
+                {
+                    System.Runtime.InteropServices.Marshal.Copy(new IntPtr(d.Scan0.ToInt64() + (long)y * d.Stride), row, 0, row.Length);
+                    for (int x = 0; x < row.Length; x++) if ((uint)row[x] < 0xFF000000u) { alphaSeen = true; break; }
+                }
+            }
+            finally { Image.UnlockBits(d); }
+            return alphaSeen;
+        }
+
         bool paintErrorLogged;
 
         protected override void OnPaint(PaintEventArgs e)
@@ -2415,6 +2454,99 @@ namespace SnapMeasure
             base.OnInvalidated(e);
         }
 
+        // ---------- the picture scaled down to the current zoom, kept so panning only copies it ----------
+        // (the picture is never changed in place – edits give a new bitmap – so the bitmap itself is the key)
+        Bitmap pic;
+        object picImg; float picZoom;
+        float zoomSeen; PointF panSeen; int viewSeenAt;
+        bool quickPic, quickUsed;
+        Timer picTimer;
+        const long PicCacheMax = 16000000L;       // pixels (64 MB); bigger views are drawn straight
+
+        /// <summary>Picture and checkerboard, in picture coordinates (g is already scaled by Zoom).
+        /// While the view keeps moving (wheel zoom, panning) a quicker filter is used; the sharp picture follows once it rests.</summary>
+        void DrawPicture(Graphics g)
+        {
+            int w = Image.Width, h = Image.Height;
+            int now = Environment.TickCount;
+            bool changed = Zoom != zoomSeen || Pan != panSeen;
+            if (changed)
+            {
+                if (unchecked(now - viewSeenAt) < 300)       // the second change in a row: the view is moving
+                {
+                    quickPic = true;
+                    if (picTimer == null)
+                    {
+                        picTimer = new Timer { Interval = 200 };
+                        picTimer.Tick += (s, e) => { picTimer.Stop(); quickPic = false; if (quickUsed) { quickUsed = false; Invalidate(); } };
+                    }
+                    picTimer.Stop(); picTimer.Start();
+                }
+                zoomSeen = Zoom; panSeen = Pan; viewSeenAt = now;
+            }
+            if (Zoom < 1f)
+            {
+                int cw = Math.Max(1, (int)Math.Ceiling(w * Zoom)), ch = Math.Max(1, (int)Math.Ceiling(h * Zoom));
+                bool fresh = pic != null && picImg == Image && picZoom == Zoom;
+                if (!fresh && (long)cw * ch <= PicCacheMax)
+                {
+                    // zooming with the wheel: a quick picture now, the sharp one once the wheel rests
+                    if (quickPic)
+                    {
+                        if (PictureHasAlpha()) g.FillRectangle(Checker, 0, 0, w, h);
+                        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                        g.PixelOffsetMode = PixelOffsetMode.Half;
+                        g.DrawImage(Image, new RectangleF(0, 0, w, h), new RectangleF(0, 0, w, h), GraphicsUnit.Pixel);
+                        quickUsed = true;
+                        return;
+                    }
+                    if (pic == null || pic.Width != cw || pic.Height != ch)
+                    {
+                        if (pic != null) pic.Dispose();
+                        pic = new Bitmap(cw, ch, PixelFormat.Format32bppPArgb);
+                    }
+                    using (Graphics pg = Graphics.FromImage(pic))
+                    {
+                        pg.Clear(Color.Transparent);
+                        pg.ScaleTransform(Zoom, Zoom);
+                        if (PictureHasAlpha()) pg.FillRectangle(Checker, 0, 0, w, h);
+                        pg.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        pg.PixelOffsetMode = PixelOffsetMode.Half;
+                        pg.DrawImage(Image, new RectangleF(0, 0, w, h), new RectangleF(0, 0, w, h), GraphicsUnit.Pixel);
+                    }
+                    picImg = Image; picZoom = Zoom;
+                    fresh = true;
+                }
+                if (fresh)
+                {
+                    // one picture pixel per screen pixel: a plain copy
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(pic, new RectangleF(0, 0, cw / Zoom, ch / Zoom), new RectangleF(0, 0, cw, ch), GraphicsUnit.Pixel);
+                    return;
+                }
+            }
+            else if (pic != null && picImg != Image) { pic.Dispose(); pic = null; picImg = null; }    // a new picture: let the old copy go
+
+            // zoomed in (or a huge view): only the part of the picture in the window
+            RectangleF src = new RectangleF(0, 0, w, h);
+            if (Zoom >= 1f)
+            {
+                PointF a = ToImg(new Point(0, 0)), b = ToImg(new Point(Width, Height));
+                RectangleF vis = RectangleF.FromLTRB((float)Math.Floor(a.X) - 2, (float)Math.Floor(a.Y) - 2, (float)Math.Ceiling(b.X) + 2, (float)Math.Ceiling(b.Y) + 2);
+                src.Intersect(vis);
+                if (src.Width <= 0 || src.Height <= 0) return;
+            }
+            if (PictureHasAlpha()) g.FillRectangle(Checker, src);
+            InterpolationMode im;
+            if (Zoom >= 1.99f || Math.Abs(Zoom - 1f) < 0.001f) im = InterpolationMode.NearestNeighbor;     // 1:1 is a plain copy
+            else if (quickPic) { im = InterpolationMode.NearestNeighbor; quickUsed = true; }
+            else im = Zoom < 1f ? InterpolationMode.HighQualityBicubic : InterpolationMode.Bilinear;
+            g.InterpolationMode = im;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.DrawImage(Image, src, src, GraphicsUnit.Pixel);
+        }
+
         void PaintStatic(Graphics g, RectangleF vr, bool clip, Shape skip)
         {
             g.Clear(BackColor);
@@ -2424,10 +2556,7 @@ namespace SnapMeasure
             using (SolidBrush sh = new SolidBrush(Color.FromArgb(70, 0, 0, 0)))
                 g.FillRectangle(sh, vr.X + 4f / Zoom, vr.Y + 4f / Zoom, vr.Width, vr.Height);
             if (clip) g.SetClip(vr);
-            g.FillRectangle(Checker, 0, 0, Image.Width, Image.Height);
-            g.InterpolationMode = Zoom >= 1.99f ? InterpolationMode.NearestNeighbor : (Zoom < 1f ? InterpolationMode.HighQualityBicubic : InterpolationMode.Bilinear);
-            g.PixelOffsetMode = PixelOffsetMode.Half;
-            g.DrawImage(Image, new RectangleF(0, 0, Image.Width, Image.Height), new RectangleF(0, 0, Image.Width, Image.Height), GraphicsUnit.Pixel);
+            DrawPicture(g);
             g.PixelOffsetMode = PixelOffsetMode.Default;
             g.InterpolationMode = InterpolationMode.Bilinear;
             g.SmoothingMode = SmoothingMode.AntiAlias;

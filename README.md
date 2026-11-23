@@ -36,8 +36,7 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Keep inside** (lock button next to *Zoom to area*, `Ctrl+L`): drawing, moving, pasting, resizing and turning all stay
   inside the screenshot (or its crop), and the view no longer scrolls past the picture. Nothing is moved: whatever lies outside
   the picture is hidden until you unlock. Off by default; *Settings → General* sets whether new editors start locked.
-* **Area tool, open or closed** (`M`): untick **Closed** to measure an open polyline (a length) with the area tool; tick it
-  again to get the area back. Closed is the default.
+* **Area tool** (`M`) always measures a closed area; use **Length** (`W`) for an open run.
 * **Pin: rotate and mirror** – right-click → *Rotate / mirror*, or `R` / `Shift+R` (rotate right / left), `H` (mirror), `V` (flip).
 * **Revision clouds can be rotated** (green knob) when they have no callout. A **polygon or area with a cloud outline** is filled
   right out to its scallops.
@@ -122,6 +121,8 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 ## Run it
 Double-click `SnapMeasure.exe`. It sits in the system tray (bottom-right).
 Settings are saved in `SnapMeasure.ini` **next to the exe**, so you can carry it on a USB stick.
+To have it ready after every restart, tick **Start with Windows** in the tray menu (right-click the tray icon).
+In the Store version Windows asks once; you can also switch it in *Windows Settings → Apps → Startup*.
 
 | Capture | Keys |
 |---|---|
@@ -129,7 +130,7 @@ Settings are saved in `SnapMeasure.ini` **next to the exe**, so you can carry it
 | Active window | `Alt+PrtSc` or `Ctrl+Shift+2` |
 | Screen under mouse | `Ctrl+PrtSc` or `Ctrl+Shift+3` |
 | Last region again | `Shift+PrtSc` or `Ctrl+Shift+4` |
-| **Scrolling capture** (long page): pick the area, SnapMeasure scrolls it and joins the pieces; `Esc` stops | `Ctrl+Shift+5` |
+| **Scrolling capture** (long page): pick the area, SnapMeasure scrolls it and joins the pieces. Move the mouse to pause; **Stop** (bar under the area) or `Esc` finishes | `Ctrl+Shift+5` |
 | **Capture text (OCR)**: pick an area, its text goes to the clipboard | `Ctrl+Shift+6` |
 
 These are the default keys. Choose your own in **Settings → General** (click a box and press the keys; two per capture).
@@ -157,8 +158,8 @@ Open them from the tray menu or **Add-ons ▾ → On-screen ruler / On-screen pr
 | Tool | Key | What it does |
 |---|---|---|
 | Dimension | `D` | CAD-style dimension: solid arrowheads that grow with the line width, end ticks, and the value **in the middle of the line**. Drag the yellow handle to offset it. Double-click to add a prefix. |
-| Area / perimeter | `M` | Click corners → label with area + perimeter, area only or perimeter only (**Show** on the style bar) (A1, A2 …). Untick **Closed** for an open polyline length. |
-| Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area |
+| Area / perimeter | `M` | Click corners → label with area + perimeter, area only, perimeter only or none (**Show** on the style bar) (A1, A2 …). Always closed. |
+| Cut-out | `X` | Click the corners of an opening **inside an area** → it is subtracted: the label shows gross, cut-outs and **net** area. Inside a **polygon** it makes a hollow (e.g. a hollow steel section). |
 | Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …). Tick **Closed** for a closed perimeter. |
 | Perimeter | `Q` | The area tool set to perimeter only (P1, P2 …) |
 | Coordinates | `I` | The first click sets the origin 0,0; every point after it shows X / Y (**Y up, like CAD**). Drag the origin, or right-click a point → *Make this point the origin*, and every value updates. X and Y go to Excel. |
@@ -271,7 +272,7 @@ or as **.snapm**, which stays fully editable and keeps the crop and guides.
 | Crop is final | Adjustable crop that can be removed later |
 | Reported scaling bugs with mixed-DPI / multiple monitors | Per-monitor-DPI aware: captures in true physical pixels |
 | Annotations flattened once exported | `.snapm` project keeps everything editable |
-| Scrolling capture unreliable | Scrolls the window, lines the pieces up even when the app scrolls by fractions of a pixel, and keeps sticky headers once |
+| Scrolling capture unreliable | Scrolls the window, lines the pieces up even when the app scrolls by fractions of a pixel, and keeps sticky headers and status bars once (even when they show a changing number) |
 | No OCR built in | Copy text from pictures or the screen with Windows' own text recognition |
 
 Not included (yet): upload plugins.

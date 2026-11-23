@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -24,7 +24,7 @@ namespace SnapMeasure
     public class EditorForm : Form
     {
         readonly Canvas cv;
-        readonly float k;
+        float k;                         // UI scale of the monitor the window is on (1 = 100 %)
         ToolStrip bar, toolBar;
         ToolStripButton bUndo, bRedo;
         ToolStripLabel lZoomBar;
@@ -85,7 +85,7 @@ namespace SnapMeasure
             { Tool.Polyline, "Length: click along the run, double-click to finish." },
             { Tool.Perimeter, "Length: click along the run, double-click to finish." },
             { Tool.Coord, "Coordinates: click the origin first, then the points." },
-            { Tool.Cutout, "Cut-out: click the corners of the opening inside an area." },
+            { Tool.Cutout, "Cut-out: click the corners of the opening inside an area, or of the hollow inside a polygon." },
             { Tool.Cloud, "Cloud: drag around the change." },
             { Tool.Stamp, "Stamp: click where it goes." },
             { Tool.Note, "Note: click where it goes (never printed)." },
@@ -206,6 +206,168 @@ namespace SnapMeasure
 
         int S(float v) { return (int)Math.Round(v * k); }
 
+        /// <summary>
+        /// Moved to a monitor with other display scaling (e.g. a 150 % laptop and a 100 % monitor): take the size
+        /// Windows suggests and rebuild the bars and the side panel at the new scale, so the tool icons, text and
+        /// panel stay the right size instead of keeping the size of the monitor the window was opened on.
+        /// </summary>
+        /// While the window is dragged nothing is rebuilt or resized (that made dragging lag): the new size and the
+        /// bars are applied once, together, when the mouse is let go. Moved by keys (Win+Shift+arrow) or by
+        /// Windows, it happens straight away.
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_ENTERSIZEMOVE = 0x0231, WM_EXITSIZEMOVE = 0x0232;
+            if (m.Msg == Native.WM_DPICHANGED)
+            {
+                float nk = (m.WParam.ToInt64() & 0xFFFF) / 96f;
+                Native.RECT r = (Native.RECT)System.Runtime.InteropServices.Marshal.PtrToStructure(m.LParam, typeof(Native.RECT));
+                if (nk >= 0.5f)
+                {
+                    pendingK = nk;
+                    pendingBounds = WindowState == FormWindowState.Normal ? r.ToRectangle() : (Rectangle?)null;
+                    // never rebuild inside a rebuild: resizing the window during one can make Windows announce another
+                    // change straight away (that left two sets of bars in the window)
+                    if (!moving && !rescaling) BeginInvoke((Action)(() => ApplyPendingScale(false)));
+                }
+                m.Result = IntPtr.Zero;
+                return;
+            }
+            if (m.Msg == WM_ENTERSIZEMOVE) moving = true;
+            else if (m.Msg == WM_EXITSIZEMOVE)
+            {
+                moving = false;
+                if (pendingK > 0) BeginInvoke((Action)(() => ApplyPendingScale(true)));
+                else CheckScaleSoon();
+            }
+            base.WndProc(ref m);
+        }
+
+        protected override void OnLocationChanged(EventArgs e)
+        {
+            base.OnLocationChanged(e);
+            if (!moving && !rescaling) CheckScaleSoon();
+        }
+
+        /// <summary>Safety net: shortly after the window settles, compare the scale Windows uses for it with the
+        /// one the bars were made for, in case a change was missed.</summary>
+        void CheckScaleSoon()
+        {
+            if (!IsHandleCreated) return;
+            if (scaleCheck == null)
+            {
+                scaleCheck = new Timer();
+                scaleCheck.Interval = 250;
+                scaleCheck.Tick += (s, e) =>
+                {
+                    scaleCheck.Stop();
+                    if (moving || rescaling || IsDisposed || pendingK > 0) return;
+                    float now = Native.WindowScale(Handle);
+                    if (now > 0 && Math.Abs(now - k) > 0.01f) { pendingK = now; ApplyPendingScale(true); }
+                };
+                Disposed += (s, e) => scaleCheck.Dispose();
+            }
+            scaleCheck.Stop();
+            scaleCheck.Start();
+        }
+
+        Timer scaleCheck;
+
+        bool moving, rescaling;
+        float pendingK;
+        Rectangle? pendingBounds;
+
+        void ApplyPendingScale(bool dragged)
+        {
+            if (rescaling || moving || IsDisposed) return;
+            float nk = pendingK;
+            Rectangle? nb = pendingBounds;
+            pendingK = 0; pendingBounds = null;
+            if (nk < 0.5f) return;
+            rescaling = true;
+            try
+            {
+                if (Math.Abs(nk - k) > 0.01f) ApplyScale(nk, dragged ? null : nb);
+                else if (nb.HasValue && !dragged) Bounds = nb.Value;
+            }
+            finally { rescaling = false; }
+            // a change Windows announced while we were rebuilding: only if the window really is on another monitor now
+            if (pendingK > 0)
+            {
+                pendingK = 0; pendingBounds = null;
+                float now = Native.WindowScale(Handle);
+                if (now > 0 && Math.Abs(now - k) > 0.01f) { pendingK = now; BeginInvoke((Action)(() => ApplyPendingScale(true))); }
+            }
+        }
+
+        void ApplyScale(float nk, Rectangle? newBounds)
+        {
+            float ratio = nk / k;
+            k = nk;
+            Rectangle target = Bounds;
+            if (WindowState == FormWindowState.Normal)
+            {
+                // dragged: same top-left, size scaled for the new monitor, kept inside its work area
+                target = newBounds.HasValue ? newBounds.Value
+                       : new Rectangle(Left, Top, (int)Math.Round(Width * ratio), (int)Math.Round(Height * ratio));
+                Rectangle wa = Screen.FromPoint(new Point(Left + S(40), Top + S(10))).WorkingArea;
+                target.Width = Math.Min(target.Width, wa.Width); target.Height = Math.Min(target.Height, wa.Height);
+                target.X = Math.Max(wa.Left, Math.Min(target.X, wa.Right - target.Width));
+                target.Y = Math.Max(wa.Top, Math.Min(target.Y, wa.Bottom - target.Height));
+            }
+            // the view: was the whole picture on screen (then fit it again), else which spot was in the middle
+            RectangleF vr0 = cv.ViewRect;
+            bool wholeVisible = vr0.Width * cv.Zoom <= cv.Width - cv.RulerSize + 1 && vr0.Height * cv.Zoom <= cv.Height - cv.RulerSize + 1;
+            PointF midImg = cv.ToImg(new Point(cv.Width / 2, cv.Height / 2));
+            bool panel = props.Visible;
+            Control[] old = { props, toolHost, styleBar, bar, status };
+            Native.SendMessage(Handle, 0x000B, IntPtr.Zero, IntPtr.Zero);       // WM_SETREDRAW off: one clean repaint at the end
+            SuspendLayout();
+            try
+            {
+                foreach (Control c in old) { c.Visible = false; Controls.Remove(c); }
+                toolButtons.Clear();
+                MinimumSize = Size.Empty;
+                if (WindowState == FormWindowState.Normal) Bounds = target;
+                MinimumSize = new Size(S(780), S(520));
+                Font = Native.UiFont("Segoe UI", 9f, k);
+                cv.Dpi = k;
+                BuildTopBar();
+                BuildToolBar();
+                BuildStyleBar();
+                BuildProps();
+                BuildStatus();
+                props.Visible = panel;
+                // fill the new bars and panel before they are on the window, so they are laid out only once
+                SyncToolButtons();
+                LoadMarker();
+                RefreshMeasurements();     // also the scale and the texts list
+                UpdateUndo();
+                UpdateZoom();
+                // the canvas stays first in the list, so it still fills what the docked bars leave (same order as at start)
+                Controls.Add(props);
+                Controls.Add(toolHost);
+                Controls.Add(styleBar);
+                Controls.Add(bar);
+                Controls.Add(status);
+                LoadStyle();               // shows the rows for the current tool: needs the bars on the window
+            }
+            finally
+            {
+                ResumeLayout(true);
+                FitToolBar();
+                if (wholeVisible) cv.Fit();
+                else
+                {
+                    cv.Pan = new PointF(cv.Width / 2f - midImg.X * cv.Zoom, cv.Height / 2f - midImg.Y * cv.Zoom);
+                    cv.ZoomAt(cv.Zoom, new Point(cv.Width / 2, cv.Height / 2));    // same zoom, applies the limits
+                }
+                Native.SendMessage(Handle, 0x000B, (IntPtr)1, IntPtr.Zero);      // WM_SETREDRAW on
+                Native.RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero, 0x0485);   // RDW_INVALIDATE | ERASE | ALLCHILDREN | FRAME
+            }
+            cv.Focus();
+            BeginInvoke((Action)(() => { foreach (Control c in old) c.Dispose(); }));   // after the repaint
+        }
+
         internal Canvas CanvasControl { get { return cv; } }
         internal void RefreshAll() { LoadStyle(); LoadScale(); LoadMarker(); RefreshMeasurements(); SyncToolButtons(); UpdateZoom(); }
 
@@ -271,17 +433,17 @@ namespace SnapMeasure
             img.ImageScaling = ToolStripItemImageScaling.None;
             img.AutoToolTip = false;       // a tooltip would cover the first menu items
             img.DropDown.Font = Font;
-            MenuItem(img, "Rotate right 90°", null, (s, e) => cv.ImageOp("rotcw"));
-            MenuItem(img, "Rotate left 90°", null, (s, e) => cv.ImageOp("rotccw"));
-            MenuItem(img, "Mirror horizontally", null, (s, e) => cv.ImageOp("fliph"));
-            MenuItem(img, "Mirror vertically", null, (s, e) => cv.ImageOp("flipv"));
+            MenuItem(img, "Rotate right 90°", "rotcw", (s, e) => cv.ImageOp("rotcw"));
+            MenuItem(img, "Rotate left 90°", "rotccw", (s, e) => cv.ImageOp("rotccw"));
+            MenuItem(img, "Mirror horizontally", "fliph", (s, e) => cv.ImageOp("fliph"));
+            MenuItem(img, "Mirror vertically", "flipv", (s, e) => cv.ImageOp("flipv"));
             img.DropDownItems.Add(new ToolStripSeparator());
-            MenuItem(img, "Border", "effects", (s, e) => cv.ImageOp("border"));
-            MenuItem(img, "Drop shadow", null, (s, e) => cv.ImageOp("shadow"));
-            MenuItem(img, "Torn edge", null, (s, e) => cv.ImageOp("torn"));
+            MenuItem(img, "Border", "border", (s, e) => cv.ImageOp("border"));
+            MenuItem(img, "Drop shadow", "shadow", (s, e) => cv.ImageOp("shadow"));
+            MenuItem(img, "Torn edge", "torn", (s, e) => cv.ImageOp("torn"));
             img.DropDownItems.Add(new ToolStripSeparator());
-            MenuItem(img, "Grayscale", null, (s, e) => cv.ImageOp("gray"));
-            MenuItem(img, "Invert colours", null, (s, e) => cv.ImageOp("invert"));
+            MenuItem(img, "Grayscale", "gray", (s, e) => cv.ImageOp("gray"));
+            MenuItem(img, "Invert colours", "invert", (s, e) => cv.ImageOp("invert"));
             bar.Items.Add(img);
             bar.Items.Add(new ToolStripSeparator());
 
@@ -317,8 +479,8 @@ namespace SnapMeasure
             addons.ImageScaling = ToolStripItemImageScaling.None;
             addons.AutoToolTip = false;      // no tooltip: it would cover the menu
             addons.DropDown.Font = Font;
-            MenuItem(addons, "On-screen ruler – measure anything on screen", "ruler", (s, e) => Overlays.ShowRuler());
-            MenuItem(addons, "On-screen protractor – measure an angle on screen", "protractor", (s, e) => Overlays.ShowProtractor());
+            MenuItem(addons, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler()).ToolTipText = "Measure anything on screen";
+            MenuItem(addons, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor()).ToolTipText = "Measure an angle on screen";
             bar.Items.Add(addons);
 
             // right end, next to the window's own buttons: side panel, pin, settings, help (the first added sits furthest right)
@@ -416,8 +578,8 @@ namespace SnapMeasure
             AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
             AddTool(Tool.Dimension, "Dimension (D)");
             AddTool(Tool.Perimeter, "Length: path along a run; tick Closed for a closed perimeter (W)");
-            AddTool(Tool.Area, "Area / perimeter: closed outline, show area, perimeter or both; untick Closed for an open polyline length (M; Q = perimeter only)");
-            AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area (X)");
+            AddTool(Tool.Area, "Area / perimeter: click the corners, show area, perimeter or both (M; Q = perimeter only)");
+            AddTool(Tool.Cutout, "Cut-out: subtract an opening from an area, or make a hollow in a polygon (X)");
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
             AddTool(Tool.Coord, "Coordinates: first click = origin 0,0, then points show X / Y (I)");
@@ -451,7 +613,8 @@ namespace SnapMeasure
             bMatch.ImageScaling = ToolStripItemImageScaling.None;
             bMatch.DisplayStyle = ToolStripItemDisplayStyle.Image;
             bMatch.AutoSize = false;
-            bMatch.Size = new Size(S(IconSize + 24), S(IconSize + 3));
+            bMatch.Padding = Padding.Empty;
+            bMatch.Size = new Size(S(IconSize + 24), ToolButtonH);
             bMatch.ToolTipText = "Match properties: select a shape, then click the shapes to give its look (Ctrl+Shift+M; Esc or right-click ends)";
             bMatch.Margin = new Padding(0, S(1), 0, S(1));
             bMatch.Click += (s, e) => { ToggleMatch(); cv.Focus(); };
@@ -528,7 +691,8 @@ namespace SnapMeasure
                 }
                 else
                 {
-                    it.Height = on ? S(IconSize + 1) : S(IconSize + 3);
+                    // never shorter than the icon plus the button's border, or the icon gets clipped (looked squashed)
+                    it.Height = on ? ToolButtonH - S(1) : ToolButtonH;
                     it.Margin = on ? new Padding(0) : new Padding(0, S(1), 0, S(1));
                 }
             }
@@ -573,6 +737,9 @@ namespace SnapMeasure
             toolBar.Items.Add(l);
         }
 
+        /// <summary>Tool button height: the icon, 2 px of border above and below, and 1 px of air (whole pixels at any scale).</summary>
+        int ToolButtonH { get { return S(IconSize) + 2 * Math.Max(3, S(3)); } }
+
         void AddTool(Tool t, string tip)
         {
             ToolStripButton b = new ToolStripButton();
@@ -580,7 +747,8 @@ namespace SnapMeasure
             b.ImageScaling = ToolStripItemImageScaling.None;
             b.DisplayStyle = ToolStripItemDisplayStyle.Image;
             b.AutoSize = false;
-            b.Size = new Size(S(IconSize + 24), S(IconSize + 3));
+            b.Padding = Padding.Empty;
+            b.Size = new Size(S(IconSize + 24), ToolButtonH);
             b.ToolTipText = tip;
             b.Margin = new Padding(0, S(1), 0, S(1));
             b.Click += (s, e) => { cv.CurrentTool = t; cv.Focus(); };
@@ -950,7 +1118,7 @@ namespace SnapMeasure
             cCallout = Combo(130, "No callout", "Revision triangle", "Text box");
             cCallout.SelectedIndexChanged += (s, e) => CalloutChanged();
             tip.SetToolTip(cCallout, "Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)");
-            cShow = Combo(150, "Area + perimeter", "Area only", "Perimeter only");
+            cShow = Combo(150, "Area + perimeter", "Area only", "Perimeter only", "None");
             cShow.SelectedIndexChanged += (s, e) =>
             {
                 int m = cShow.SelectedIndex;
@@ -965,10 +1133,8 @@ namespace SnapMeasure
             {
                 if (loading) return;
                 bool c = cClosed.Checked;
-                // area tool with nothing selected: Closed = area (default), unticked = open length
-                if (cv.Sel.Count == 0 && cv.EditingShape == null && cv.CurrentTool == Tool.Area) { cv.AreaOpen = !c; LoadStyle(); return; }
-                // selected areas become open lengths and back
-                if (cv.Sel.Count > 0) cv.SetAreaClosed(c);
+                // an open length made by the Area tool in 1.3.0: ticking Closed gives the area back
+                if (c && cv.Sel.Count > 0) cv.SetAreaClosed(true);
                 // perimeter: closed = perimeter, open = length · polygon: closed = polygon, open = polyline
                 if (cv.Sel.Count == 0 || cv.Sel.Exists(x => x.Kind == ShapeKind.Polygon || (x.Kind == ShapeKind.Perimeter && x.FromArea == 0)))
                     ApplyStyle(x => { if (x.Kind == ShapeKind.Polygon || (x.Kind == ShapeKind.Perimeter && x.FromArea == 0)) x.Mode = c ? 0 : 1; });
@@ -1455,7 +1621,7 @@ namespace SnapMeasure
             foreach (Control c in styleBar.Controls) c.Enabled = s != null || c == lStyleFor;
             if (s == null)
             {
-                lStyleFor.Text = cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape";
+                lStyleFor.Text = cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's or polygon's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape";
                 rowHl.Visible = rowStrength.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
                 gDash.Visible = rowForm.Visible = rowCallout.Visible = rowClosed.Visible = rowFrame.Visible = rowShow.Visible = false;
             }
@@ -1494,20 +1660,17 @@ namespace SnapMeasure
                 if (rowForm.Visible) cForm.SelectedIndex = Math.Max(0, Math.Min(4, s.Form));
                 rowCallout.Visible = kd == ShapeKind.Cloud;
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
-                // length (W) and polygon: tick Closed to close the outline
-                // area (M): Closed ticked = area (default); unticked = an open polyline measured as a length
-                bool areaTool = cv.Sel.Count == 0 && cv.EditingShape == null && cv.CurrentTool == Tool.Area;
-                rowClosed.Visible = kd == ShapeKind.Perimeter || ((kd == ShapeKind.Polygon || kd == ShapeKind.Area) && cv.CurrentTool != Tool.Cutout);
-                rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout && !(areaTool && cv.AreaOpen)) || kd == ShapeKind.Radius;
-                if (areaTool && cv.AreaOpen) lStyleFor.Text = "Area tool – open length (tick Closed for an area)";
+                // length (W) and polygon: tick Closed to close the outline. The Area tool (M) is always closed: no tick.
+                rowClosed.Visible = kd == ShapeKind.Perimeter || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout);
+                rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout) || kd == ShapeKind.Radius;
                 if (rowShow.Visible)
                 {
                     string[] items = kd == ShapeKind.Radius ? new[] { "Radius + diameter", "Radius only", "Diameter only" }
-                                                            : new[] { "Area + perimeter", "Area only", "Perimeter only" };
+                                                            : new[] { "Area + perimeter", "Area only", "Perimeter only", "None" };
                     if ((string)cShow.Items[0] != items[0]) { cShow.Items.Clear(); cShow.Items.AddRange(items); }
-                    cShow.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
+                    cShow.SelectedIndex = Math.Max(0, Math.Min(items.Length - 1, s.Mode));
                 }
-                if (rowClosed.Visible) cClosed.Checked = kd == ShapeKind.Area ? !(areaTool && cv.AreaOpen) : s.Mode == 0;
+                if (rowClosed.Visible) cClosed.Checked = s.Mode == 0 && s.FromArea == 0;
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
                 rowFrame.Visible = false;
                 tip.SetToolTip(nWidth, kd == ShapeKind.Text ? "Frame width – 0 = no frame" : "Line width");
