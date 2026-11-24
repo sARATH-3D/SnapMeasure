@@ -21,6 +21,8 @@
   </Dependencies>
   <Resources>
     <Resource Language="en-us" />
+    <!-- the app has a Korean interface (Settings → General → Language): the Store then asks for a Korean listing too -->
+    <Resource Language="ko-kr" />
   </Resources>
   <Applications>
     <Application Id="SnapMeasure" Executable="SnapMeasure.exe" EntryPoint="Windows.FullTrustApplication">
