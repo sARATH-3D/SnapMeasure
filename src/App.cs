@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.3.2.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.2.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.3.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.3.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -271,6 +271,134 @@ namespace SnapMeasure
                   fold.ShownStrength(false) + "|" + cv.Styles[Tool.Highlight].MagnifyFactor.ToString("0.0", CultureInfo.InvariantCulture) + "|" +
                   (rt9.Count == 3 ? rt9[0].Strength + "/" + rt9[1].Strength + "/" + rt9[2].Strength : "-"), "4.0|20|12|3|2.0|6/5/0");
             cv.Shapes.Remove(fz); cv.Shapes.Remove(fp);
+
+            // focus on a pasted picture: grayscale / pixelate change it too; Cut blanks inside or outside
+            using (Bitmap fb = new Bitmap(200, 100))
+            using (Bitmap pic = new Bitmap(60, 60))
+            {
+                using (Graphics q = Graphics.FromImage(fb)) q.Clear(Color.FromArgb(200, 30, 30));
+                using (Graphics q = Graphics.FromImage(pic)) q.Clear(Color.FromArgb(20, 60, 220));
+                Shape ps = new Shape(); ps.Kind = ShapeKind.Image; ps.Img = pic; ps.FillOpacity = 100; ps.Width = 0;
+                ps.Pts.Add(new PointF(20, 20)); ps.Pts.Add(new PointF(80, 80));
+                Func<int, float[], Color[]> run = (mode, box) =>
+                {
+                    Shape h = cv.Styles[Tool.Highlight].Clone(); h.Pts.Clear(); h.Mode = mode; h.Angle = 0;
+                    h.Pts.Add(new PointF(box[0], box[1])); h.Pts.Add(new PointF(box[2], box[3]));
+                    using (Bitmap o = new Bitmap(200, 100))
+                    using (Graphics q = Graphics.FromImage(o))
+                    {
+                        q.DrawImage(fb, 0, 0, 200, 100);
+                        Renderer.DrawAll(q, new List<Shape> { ps, h }, fb, cv.Scale, null, true);
+                        return new Color[] { o.GetPixel(50, 50), o.GetPixel(150, 50) };
+                    }
+                };
+                Func<Color, string> gray = c => Math.Abs(c.R - c.G) < 4 && Math.Abs(c.G - c.B) < 4 ? "gray" : "colour";
+                Color[] gIn = run((int)HighlightMode.GrayscaleInside, new float[] { 0, 0, 200, 100 });
+                Color[] gOut = run((int)HighlightMode.Grayscale, new float[] { 120, 0, 200, 100 });
+                check("Focus on pasted picture", gray(gIn[0]) + "|" + gray(gOut[0]) + "|" + gray(gOut[1]), "gray|gray|colour");
+
+                // a picture pasted outside the captured picture (to the left of it) gets the same treatment
+                Shape po = ps.Clone(); po.Img = pic; po.Pts.Clear(); po.Pts.Add(new PointF(-70, 20)); po.Pts.Add(new PointF(-10, 80));
+                Func<int, float[], Color[]> runOut = (mode, box) =>
+                {
+                    Shape h = cv.Styles[Tool.Highlight].Clone(); h.Pts.Clear(); h.Mode = mode; h.Angle = 0;
+                    h.Pts.Add(new PointF(box[0], box[1])); h.Pts.Add(new PointF(box[2], box[3]));
+                    using (Bitmap o = new Bitmap(300, 100))
+                    using (Graphics q = Graphics.FromImage(o))
+                    {
+                        q.TranslateTransform(100, 0);
+                        q.DrawImage(fb, 0, 0, 200, 100);
+                        Renderer.DrawAll(q, new List<Shape> { po, h }, fb, cv.Scale, null, true);
+                        return new Color[] { o.GetPixel(60, 50), o.GetPixel(250, 50) };   // the outside picture, the captured picture
+                    }
+                };
+                Color[] oOut = runOut((int)HighlightMode.Grayscale, new float[] { 120, 0, 200, 100 });
+                Color[] oIn = runOut((int)HighlightMode.GrayscaleInside, new float[] { -90, 0, 200, 100 });
+                Color[] oPix = runOut((int)HighlightMode.PixelateOutside, new float[] { 120, 0, 200, 100 });
+                check("Focus on picture outside the capture", gray(oOut[0]) + "|" + gray(oIn[0]) + "|" + gray(oIn[1]) + "|" + (oPix[0].B > 150 ? "blue" : "lost"),
+                      "gray|gray|gray|blue");
+            }
+
+            // focus perimeter: clicked corners, with a cut-out (X) that stays untouched
+            using (Bitmap fb = new Bitmap(200, 200))
+            {
+                using (Graphics q = Graphics.FromImage(fb)) q.Clear(Color.FromArgb(200, 30, 30));
+                Shape pf = cv.Styles[Tool.Highlight].Clone(); pf.Pts.Clear(); pf.Angle = 0;
+                pf.Mode = (int)HighlightMode.GrayscaleInside; pf.Form = (int)HighlightForm.Perimeter;
+                pf.Pts.AddRange(new[] { new PointF(10, 10), new PointF(190, 10), new PointF(190, 190), new PointF(10, 190) });
+                pf.Holes = new List<List<PointF>> { new List<PointF> { new PointF(80, 80), new PointF(120, 80), new PointF(120, 120), new PointF(80, 120) } };
+                Func<Color, string> gray2 = c => Math.Abs(c.R - c.G) < 4 && Math.Abs(c.G - c.B) < 4 ? "gray" : "colour";
+                string px;
+                using (Bitmap o = new Bitmap(200, 200))
+                using (Graphics q = Graphics.FromImage(o))
+                {
+                    q.DrawImage(fb, 0, 0, 200, 200);
+                    Renderer.DrawAll(q, new List<Shape> { pf }, fb, cv.Scale, null, true);
+                    px = gray2(o.GetPixel(40, 40)) + "|" + gray2(o.GetPixel(100, 100)) + "|" + gray2(o.GetPixel(5, 5));
+                }
+                List<Shape> rtF = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { pf }));
+                string rtS = rtF.Count == 1 ? rtF[0].IsFocusPoly + "/" + rtF[0].Pts.Count + "/" + (rtF[0].Holes != null ? rtF[0].Holes.Count : 0) : "-";
+                check("Focus perimeter with cut-out", px + "|" + rtS + "|" + pf.IsPoly + "|" + ShapeOps.Hit(pf, new PointF(40, 40), 2) + "|" + Canvas.CanHaveHoles(pf),
+                      "gray|colour|colour|True/4/1|True|True|True");
+            }
+
+            // focus border: every mode draws its outline in the line colour (thin by default)
+            using (Bitmap fb = new Bitmap(100, 100))
+            {
+                using (Graphics q = Graphics.FromImage(fb)) q.Clear(Color.White);
+                List<string> bd = new List<string>();
+                foreach (int mode in new[] { (int)HighlightMode.Marker, (int)HighlightMode.Spotlight, (int)HighlightMode.Grayscale, (int)HighlightMode.Pixelate })
+                {
+                    Shape h = cv.Styles[Tool.Highlight].Clone(); h.Pts.Clear(); h.Mode = mode; h.Angle = 0; h.Stroke = Color.Blue; h.StrokeOpacity = 100;
+                    h.Pts.Add(new PointF(20.5f, 20.5f)); h.Pts.Add(new PointF(80.5f, 80.5f));
+                    using (Bitmap o = new Bitmap(100, 100))
+                    using (Graphics q = Graphics.FromImage(o))
+                    {
+                        q.DrawImage(fb, 0, 0, 100, 100);
+                        Renderer.DrawAll(q, new List<Shape> { h }, fb, cv.Scale, null, true);
+                        Color c = o.GetPixel(50, 20);
+                        bd.Add(c.B > 150 && c.R < 120 ? "border" : "none");
+                    }
+                }
+                check("Focus border in every mode", string.Join("|", bd.ToArray()) + "|" + cv.Styles[Tool.Highlight].Width, "border|border|border|border|1");
+            }
+
+            // radius Show: all three values; capture keys include opening the clipboard picture (Ctrl+Shift+7)
+            {
+                ScaleInfo ra = new ScaleInfo();
+                check("Radius label: all", Renderer.RadiusText(7, ra, 10f, 31.4159).Replace("\n", " | "),
+                      Renderer.RadiusText(1, ra, 10f, 0) + " | " + Renderer.RadiusText(2, ra, 10f, 0) + " | " + Renderer.RadiusText(6, ra, 10f, 31.4159));
+                int ci = Array.IndexOf(Hotkeys.Ids, "Clipboard");
+                check("Clipboard key", ci + "|" + Hotkeys.Text(Hotkeys.Default(ci, 1)) + "|" + Hotkeys.Labels.Length, "6|Ctrl+Shift+7|7");
+            }
+
+            // arrow: the tail end is cut flat (no round cap sticking out behind the start point)
+            using (Bitmap ab = new Bitmap(120, 40))
+            using (Graphics q = Graphics.FromImage(ab))
+            {
+                q.Clear(Color.White);
+                Shape arT = cv.Styles[Tool.Arrow].Clone(); arT.Pts.Clear(); arT.Pts.Add(new PointF(30, 20)); arT.Pts.Add(new PointF(110, 20));
+                arT.Width = 12; arT.HeadStart = 0; arT.Shadow = false;
+                Renderer.Draw(q, arT, ab, cv.Scale, null);
+                check("Arrow tail flat", (ab.GetPixel(27, 20).R > 240 ? "flat" : "round") + "|" + (ab.GetPixel(33, 20).G < 200 ? "drawn" : "missing"), "flat|drawn");
+            }
+
+            // angle with Shift: a tilted first arm still lets the second arm go level or plumb
+            PointF snapH = Canvas.AngleArmSnap(new PointF(0, 0), new PointF(100, -58), new PointF(100, 6));
+            PointF snapV = Canvas.AngleArmSnap(new PointF(0, 0), new PointF(100, -58), new PointF(-4, 100));
+            check("Angle Shift snaps level / plumb", P(snapH) + "|" + P(snapV), "100.18,0.00|0.00,100.08");
+
+            // markers: resizing one sizes its whole series (and the next ones), not the other series
+            {
+                Shape tmplN = cv.Styles[Tool.Counter].Clone(), tmplL = cv.Styles[Tool.Letter].Clone();
+                Shape m1 = Mk(cv, Tool.Counter, 10, 10), m2 = Mk(cv, Tool.Counter, 60, 10), l1 = Mk(cv, Tool.Letter, 110, 10);
+                float lf = l1.FontSize;
+                m1.FontSize = 41;
+                cv.MatchMarkerSeries(m1);
+                check("Marker series size", m2.FontSize + "|" + cv.Styles[Tool.Counter].FontSize + "|" + (l1.FontSize == lf ? "letters kept" : "letters changed"), "41|41|letters kept");
+                cv.Shapes.Remove(m1); cv.Shapes.Remove(m2); cv.Shapes.Remove(l1);
+                cv.Styles[Tool.Counter] = tmplN; cv.Styles[Tool.Letter] = tmplL;
+            }
 
             // strike-out as heavy as the letters (picture for a visual check), and a filled cloud polygon
             using (Bitmap sk = new Bitmap(700, 330))
@@ -1174,6 +1302,20 @@ namespace SnapMeasure
         static void Deliver(Bitmap b, string title) { Deliver(b, title, Rectangle.Empty); }
 
         /// <summary>'area' = where the capture was on screen, to place the mouse pointer (Settings → Capture the mouse pointer).</summary>
+        /// <summary>What a capture does when nothing is set yet: copy it to the clipboard (the tray icon, Ctrl+Shift+PrtSc and
+        /// the editor's New capture open the editor).</summary>
+        public const int DefaultAfter = 1;
+
+        /// <summary>Set while the editor's New capture runs: that capture always opens in a new editor.</summary>
+        static bool forceEditor;
+
+        /// <summary>The editor's New capture: a region, always into a new editor whatever Settings → Capture says.</summary>
+        public static void CaptureRegionToEditor()
+        {
+            // the capture itself runs later (after the screen settles): the flag is set and cleared inside it
+            CaptureRegion(true);
+        }
+
         static void Deliver(Bitmap b, string title, Rectangle area)
         {
             if (b == null) { ScreenCapture.ForgetCursor(); return; }
@@ -1184,7 +1326,7 @@ namespace SnapMeasure
                 curAt = new Point(cur.ScreenPos.X - area.X, cur.ScreenPos.Y - area.Y);
                 if (area.IsEmpty || !new Rectangle(0, 0, b.Width, b.Height).IntersectsWith(new Rectangle(curAt, cur.Image.Size))) { cur.Image.Dispose(); cur = null; }
             }
-            int afterMode = Settings.GetInt("AfterCapture", 0);
+            int afterMode = forceEditor ? 0 : Settings.GetInt("AfterCapture", DefaultAfter);
             if (cur != null && afterMode != 0)
             {
                 // no editor: the pointer goes into the picture itself
@@ -1192,7 +1334,7 @@ namespace SnapMeasure
                 cur.Image.Dispose(); cur = null;
             }
             if (Settings.GetBool("CameraSound", false)) Shutter.Play();
-            int after = Settings.GetInt("AfterCapture", 0);
+            int after = afterMode;
             bool copy = after == 1 || after == 3 || (after == 0 && Settings.GetBool("CopyOnCapture", true));
             if (copy) { try { Clipboard.SetImage(b); } catch { } }
             if (after == 2 || after == 3)
@@ -1299,7 +1441,9 @@ namespace SnapMeasure
             else run();
         }
 
-        public static void CaptureRegion()
+        public static void CaptureRegion() { CaptureRegion(false); }
+
+        static void CaptureRegion(bool toEditor)
         {
             Guard(() =>
             {
@@ -1308,7 +1452,9 @@ namespace SnapMeasure
                 Bitmap b = ScreenCapture.SelectRegion(out r, out title);
                 if (b == null) return;
                 Settings.Set("LastRegion", r.X + "," + r.Y + "," + r.Width + "," + r.Height);
-                Deliver(b, Named(title, "Region " + r.Width + "×" + r.Height), r);
+                forceEditor = toEditor;
+                try { Deliver(b, Named(title, "Region " + r.Width + "×" + r.Height), r); }
+                finally { forceEditor = false; }
             });
         }
 
@@ -1367,16 +1513,59 @@ namespace SnapMeasure
         {
             try
             {
-                if (!Clipboard.ContainsImage()) { MessageBox.Show("The clipboard doesn't contain an image.", "SnapMeasure"); return; }
-                using (Image img = Clipboard.GetImage())
-                {
-                    if (img == null) return;
-                    ProjectFile.CheckImageSize(img.Width, img.Height);
-                    EditorForm f = new EditorForm(new Bitmap(img), "Clipboard");
-                    f.Show();
-                }
+                // only read: the clipboard (and Windows clipboard history) is left exactly as it was
+                Bitmap b = ClipboardPicture();
+                if (b == null) { MessageBox.Show(Lang.T("The clipboard doesn't contain an image."), "SnapMeasure"); return; }
+                ProjectFile.CheckImageSize(b.Width, b.Height);
+                EditorForm f = new EditorForm(b, "Clipboard");
+                f.Show();
+                f.Activate();
             }
             catch (Exception ex) { MessageBox.Show("Could not read the clipboard: " + ex.Message, "SnapMeasure"); }
+        }
+
+        /// <summary>The picture on the clipboard at full quality, or null. The PNG copy is taken first when there is one
+        /// (browsers, Office, Snipping Tool put it there): it keeps transparency and every pixel exactly; otherwise the
+        /// bitmap copy, which holds the same pixels for a screenshot.</summary>
+        public static Bitmap ClipboardPicture()
+        {
+            IDataObject d = Clipboard.GetDataObject();
+            if (d == null) return null;
+            if (d.GetDataPresent("PNG"))
+            {
+                try
+                {
+                    System.IO.Stream st = d.GetData("PNG") as System.IO.Stream;
+                    if (st != null)
+                        using (st)
+                        using (Bitmap png = new Bitmap(st))
+                        {
+                            Bitmap copy = new Bitmap(png.Width, png.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                            using (Graphics g = Graphics.FromImage(copy)) g.DrawImageUnscaled(png, 0, 0);
+                            copy.SetResolution(96, 96);
+                            return copy;
+                        }
+                }
+                catch (Exception) { }
+            }
+            if (!Clipboard.ContainsImage()) return null;
+            using (Image img = Clipboard.GetImage())
+                return img == null ? null : new Bitmap(img);
+        }
+
+        /// <summary>Tray icon click: the clipboard picture in a new editor, or a blank canvas when the clipboard holds
+        /// no picture. Always a new window (other editors stay as they are).</summary>
+        public static void ShowEditor()
+        {
+            Bitmap b = null;
+            try { b = ClipboardPicture(); } catch (Exception) { }
+            if (b != null)
+            {
+                try { ProjectFile.CheckImageSize(b.Width, b.Height); }
+                catch (Exception) { b.Dispose(); b = null; }
+            }
+            if (b != null) { EditorForm f = new EditorForm(b, "Clipboard"); f.Show(); f.Activate(); }
+            else NewBlankCanvas(null);
         }
 
         public static string FailedHotkeys = "";
@@ -1557,12 +1746,14 @@ namespace SnapMeasure
     /// <summary>The capture keys, two per capture (Settings → General). Stored as numbers in SnapMeasure.ini.</summary>
     internal static class Hotkeys
     {
-        public static readonly string[] Ids = { "Region", "Window", "Screen", "LastRegion", "Scrolling", "Text" };
+        public static readonly string[] Ids = { "Region", "Window", "Screen", "LastRegion", "Scrolling", "Text", "Clipboard" };
         public static readonly string[] Labels = { "Capture region / window", "Capture active window", "Capture screen under mouse",
-                                                   "Capture last region again", "Scrolling capture (long page)", "Capture text (OCR)" };
+                                                   "Capture last region again", "Scrolling capture (long page)", "Capture text (OCR)",
+                                                   "Open clipboard picture in the editor" };
         const Keys CS = Keys.Control | Keys.Shift;
-        static readonly Keys[] DefMain = { Keys.PrintScreen, Keys.Alt | Keys.PrintScreen, Keys.Control | Keys.PrintScreen, Keys.Shift | Keys.PrintScreen, Keys.None, Keys.None };
-        static readonly Keys[] DefAlt = { CS | Keys.D1, CS | Keys.D2, CS | Keys.D3, CS | Keys.D4, CS | Keys.D5, CS | Keys.D6 };
+        static readonly Keys[] DefMain = { Keys.PrintScreen, Keys.Alt | Keys.PrintScreen, Keys.Control | Keys.PrintScreen, Keys.Shift | Keys.PrintScreen, Keys.None, Keys.None, CS | Keys.PrintScreen };
+        // Ctrl+Shift+7, not Ctrl+Shift+V: a capture key works in every app, and Ctrl+Shift+V is "paste as plain text" there
+        static readonly Keys[] DefAlt = { CS | Keys.D1, CS | Keys.D2, CS | Keys.D3, CS | Keys.D4, CS | Keys.D5, CS | Keys.D6, CS | Keys.D7 };
 
         /// <summary>Set by the tray: true = let go of every capture key (while a key box is being filled in), false = take them again.</summary>
         public static Action<bool> Pause;
@@ -1701,11 +1892,12 @@ namespace SnapMeasure
             scroll.Image = Icons.Cmd("scroll", 16);
             ToolStripMenuItem text = Item(menu, "Capture text (OCR) to clipboard", "", CaptureTextNow);
             text.Image = Icons.Cmd("textcap", 16);
-            keyItems = new ToolStripMenuItem[] { region, win, scr, last, scroll, text };
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "New blank canvas…", "", () => App.NewBlankCanvas(null), false).Image = Icons.Cmd("blank", 16);
             Item(menu, "Open image, PDF or project…", "", OpenDialog, false).Image = Icons.Cmd("open", 16);
-            Item(menu, "Open image from clipboard", "", () => App.OpenFromClipboard(), false).Image = Icons.Cmd("clipboard", 16);
+            ToolStripMenuItem clip = Item(menu, "Open image from clipboard", "", () => App.OpenFromClipboard(), false);
+            clip.Image = Icons.Cmd("clipboard", 16);
+            keyItems = new ToolStripMenuItem[] { region, win, scr, last, scroll, text, clip };
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "On-screen ruler", "", Overlays.ShowRuler, false).Image = Icons.Cmd("ruler", 16);
             Item(menu, "On-screen protractor", "", Overlays.ShowProtractor, false).Image = Icons.Cmd("protractor", 16);
@@ -1735,7 +1927,7 @@ namespace SnapMeasure
             ni.ContextMenuStrip = menu;
             Lang.Apply(menu.Items);
             App.Notify = m => { try { ni.ShowBalloonTip(3000, "SnapMeasure", Lang.T(m), ToolTipIcon.Info); } catch { } };
-            ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.CaptureRegion(); };
+            ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.ShowEditor(); };
 
             hk = new HotkeyWindow();
             hk.Pressed += id => { Action a; if (actions.TryGetValue(id, out a)) a(); };
@@ -1768,20 +1960,16 @@ namespace SnapMeasure
         {
             hk.UnregisterAll();
             actions.Clear(); okKeys.Clear(); failedKeys.Clear();
-            Action[] runs = { App.CaptureRegion, App.CaptureActiveWindow, App.CaptureScreenUnderCursor, App.CaptureLastRegion, App.CaptureScrolling, CaptureTextNow };
+            Action[] runs = { App.CaptureRegion, App.CaptureActiveWindow, App.CaptureScreenUnderCursor, App.CaptureLastRegion, App.CaptureScrolling, CaptureTextNow, App.OpenFromClipboard };
             int id = 1;
+            // the tray menu stays plain (no key texts): the keys are in Settings → General and About & shortcuts
             for (int i = 0; i < Hotkeys.Ids.Length; i++)
-            {
-                string shown = "";
                 for (int slot = 0; slot < 2; slot++)
                 {
                     Keys k = Hotkeys.Get(i, slot);
                     if (k == Keys.None || !Hotkeys.Usable(k)) continue;
                     Reg(id++, Hotkeys.Mods(k), k & Keys.KeyCode, Hotkeys.Text(k), runs[i]);
-                    if (shown.Length == 0) shown = Hotkeys.Text(k);
                 }
-                if (keyItems != null && i < keyItems.Length) keyItems[i].ShortcutKeyDisplayString = shown;
-            }
             keySig = Hotkeys.Signature();
             App.FailedHotkeys = string.Join(", ", failedKeys.ToArray());
         }
@@ -1919,6 +2107,7 @@ namespace SnapMeasure
             row("Ctrl+Shift+M", "match properties");
             row("Alt+1 … 9", "line colour (Alt+Shift = fill colour)");
             row("Alt+L / Alt+F", "line / fill colour picker");
+            row("Ctrl+Shift+C", "pick a colour from the screen");
             sb.AppendLine();
             sb.AppendLine("View and save");
             row("Home", "fit and centre");
@@ -2476,6 +2665,9 @@ namespace SnapMeasure
         /// Settings window: Capture (what PrtSc does, mouse pointer, sound, notifications, magnifier, delay),
         /// Output (folder, file name, format, quality) and About (version, GitHub, updates, shortcuts).
         /// </summary>
+        /// <summary>Height of one capture-key row in Settings → General (7 rows fit above the icon size).</summary>
+        const int KeyRow = 28;
+
         public static void ShowSettings(IWin32Window owner, int startTab)
         {
             float k = K(owner);
@@ -2501,44 +2693,44 @@ namespace SnapMeasure
                     Label hk1 = new Label(); hk1.Text = "Key"; hk1.AutoSize = true; hk1.Location = new Point(S(232), S(40)); hk1.Font = new Font(f.Font, FontStyle.Bold);
                     Label hk2 = new Label(); hk2.Text = "Also"; hk2.AutoSize = true; hk2.Location = new Point(S(382), S(40)); hk2.Font = new Font(f.Font, FontStyle.Bold);
                     Label note = new Label(); note.AutoSize = true; note.MaximumSize = new Size(S(510), 0); note.ForeColor = Color.FromArgb(170, 60, 0);
-                    note.Location = new Point(S(12), S(62 + Hotkeys.Ids.Length * 30 + 4));
+                    note.Location = new Point(S(12), S(62 + Hotkeys.Ids.Length * KeyRow + 4));
                     tGen.Controls.AddRange(new Control[] { intro, hk1, hk2, note });
                     for (int i = 0; i < Hotkeys.Ids.Length; i++)
                     {
-                        Label l = new Label(); l.Text = Hotkeys.Labels[i]; l.AutoSize = true; l.Location = new Point(S(12), S(64 + i * 30));
+                        Label l = new Label(); l.Text = Hotkeys.Labels[i]; l.AutoSize = true; l.Location = new Point(S(12), S(64 + i * KeyRow));
                         tGen.Controls.Add(l);
                         for (int slot = 0; slot < 2; slot++)
                         {
                             HotkeyBox b = new HotkeyBox();
-                            b.SetBounds(S(230 + slot * 150), S(60 + i * 30), S(140), S(24));
+                            b.SetBounds(S(230 + slot * 150), S(60 + i * KeyRow), S(140), S(24));
                             b.Value = Hotkeys.Get(i, slot);
                             b.Note = note;
                             keyBox[i, slot] = b;
                             tGen.Controls.Add(b);
                         }
                     }
-                    Button reset = new Button(); reset.Text = "Default keys"; reset.SetBounds(S(380), S(62 + Hotkeys.Ids.Length * 30 + 26), S(140), S(26));
+                    Button reset = new Button(); reset.Text = "Default keys"; reset.SetBounds(S(380), S(62 + Hotkeys.Ids.Length * KeyRow + 26), S(140), S(26));
                     reset.Click += (s, e) => { for (int i = 0; i < Hotkeys.Ids.Length; i++) for (int slot = 0; slot < 2; slot++) keyBox[i, slot].Value = Hotkeys.Default(i, slot); note.Text = ""; };
-                    Label sepG = new Label(); sepG.BorderStyle = BorderStyle.Fixed3D; sepG.SetBounds(S(12), S(300), S(510), 2);
-                    Label li = new Label(); li.Text = "Tool icon size"; li.AutoSize = true; li.Location = new Point(S(12), S(318));
+                    Label sepG = new Label(); sepG.BorderStyle = BorderStyle.Fixed3D; sepG.SetBounds(S(12), S(318), S(510), 2);
+                    Label li = new Label(); li.Text = "Tool icon size"; li.AutoSize = true; li.Location = new Point(S(12), S(334));
                     iconSize.DropDownStyle = ComboBoxStyle.DropDownList;
                     iconSize.Items.AddRange(new object[] { "Small (16 px)", "Medium (20 px)", "Large (24 px)" });
                     int curIcon = SnapMeasure.Settings.GetInt("IconSize", 20);
                     iconSize.SelectedIndex = curIcon <= 16 ? 0 : (curIcon >= 24 ? 2 : 1);
-                    iconSize.SetBounds(S(230), S(314), S(140), S(26));
+                    iconSize.SetBounds(S(230), S(330), S(140), S(26));
                     Label lin = new Label(); lin.Text = "(new editor windows)"; lin.AutoSize = true;
-                    lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(378), S(318));
-                    CheckBox cLock = new CheckBox(); cLock.Name = "lock"; cLock.AutoSize = true; cLock.Location = new Point(S(12), S(348));
+                    lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(378), S(334));
+                    CheckBox cLock = new CheckBox(); cLock.Name = "lock"; cLock.AutoSize = true; cLock.Location = new Point(S(12), S(362));
                     cLock.Text = "Editor: start with \"Keep inside\" locked (Ctrl+L switches it in the editor)";
                     cLock.Checked = SnapMeasure.Settings.GetBool("LockInside", false);
-                    Label lLang = new Label(); lLang.Text = "Language"; lLang.AutoSize = true; lLang.Location = new Point(S(12), S(382));
+                    Label lLang = new Label(); lLang.Text = "Language"; lLang.AutoSize = true; lLang.Location = new Point(S(12), S(394));
                     ComboBox lang = new ComboBox(); lang.Name = "lang"; lang.DropDownStyle = ComboBoxStyle.DropDownList;
                     lang.Font = new Font("Malgun Gothic", f.Font.Size, GraphicsUnit.Pixel);     // shows 한국어 in English mode too
                     lang.Items.AddRange(Lang.Names);
                     lang.SelectedIndex = Math.Max(0, Array.IndexOf(Lang.Codes, Lang.Code));
-                    lang.SetBounds(S(230), S(378), S(140), S(26));
+                    lang.SetBounds(S(230), S(390), S(140), S(26));
                     Label lLangN = new Label(); lLangN.Text = "(new windows; restart for the tray menu)"; lLangN.AutoSize = true;
-                    lLangN.ForeColor = Color.FromArgb(90, 90, 90); lLangN.Location = new Point(S(378), S(382));
+                    lLangN.ForeColor = Color.FromArgb(90, 90, 90); lLangN.Location = new Point(S(378), S(394));
                     lLangN.MaximumSize = new Size(S(150), 0);
                     tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock, lLang, lang, lLangN });
                 }
@@ -2547,8 +2739,8 @@ namespace SnapMeasure
                 {
                     Label la = new Label(); la.Text = "After a capture (PrtSc, Ctrl+Shift+1 …):"; la.AutoSize = true; la.Location = new Point(S(12), S(14));
                     tCap.Controls.Add(la);
-                    string[] acts = { "Open it in the SnapMeasure editor (default)", "Only copy it to the clipboard", "Only save it to the save folder", "Copy it and save it (no editor)" };
-                    int cur = SnapMeasure.Settings.GetInt("AfterCapture", 0);
+                    string[] acts = { "Open it in the SnapMeasure editor", "Only copy it to the clipboard (default)", "Only save it to the save folder", "Copy it and save it (no editor)" };
+                    int cur = SnapMeasure.Settings.GetInt("AfterCapture", App.DefaultAfter);
                     for (int i = 0; i < acts.Length; i++)
                     {
                         RadioButton r = new RadioButton(); r.Text = acts[i]; r.AutoSize = true; r.Location = new Point(S(24), S(38 + i * 24));

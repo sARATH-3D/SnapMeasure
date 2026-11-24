@@ -42,6 +42,8 @@ Copy picture	그림 복사
 Copy the marked-up picture (Ctrl+C with nothing selected) · ▾ = copy text or measurements	마크업된 그림 복사 (선택 없이 Ctrl+C) · ▾ = 텍스트 또는 측정값 복사
 Copy text (OCR)	텍스트 복사 (OCR)
 Capture text (OCR)	텍스트 캡처 (OCR)
+Open clipboard picture in the editor	클립보드 그림을 편집기에서 열기
+The clipboard doesn't contain an image.	클립보드에 이미지가 없습니다.
 Copy text: drag over the text (a click = all).	텍스트 복사: 텍스트 위로 드래그하세요 (클릭 = 전체).
 About SnapMeasure	SnapMeasure 정보
 Copy text from the picture (OCR)	그림에서 텍스트 복사 (OCR)
@@ -246,12 +248,16 @@ Frame width – 0 = no frame	틀 두께 – 0 = 틀 없음
 Rounded	둥근 모서리
 Closed	닫힘
 Shape	모양
-Shape of the highlight	하이라이트 모양
+Shape of the focus · Perimeter = click its corners like an area (double-click or right-click to finish)	포커스 모양 · 둘레 = 면적처럼 꼭짓점을 클릭 (더블클릭 또는 오른쪽 클릭으로 완료)
+Perimeter	둘레
 Mode	모드
-Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate	하이라이트 = 채우기 색의 반투명 상자 · 스포트라이트, 흑백, 확대경, 모자이크
+Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate · Cut-out tool (X) cuts holes in a focus	하이라이트 = 채우기 색의 반투명 상자 · 스포트라이트, 흑백, 확대경, 모자이크 · 잘라내기 도구(X)로 포커스에 구멍을 냅니다
 Inside	안쪽
 Outside	바깥쪽
 Gray or pixelate the marked area itself (inside) or everything around it (outside)	표시한 영역 자체(안쪽) 또는 그 주변 전체(바깥쪽)를 흑백 또는 모자이크로
+Draw the cut-out inside an area (M), a polygon (P) or a focus (H)	면적(M), 다각형(P) 또는 포커스(H) 안에 잘라내기를 그리세요
+Cut out of the focus (right-click → Remove cut-outs to undo all)	포커스에서 잘라냈습니다 (오른쪽 클릭 → 잘라내기 제거로 모두 되돌리기)
+Add a cut-out	잘라내기 추가
 Strength	강도
 Strength: how much to magnify, or how big the pixel blocks are	강도: 확대 배율 또는 모자이크 블록 크기
 Show	표시
@@ -261,6 +267,7 @@ Radius	반지름
 Diameter + Arc length	지름 + 호 길이
 Radius + Arc length	반지름 + 호 길이
 Arc length	호 길이
+All	모두
 Start at	시작 값
 First number (or letter) of this marker series	이 마커 시리즈의 첫 번호(또는 문자)
 Reverse	역순
@@ -312,8 +319,8 @@ Editor: start with "Keep inside" locked (Ctrl+L switches it in the editor)	편�
 Language	언어
 (new windows; restart for the tray menu)	(새 창에 적용, 트레이 메뉴는 다시 시작 후)
 After a capture (PrtSc, Ctrl+Shift+1 …)	캡처한 뒤 (PrtSc, Ctrl+Shift+1 …)
-Open it in the SnapMeasure editor (default)	SnapMeasure 편집기에서 열기 (기본)
-Only copy it to the clipboard	클립보드에 복사만
+Open it in the SnapMeasure editor	SnapMeasure 편집기에서 열기
+Only copy it to the clipboard (default)	클립보드에 복사만 (기본)
 Only save it to the save folder	저장 폴더에 저장만
 Copy it and save it (no editor)	복사하고 저장 (편집기 없이)
 When the editor opens, also copy the capture to the clipboard	편집기가 열릴 때 캡처를 클립보드에도 복사
@@ -353,6 +360,13 @@ Letters ran past A – starting again at Z	문자가 A를 지나 Z부터 다시 
 Drawing scales	도면 축척
 Set the scale from the drawing (1:50 on A1 …), or use a saved scale	도면에서 축척 설정 (A1에서 1:50 …) 또는 저장된 축척 사용
 More colours – click = line colour (Alt+L), right-click = fill colour (Alt+F)	더 많은 색 – 클릭 = 선 색 (Alt+L), 오른쪽 클릭 = 채우기 색 (Alt+F)
+Colour picker – pick a colour anywhere on screen: click = line colour, right-click = fill colour; the HEX code is copied (Ctrl+Shift+C)	색 선택기 – 화면 어디서나 색을 고릅니다: 클릭 = 선 색, 오른쪽 클릭 = 채우기 색; HEX 코드가 복사됩니다 (Ctrl+Shift+C)
+Click = line · Right-click = fill · Esc	클릭 = 선 · 오른쪽 클릭 = 채우기 · Esc
+Line colour	선 색
+Fill colour	채우기 색
+copied	복사됨
+pick a tool or select a shape to use it	사용하려면 도구를 고르거나 도형을 선택하세요
 Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)	실제 픽셀 1:1 – 화면 픽셀 하나에 그림 픽셀 하나 (Ctrl+1)
 Rulers along the top and left edge (Ctrl+R)	위쪽과 왼쪽 가장자리의 눈금자 (Ctrl+R)
 Actual pixels	실제 픽셀
+More options for this tool (the window is too narrow to show them all)	이 도구의 추가 옵션 (창이 좁아 모두 표시할 수 없음)

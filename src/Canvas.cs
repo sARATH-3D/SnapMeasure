@@ -154,7 +154,7 @@ namespace SnapMeasure
             letter.Mode = 1;
             d[Tool.Letter] = letter;
             d[Tool.Pixelate] = St(ShapeKind.Pixelate, Color.Gray, 3, Color.Gray, 0, 16);
-            d[Tool.Highlight] = St(ShapeKind.Highlight, red, 2, Color.Yellow, 45, 16);
+            d[Tool.Highlight] = St(ShapeKind.Highlight, red, 1, Color.Yellow, 45, 16);    // a thin border in every mode
             d[Tool.Highlight].Mode = (int)HighlightMode.Marker;        // Focus starts as the see-through highlight box
             d[Tool.Highlight].Strength = 2;                              // magnify ×2, pixelate 8 px (Strength slider)
             d[Tool.Pixelate].Strength = 3;
@@ -355,8 +355,17 @@ namespace SnapMeasure
         PointF ShiftSnap(Shape c, int n, PointF sp)
         {
             if (c.Kind == ShapeKind.Angle)
-                return n >= 3 ? SnapArm(c.Pts[1], c.Pts[0], sp, 45) : Geo.SnapAngle(c.Pts[0], sp, 45);
+                return n >= 3 ? AngleArmSnap(c.Pts[1], c.Pts[0], sp) : Geo.SnapAngle(c.Pts[0], sp, 45);
             return Geo.SnapAngle(c.Pts[n - 2], sp, 15);
+        }
+
+        /// <summary>Angle arm with Shift: horizontal, vertical or 45° on the page, or a 45° step from the other arm –
+        /// whichever is nearest the pointer (so a tilted first arm still allows a level or plumb second arm).</summary>
+        internal static PointF AngleArmSnap(PointF vertex, PointF other, PointF p)
+        {
+            PointF onPage = Geo.SnapAngle(vertex, p, 45);
+            PointF fromArm = SnapArm(vertex, other, p, 45);
+            return Geo.Dist(onPage, p) <= Geo.Dist(fromArm, p) ? onPage : fromArm;
         }
 
         /// <summary>p moved round the vertex so the angle between (vertex→other) and (vertex→p) is a multiple of 'step' degrees; its distance stays.</summary>
@@ -901,8 +910,19 @@ namespace SnapMeasure
             get
             {
                 return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.PolyDraw || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
-                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord ||
+                       tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord || PolyAs != tool ||
                        tool == Tool.Arc || tool == Tool.Radius;
+            }
+        }
+
+        /// <summary>The tool as far as clicking goes: a Focus with the Perimeter form is drawn corner by corner, like an area.</summary>
+        Tool PolyAs
+        {
+            get
+            {
+                if (tool != Tool.Highlight) return tool;
+                bool perim = creating != null ? creating.IsFocusPoly : Styles[Tool.Highlight].Form == (int)HighlightForm.Perimeter;
+                return perim ? Tool.Polygon : tool;
             }
         }
 
@@ -1045,12 +1065,12 @@ namespace SnapMeasure
         {
             PointF c = Geo.Centroid(pts);
             Shape target = null;
-            if (CanHaveHoles(Selected) && Geo.InPolygon(c, Selected.Pts)) target = Selected;
+            if (CanHaveHoles(Selected) && HoleTargetContains(Selected, c)) target = Selected;
             for (int i = Shapes.Count - 1; i >= 0 && target == null; i--)
-                if (CanHaveHoles(Shapes[i]) && Geo.InPolygon(c, Shapes[i].Pts)) target = Shapes[i];
+                if (CanHaveHoles(Shapes[i]) && HoleTargetContains(Shapes[i], c)) target = Shapes[i];
             if (target == null)
             {
-                if (Message != null) Message("Draw the cut-out inside an area (M) or a polygon (P)");
+                if (Message != null) Message("Draw the cut-out inside an area (M), a polygon (P) or a focus (H)");
                 Invalidate();
                 return;
             }
@@ -1060,14 +1080,28 @@ namespace SnapMeasure
             Selected = target;
             FireDoc(); FireSel(); Invalidate();
             if (Message != null)
-                Message(target.Kind == ShapeKind.Area ? "Cut-out subtracted: net area " + Scale.Area(Measure.NetArea(target))
+                Message(target.Kind == ShapeKind.Highlight ? "Cut out of the focus (right-click → Remove cut-outs to undo all)"
+                    : target.Kind == ShapeKind.Area ? "Cut-out subtracted: net area " + Scale.Area(Measure.NetArea(target))
                                                       : "Hollow cut out of the polygon (right-click → Remove cut-outs to undo all)");
         }
 
         /// <summary>Shapes a cut-out can go into: an area (an opening, subtracted) or a closed polygon (a hollow section).</summary>
         public static bool CanHaveHoles(Shape s)
         {
-            return s != null && s.Pts.Count >= 3 && (s.Kind == ShapeKind.Area || (s.Kind == ShapeKind.Polygon && !s.IsOpenPath));
+            if (s == null) return false;
+            if (s.Kind == ShapeKind.Highlight) return s.Pts.Count >= (s.IsFocusPoly ? 3 : 2);   // a focus (any form)
+            return s.Pts.Count >= 3 && (s.Kind == ShapeKind.Area || (s.Kind == ShapeKind.Polygon && !s.IsOpenPath));
+        }
+
+        /// <summary>Whether a cut-out drawn around p belongs to s: inside its outline (a focus: inside its form).</summary>
+        static bool HoleTargetContains(Shape s, PointF p)
+        {
+            if (s.Kind != ShapeKind.Highlight) return Geo.InPolygon(p, s.Pts);
+            using (GraphicsPath gp = Renderer.HighlightPath(s))
+            {
+                gp.FillMode = FillMode.Winding;                          // a point inside an earlier cut-out still counts
+                return gp.IsVisible(p);
+            }
         }
 
         /// <summary>Moves the origin onto a coordinate point; every other point is then measured from there.</summary>
@@ -1410,7 +1444,7 @@ namespace SnapMeasure
             if (CanHaveHoles(one))
             {
                 if (one.Kind != ShapeKind.Area) m.Items.Add(new ToolStripSeparator());
-                add(one.Kind == ShapeKind.Area ? "Add a cut-out (opening)" : "Add a cut-out (hollow section)", "X", true, () => CurrentTool = Tool.Cutout);
+                add(one.Kind == ShapeKind.Area ? "Add a cut-out (opening)" : one.Kind == ShapeKind.Highlight ? "Add a cut-out" : "Add a cut-out (hollow section)", "X", true, () => CurrentTool = Tool.Cutout);
                 if (one.Holes != null) add("Remove cut-outs", "", true, ClearCutouts);
             }
             m.Items.Add(new ToolStripSeparator());
@@ -1522,7 +1556,7 @@ namespace SnapMeasure
             if (e.Button != MouseButtons.Left || Image == null) return;
 
             PointF sp = Snap(ip);
-            switch (tool)
+            switch (PolyAs)
             {
                 case Tool.Select:
                     {
@@ -1599,7 +1633,11 @@ namespace SnapMeasure
                 case Tool.Counter:
                 case Tool.Letter:
                     {
-                        AddShape(NewShape(tool, ip));
+                        Shape mk = NewShape(tool, ip);
+                        // a new marker looks like the rest of its series (size, colours, shadow …)
+                        Shape sib = Shapes.Find(x => x.Kind == ShapeKind.Counter && x.Mode == mk.Mode);
+                        if (sib != null) MatchProps(sib, mk);
+                        AddShape(mk);
                         bool letters = tool == Tool.Letter;
                         int count = Measure.Count(Shapes, letters);
                         if (!letters && Scale.MarkerReverse && count > Scale.MarkerStart)
@@ -1816,7 +1854,7 @@ namespace SnapMeasure
                 PointF sp = tool == Tool.Freehand || tool == Tool.Marker || tool == Tool.Crop || tool == Tool.Ocr || tool == Tool.Markup ? ip : Snap(ip);
                 int n = creating.Pts.Count;
                 PointF p0 = creating.Pts[0];
-                switch (tool)
+                switch (PolyAs)
                 {
                     case Tool.Marker:
                         // Shift = a straight stroke (e.g. along a line of text)
@@ -1882,11 +1920,12 @@ namespace SnapMeasure
                 if (shift && !snapPt.HasValue && h.Kind == HKind.Point && Selected.Kind == ShapeKind.Angle && Selected.Pts.Count >= 3)
                 {
                     List<PointF> q = Selected.Pts;
-                    if (h.Index == 0) p = SnapArm(q[1], q[2], p, 45);
-                    else if (h.Index == 2) p = SnapArm(q[1], q[0], p, 45);
+                    if (h.Index == 0) p = AngleArmSnap(q[1], q[2], p);
+                    else if (h.Index == 2) p = AngleArmSnap(q[1], q[0], p);
                     else if (h.Index == 1) p = Geo.SnapAngle(q[0], p, 45);
                 }
                 ShapeOps.DragHandle(Selected, dragOrig, h, p, shift);
+                if (Selected.Kind == ShapeKind.Counter && h.Kind == HKind.Box) MatchMarkerSeries(Selected);
                 changedDuringDrag = true;
                 Invalidate();
                 return;
@@ -2237,8 +2276,12 @@ namespace SnapMeasure
                     if (zoomBox) EndZoomBox();
                     else if (matchSource != null) EndMatch();
                     else if (creating != null) creating = null;
-                    else if (Sel.Count > 0) { Sel.Clear(); FireSel(); }
-                    else CurrentTool = Tool.Select;
+                    else
+                    {
+                        // one Esc: drop the selection and go back to the Select tool together
+                        if (Sel.Count > 0) { Sel.Clear(); FireSel(); }
+                        if (tool != Tool.Select) CurrentTool = Tool.Select;
+                    }
                     Invalidate(); break;
                 case Keys.Enter: FinishPoly(); break;
                 case Keys.Back:
@@ -2483,6 +2526,18 @@ namespace SnapMeasure
             t.Cache = null;
         }
 
+        /// <summary>Markers: every marker of the same series (numbers or letters) takes the look of 'src' – size,
+        /// colours, line, text style and shadow – and so do the next ones placed (the tool's default).</summary>
+        public void MatchMarkerSeries(Shape src)
+        {
+            if (src == null || src.Kind != ShapeKind.Counter) return;
+            foreach (Shape m in Shapes)
+                if (m != src && m.Kind == ShapeKind.Counter && m.Mode == src.Mode) MatchProps(src, m);
+            Shape tmpl;
+            if (Styles.TryGetValue(src.IsLetterMarker ? Tool.Letter : Tool.Counter, out tmpl) && tmpl != src) MatchProps(src, tmpl);
+            layerDirty = true;
+        }
+
         /// <summary>Mouse handling while the brush is on; true = the event was used.</summary>
         bool MatchMouse(MouseEventArgs e)
         {
@@ -2493,6 +2548,7 @@ namespace SnapMeasure
             if (t == null) return true;
             PushUndo(Snapshot());
             MatchProps(matchSource, t);
+            if (t.Kind == ShapeKind.Counter) MatchMarkerSeries(t);
             FireDoc(); Invalidate();
             return true;
         }
@@ -2700,6 +2756,17 @@ namespace SnapMeasure
                             else if (creating.Pts.Count >= 3) { g.FillPolygon(b, creating.Pts.ToArray()); g.DrawPolygon(p, creating.Pts.ToArray()); }
                             else if (creating.Pts.Count == 2) g.DrawLines(p, creating.Pts.ToArray());
                         }
+                    else if (creating.IsFocusPoly)
+                    {
+                        // a focus perimeter being clicked: its effect, plus a dashed outline so every edge shows
+                        Renderer.Draw(g, creating, Image, Scale, nm);
+                        using (Pen p = new Pen(Color.FromArgb(0, 120, 215), 1.5f / Zoom))
+                        {
+                            p.DashStyle = DashStyle.Dash;
+                            if (creating.Pts.Count >= 3) g.DrawPolygon(p, creating.Pts.ToArray());
+                            else if (creating.Pts.Count == 2) g.DrawLines(p, creating.Pts.ToArray());
+                        }
+                    }
                     else Renderer.Draw(g, creating, Image, Scale, nm);
                 }
             }
@@ -3101,7 +3168,7 @@ namespace SnapMeasure
         {
             string t = null;
             List<PointF> p = creating.Pts;
-            switch (tool)
+            switch (PolyAs)
             {
                 case Tool.Dimension:
                 case Tool.Line:

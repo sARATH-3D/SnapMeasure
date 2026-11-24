@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Xml;
 
@@ -25,7 +26,7 @@ namespace SnapMeasure
     public enum LineStyle { Solid = 0, Dashed = 1, Dotted = 2, DashDot = 3, LongDash = 4, Cloud = 5 }
 
     /// <summary>Shape of a highlight area.</summary>
-    public enum HighlightForm { Rectangle = 0, Ellipse = 1, Triangle = 2, Diamond = 3, Rounded = 4 }
+    public enum HighlightForm { Rectangle = 0, Ellipse = 1, Triangle = 2, Diamond = 3, Rounded = 4, Perimeter = 5 }
 
     /// <summary>Revision cloud callout: none, a revision triangle with a number, or a text box.</summary>
     public enum CloudCallout { None = 0, Triangle = 1, TextBox = 2 }
@@ -161,7 +162,9 @@ namespace SnapMeasure
         }
 
         /// <summary>Shapes built by clicking corners one after the other.</summary>
-        public bool IsPoly { get { return Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter; } }
+        public bool IsPoly { get { return Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter || IsFocusPoly; } }
+        /// <summary>Focus drawn as a perimeter: its corners clicked one by one, like an area (Form = Perimeter).</summary>
+        public bool IsFocusPoly { get { return Kind == ShapeKind.Highlight && Form == (int)HighlightForm.Perimeter; } }
         /// <summary>Open path: path length, or a perimeter with "Closed" switched off (Mode 1).</summary>
         /// <summary>Area shape: Mode 0 shows area and perimeter, 1 area only, 2 perimeter only.</summary>
         public bool ShowsArea { get { return Kind == ShapeKind.Area && Mode != 2; } }
@@ -189,7 +192,7 @@ namespace SnapMeasure
         {
             get
             {
-                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Pixelate || Kind == ShapeKind.Highlight || Kind == ShapeKind.Bubble ||
+                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Pixelate || (Kind == ShapeKind.Highlight && !IsFocusPoly) || Kind == ShapeKind.Bubble ||
                        Kind == ShapeKind.Image || Kind == ShapeKind.Cloud || Kind == ShapeKind.Stamp || Kind == ShapeKind.Markup;
             }
         }
@@ -199,7 +202,7 @@ namespace SnapMeasure
             get
             {
                 return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp ||
-                       (Kind == ShapeKind.Cloud && Mode == 0) || Kind == ShapeKind.Highlight;
+                       (Kind == ShapeKind.Cloud && Mode == 0) || (Kind == ShapeKind.Highlight && !IsFocusPoly);
             }
         }
         public bool HasHeads
@@ -764,13 +767,14 @@ namespace SnapMeasure
     public static class Renderer
     {
         /// <summary>The radius label. Mode: 0 = radius + diameter (files before 1.3.2), 1 = radius, 2 = diameter,
-        /// 3 = diameter + arc length, 4 = radius + arc length, 5 = none, 6 = arc length.</summary>
+        /// 3 = diameter + arc length, 4 = radius + arc length, 5 = none, 6 = arc length, 7 = all three.</summary>
         public static string RadiusText(int mode, ScaleInfo sc, float rad, double arcPx)
         {
             string r = "R = " + sc.Len(rad), d = "Ø = " + sc.Len(2 * rad), a = "Arc = " + sc.Len(arcPx);
             switch (mode)
             {
                 case 0: return r + "\n" + d;
+                case 7: return r + "\n" + d + "\n" + a;
                 case 1: return r;
                 case 3: return d + "\n" + a;
                 case 4: return r + "\n" + a;
@@ -782,29 +786,40 @@ namespace SnapMeasure
 
         static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
         static Graphics mg;
-        static Bitmap grayFor, grayCache;
+        /// <summary>A grayscale or pixelated copy of a picture. A few are kept: the screenshot's own and the one with
+        /// the pasted pictures are both used in one redraw, and must not push each other out.</summary>
+        sealed class FxCopy { public Bitmap For; public int Block; public Bitmap Img; }
+        static readonly List<FxCopy> grayCopies = new List<FxCopy>(), pixCopies = new List<FxCopy>();
+        const int FxKeep = 3;
 
-        static Bitmap pixFor, pixCache;
-        static int pixBlock;
+        static Bitmap FxGet(List<FxCopy> list, Bitmap img, int block, Func<Bitmap> make)
+        {
+            for (int i = 0; i < list.Count; i++)
+                if (ReferenceEquals(list[i].For, img) && list[i].Block == block)
+                {
+                    FxCopy hit = list[i];
+                    if (i > 0) { list.RemoveAt(i); list.Insert(0, hit); }
+                    return hit.Img;
+                }
+            FxCopy c = new FxCopy { For = img, Block = block, Img = make() };
+            list.Insert(0, c);
+            while (list.Count > FxKeep) { list[list.Count - 1].Img.Dispose(); list.RemoveAt(list.Count - 1); }
+            return c.Img;
+        }
 
         /// <summary>Frees the grayscale / pixelated copies made for 'img' (called when that picture is disposed).</summary>
         public static void ReleaseCache(Bitmap img)
         {
             if (img == null) return;
-            if (ReferenceEquals(grayFor, img)) { grayFor = null; if (grayCache != null) { grayCache.Dispose(); grayCache = null; } }
-            if (ReferenceEquals(pixFor, img)) { pixFor = null; if (pixCache != null) { pixCache.Dispose(); pixCache = null; } }
+            foreach (List<FxCopy> list in new[] { grayCopies, pixCopies })
+                for (int i = list.Count - 1; i >= 0; i--)
+                    if (ReferenceEquals(list[i].For, img)) { list[i].Img.Dispose(); list.RemoveAt(i); }
         }
 
         /// <summary>A grayscale copy of the picture, kept while the picture is the same.</summary>
         static Bitmap GrayOf(Bitmap img)
         {
-            if (grayFor != img || grayCache == null)
-            {
-                Bitmap old = grayCache;
-                grayCache = Effects.Grayscale(img); grayFor = img;
-                if (old != null) old.Dispose();
-            }
-            return grayCache;
+            return FxGet(grayCopies, img, 0, () => Effects.Grayscale(img));
         }
 
         /// <summary>
@@ -815,7 +830,15 @@ namespace SnapMeasure
         /// </summary>
         internal static Bitmap Blocks(Bitmap img, Rectangle r, int block)
         {
+            return Blocks(img, r, block, 0, 0);
+        }
+
+        /// <summary>As above, with the block grid shifted by (ox, oy) pixels: the first blocks are cut short, so a part
+        /// of a larger picture gets the same blocks the whole picture would.</summary>
+        internal static Bitmap Blocks(Bitmap img, Rectangle r, int block, int ox, int oy)
+        {
             block = Math.Max(1, block);
+            ox = ((ox % block) + block) % block; oy = ((oy % block) + block) % block;
             int w = r.Width, h = r.Height;
             Bitmap res = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             BitmapData sd = img.LockBits(r, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
@@ -823,33 +846,34 @@ namespace SnapMeasure
             try
             {
                 int[] row = new int[w];
-                int bw = (w + block - 1) / block;
+                int bw = (w + ox + block - 1) / block;
                 long[] sa = new long[bw], sr = new long[bw], sg = new long[bw], sb = new long[bw];
                 int[] outRow = new int[w];
-                for (int by = 0; by < h; by += block)
+                for (int by = -oy; by < h; by += block)
                 {
-                    int rows = Math.Min(block, h - by);
+                    int y0 = Math.Max(0, by), y1 = Math.Min(h, by + block), rows = y1 - y0;
                     Array.Clear(sa, 0, bw); Array.Clear(sr, 0, bw); Array.Clear(sg, 0, bw); Array.Clear(sb, 0, bw);
-                    for (int y = by; y < by + rows; y++)
+                    for (int y = y0; y < y1; y++)
                     {
                         System.Runtime.InteropServices.Marshal.Copy(sd.Scan0 + y * sd.Stride, row, 0, w);
                         for (int x = 0; x < w; x++)
                         {
-                            int p = row[x], a = (p >> 24) & 255, i = x / block;
+                            int p = row[x], a = (p >> 24) & 255, i = (x + ox) / block;
                             // colours weighted by their alpha: a see-through pixel adds little colour
                             sa[i] += a; sr[i] += ((p >> 16) & 255) * a; sg[i] += ((p >> 8) & 255) * a; sb[i] += (p & 255) * a;
                         }
                     }
                     for (int i = 0; i < bw; i++)
                     {
-                        int cols = Math.Min(block, w - i * block);
+                        int x0 = Math.Max(0, i * block - ox), x1 = Math.Min(w, (i + 1) * block - ox), cols = x1 - x0;
+                        if (cols <= 0) continue;
                         long n = (long)cols * rows;
                         int a = (int)(sa[i] / n);
                         int cr = sa[i] > 0 ? (int)(sr[i] / sa[i]) : 0, cg = sa[i] > 0 ? (int)(sg[i] / sa[i]) : 0, cb = sa[i] > 0 ? (int)(sb[i] / sa[i]) : 0;
                         int px = (a << 24) | (cr << 16) | (cg << 8) | cb;
-                        for (int x = i * block; x < i * block + cols; x++) outRow[x] = px;
+                        for (int x = x0; x < x1; x++) outRow[x] = px;
                     }
-                    for (int y = by; y < by + rows; y++)
+                    for (int y = y0; y < y1; y++)
                         System.Runtime.InteropServices.Marshal.Copy(outRow, 0, dd.Scan0 + y * dd.Stride, w);
                 }
             }
@@ -864,14 +888,10 @@ namespace SnapMeasure
         /// <summary>A pixelated copy of the whole picture (blocks of 'block' pixels), kept while nothing changes.</summary>
         static Bitmap PixelatedOf(Bitmap img, int block)
         {
-            if (pixFor != img || pixBlock != block || pixCache == null)
-            {
-                Bitmap big = Blocks(img, new Rectangle(0, 0, img.Width, img.Height), block);
-                Bitmap old = pixCache;
-                pixCache = big; pixFor = img; pixBlock = block;
-                if (old != null) old.Dispose();
-            }
-            return pixCache;
+            // the picture with the pasted pictures starts somewhere on the drawing: its blocks line up with the
+            // screenshot's own, so a pasted picture's blocks meet the ones around it
+            RectangleF w = WorldOf(img);
+            return FxGet(pixCopies, img, block, () => Blocks(img, new Rectangle(0, 0, img.Width, img.Height), block, (int)w.X, (int)w.Y));
         }
 
         public static Graphics MeasureG
@@ -1006,7 +1026,15 @@ namespace SnapMeasure
         /// <summary>export = true for saved / copied / pinned pictures: non-printing notes are left out.</summary>
         public static void DrawAll(Graphics g, List<Shape> shapes, Bitmap img, ScaleInfo sc, Shape skip, bool export)
         {
-            DrawGlobalHighlights(g, shapes, img);
+            // pasted pictures are part of the picture for the focus effects: pixelate, grayscale, magnify and cut
+            // change them too, not only the captured picture under them
+            // The screenshot's own grayscale / pixelated copies are kept as they are; the pasted pictures get a small
+            // picture of their own (only where they lie), so moving one rebuilds just that, not the whole screenshot.
+            bool globals = shapes.Exists(IsGlobalFocus);
+            Bitmap src = img;
+            if (img != null && shapes.Exists(UsesPicture)) src = WithPictures(img, shapes, sc, skip);
+            RectangleF picsAt = src != img ? WorldOf(src) : RectangleF.Empty;
+            if (img != null) DrawGlobalHighlights(g, shapes, img, new RectangleF(0, 0, img.Width, img.Height));
             Dictionary<Shape, string> names = Labels(shapes, sc);
             Shape origin = Origin(shapes);
             foreach (Shape s in shapes)
@@ -1023,6 +1051,28 @@ namespace SnapMeasure
                 {
                     if (s.Shadow && s.CanShadow) DrawShadow(g, s, img, sc, n);
                     Draw(g, s, img, sc, n);
+                    if (UsesPicture(s) && !picsAt.IsEmpty && ShapeOps.Bounds(s).IntersectsWith(picsAt))
+                    {
+                        // where it covers pasted pictures: the effect once more, from the picture with them on it
+                        // (the same pixels elsewhere; see-through where there is no picture) – its border only once
+                        GraphicsState st = g.Save();
+                        g.SetClip(picsAt, CombineMode.Intersect);
+                        noBorder = true;
+                        try { Draw(g, s, src, sc, n); }
+                        finally { noBorder = false; g.Restore(st); }
+                    }
+                    if (globals && s.Kind == ShapeKind.Image && s.Pts.Count >= 2)
+                    {
+                        // a pasted picture lies on top of the outside effects (inside or outside the captured
+                        // picture): give it the same treatment, only where the picture is
+                        using (GraphicsPath op = ImageOutline(s))
+                        {
+                            GraphicsState st = g.Save();
+                            g.SetClip(op, CombineMode.Intersect);
+                            DrawGlobalHighlights(g, shapes, src, op.GetBounds());
+                            g.Restore(st);
+                        }
+                    }
                 }
                 catch (Exception) { }
             }
@@ -1140,8 +1190,10 @@ namespace SnapMeasure
                         int hs = s.HeadStart, he = s.HeadEnd;
                         using (Pen p = OutlinePen(s, sCol, w))
                         {
-                            p.StartCap = LineCap.Round;
-                            p.EndCap = LineCap.Round;
+                            // an arrow's tail is cut square (flat), not rounded; a plain line keeps round ends
+                            LineCap end = s.Kind == ShapeKind.Arrow || hs > 0 || he > 0 ? LineCap.Flat : LineCap.Round;
+                            p.StartCap = end;
+                            p.EndCap = end;
                             if ((hs > 0 || he > 0) && L > 0.5f)
                             {
                                 // heads grow with the line width; the shaft stops where each head needs it to
@@ -1177,7 +1229,8 @@ namespace SnapMeasure
                         using (Pen p = OutlinePen(s, sCol, w))
                         {
                             // highlighter pen: square ends like a chisel marker; one stroke, so overlaps don't darken
-                            LineCap cap = s.IsMarkerPen ? LineCap.Square : LineCap.Round;
+                            // with an arrowhead the tail is cut flat too, like the straight arrow
+                            LineCap cap = s.IsMarkerPen ? LineCap.Square : heads ? LineCap.Flat : LineCap.Round;
                             p.StartCap = cap; p.EndCap = cap; p.LineJoin = LineJoin.Round;
                             if (s.HeadStart > 0 && heads) p.StartCap = LineCap.Flat;
                             if (s.HeadEnd > 0 && heads) p.EndCap = LineCap.Flat;
@@ -1416,10 +1469,11 @@ namespace SnapMeasure
                     break;
                 case ShapeKind.Highlight:
                     {
-                        if (s.Pts.Count < 2) return;
-                        RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+                        if (s.Pts.Count < (s.IsFocusPoly ? 3 : 2)) return;
                         using (GraphicsPath hp = HighlightPath(s))
                         {
+                            // the box (a perimeter: the box round its corners)
+                            RectangleF r = s.IsFocusPoly ? hp.GetBounds() : Geo.Rect(s.Pts[0], s.Pts[1]);
                             if (s.Mode == (int)HighlightMode.Marker)
                             {
                                 using (SolidBrush b = new SolidBrush(fCol)) g.FillPath(b, hp);
@@ -1429,26 +1483,26 @@ namespace SnapMeasure
                                 float factor = s.MagnifyFactor;
                                 PointF c = Geo.Center(r);
                                 RectangleF dst = s.Angle != 0f ? hp.GetBounds() : r;     // turned: the whole turned outline gets the enlarged picture
-                                RectangleF src = new RectangleF(c.X - dst.Width / factor / 2f, c.Y - dst.Height / factor / 2f, dst.Width / factor, dst.Height / factor);
+                                RectangleF world = WorldOf(img);
+                                RectangleF src = new RectangleF(c.X - dst.Width / factor / 2f - world.X, c.Y - dst.Height / factor / 2f - world.Y, dst.Width / factor, dst.Height / factor);
                                 GraphicsState st = g.Save();
                                 g.SetClip(hp, CombineMode.Intersect);
                                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                                 g.PixelOffsetMode = PixelOffsetMode.Half;
                                 g.DrawImage(img, dst, src, GraphicsUnit.Pixel);
                                 g.Restore(st);
-                                if (stroke) using (Pen p = new Pen(sCol, w)) g.DrawPath(p, hp);
                             }
                             else if (s.Mode == (int)HighlightMode.Pixelate)
                             {
                                 GraphicsState st = g.Save();
                                 g.SetClip(hp, CombineMode.Intersect);
-                                if (s.Angle != 0f && img != null)
+                                if ((s.Angle != 0f || s.IsFocusPoly) && img != null)
                                 {
-                                    // turned: the box's own pixelation would miss the corners of the turned outline
-                                    RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
+                                    // turned or a perimeter: the box's own pixelation would miss parts of the outline
+                                    RectangleF all = WorldOf(img);
                                     g.InterpolationMode = InterpolationMode.NearestNeighbor;
                                     g.PixelOffsetMode = PixelOffsetMode.Half;
-                                    g.DrawImage(PixelatedOf(img, s.PixelBlock), all, all, GraphicsUnit.Pixel);
+                                    g.DrawImage(PixelatedOf(img, s.PixelBlock), all, new RectangleF(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
                                 }
                                 else DrawPixelate(g, s, img);
                                 g.Restore(st);
@@ -1458,11 +1512,12 @@ namespace SnapMeasure
                                 GraphicsState st = g.Save();
                                 g.SetClip(hp, CombineMode.Intersect);
                                 g.PixelOffsetMode = PixelOffsetMode.Half;
-                                RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
-                                g.DrawImage(GrayOf(img), all, all, GraphicsUnit.Pixel);
+                                g.DrawImage(GrayOf(img), WorldOf(img), new RectangleF(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
                                 g.Restore(st);
                             }
                             // PixelateOutside and Grayscale (outside) are drawn for the whole picture in DrawGlobalHighlights
+                            // every mode and shape: a border in the line colour (its cut-outs get one too)
+                            if (stroke && !noBorder) using (Pen p = OutlinePen(s, sCol, w)) g.DrawPath(p, hp);
                         }
                         break;
                     }
@@ -1708,14 +1763,27 @@ namespace SnapMeasure
         /// <summary>A focus shape's outline in picture coordinates, turned by its angle.</summary>
         public static GraphicsPath HighlightPath(Shape s)
         {
-            RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
-            GraphicsPath p = HighlightPath(r, s.Form);
-            if (s.Angle != 0f)
-                using (Matrix m = new Matrix())
-                {
-                    m.RotateAt(s.Angle, Geo.Center(r));
-                    p.Transform(m);
-                }
+            GraphicsPath p;
+            if (s.IsFocusPoly)
+            {
+                // perimeter: the clicked corners
+                p = new GraphicsPath();
+                if (s.Pts.Count >= 3) p.AddPolygon(s.Pts.ToArray());
+            }
+            else
+            {
+                RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+                p = HighlightPath(r, s.Form);
+                if (s.Angle != 0f)
+                    using (Matrix m = new Matrix())
+                    {
+                        m.RotateAt(s.Angle, Geo.Center(r));
+                        p.Transform(m);
+                    }
+            }
+            // cut-outs (X): holes in the focus, like openings in an area (the path fills alternately, so they stay out)
+            if (s.Holes != null)
+                foreach (List<PointF> h in s.Holes) if (h.Count >= 3) p.AddPolygon(h.ToArray());
             return p;
         }
 
@@ -1983,55 +2051,151 @@ namespace SnapMeasure
             return p;
         }
 
-        static void DrawGlobalHighlights(Graphics g, List<Shape> shapes, Bitmap img)
+        /// <summary>area: where the spotlight darkens (the captured picture, or a pasted picture's box).</summary>
+        static void DrawGlobalHighlights(Graphics g, List<Shape> shapes, Bitmap img, RectangleF area)
         {
             if (img == null) return;
             List<Shape> spot = new List<Shape>(), gray = new List<Shape>(), pixOut = new List<Shape>();
             int spotOp = 0;
             foreach (Shape s in shapes)
             {
-                if (s.Kind != ShapeKind.Highlight || s.Pts.Count < 2) continue;
+                if (!IsGlobalFocus(s)) continue;
                 if (s.Mode == (int)HighlightMode.Spotlight) { spot.Add(s); spotOp = Math.Max(spotOp, s.FillOpacity); }
                 else if (s.Mode == (int)HighlightMode.Grayscale) gray.Add(s);
                 else if (s.Mode == (int)HighlightMode.PixelateOutside) pixOut.Add(s);
             }
-            RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
+            // the whole picture, pasted pictures lying outside it included
+            RectangleF all = WorldOf(img), px = new RectangleF(0, 0, img.Width, img.Height);
             if (pixOut.Count > 0)
             {
                 // everything outside the shapes is pixelated (block size from the first one's strength)
                 int block = pixOut[0].PixelBlock;
-                using (Region rg = new Region(all))
+                using (Region rg = new Region(area))
                 {
                     foreach (Shape s in pixOut) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
                     GraphicsState st = g.Save();
                     g.SetClip(rg, CombineMode.Intersect);
                     g.InterpolationMode = InterpolationMode.NearestNeighbor;
                     g.PixelOffsetMode = PixelOffsetMode.Half;
-                    g.DrawImage(PixelatedOf(img, block), all, all, GraphicsUnit.Pixel);
+                    g.DrawImage(PixelatedOf(img, block), all, px, GraphicsUnit.Pixel);
                     g.Restore(st);
                 }
             }
             if (gray.Count > 0)
             {
-                using (Region rg = new Region(all))
+                using (Region rg = new Region(area))
                 {
                     foreach (Shape s in gray) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
                     GraphicsState st = g.Save();
                     g.SetClip(rg, CombineMode.Intersect);
                     g.PixelOffsetMode = PixelOffsetMode.Half;
-                    g.DrawImage(GrayOf(img), all, all, GraphicsUnit.Pixel);
+                    g.DrawImage(GrayOf(img), all, px, GraphicsUnit.Pixel);
                     g.Restore(st);
                 }
             }
             if (spot.Count > 0)
             {
-                using (Region rg = new Region(all))
+                using (Region rg = new Region(area))
                 using (SolidBrush b = new SolidBrush(Color.FromArgb((int)(Math.Max(10, spotOp) * 2.55), 0, 0, 0)))
                 {
                     foreach (Shape s in spot) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
                     g.FillRegion(b, rg);
                 }
             }
+        }
+
+        /// <summary>Focus modes drawn for the whole picture (outside the shapes) before the other shapes.</summary>
+        static bool IsGlobalFocus(Shape s)
+        {
+            return s.Kind == ShapeKind.Highlight && s.Pts.Count >= (s.IsFocusPoly ? 3 : 2) &&
+                   (s.Mode == (int)HighlightMode.Spotlight || s.Mode == (int)HighlightMode.Grayscale ||
+                    s.Mode == (int)HighlightMode.PixelateOutside);
+        }
+
+        /// <summary>Focus modes that show the picture changed (gray, pixelated, magnified): they need the picture as it looks.</summary>
+        static bool UsesPicture(Shape s)
+        {
+            if (s.Kind == ShapeKind.Pixelate) return true;
+            return s.Kind == ShapeKind.Highlight && s.Mode != (int)HighlightMode.Marker && s.Mode != (int)HighlightMode.Spotlight;
+        }
+
+        /// <summary>The outline a pasted picture covers (turned with it).</summary>
+        static GraphicsPath ImageOutline(Shape s)
+        {
+            RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+            GraphicsPath p = new GraphicsPath();
+            p.AddRectangle(r);
+            if (s.Angle != 0f)
+                using (Matrix m = new Matrix()) { m.RotateAt(s.Angle, Geo.Center(r)); p.Transform(m); }
+            return p;
+        }
+
+        /// <summary>Where a picture lies on the drawing: the picture itself at 0,0, or the picture with the pasted
+        /// pictures, which may reach past its edges.</summary>
+        static RectangleF WorldOf(Bitmap b)
+        {
+            if (b != null && ReferenceEquals(b, picsCache)) return picsWorld;
+            return b == null ? RectangleF.Empty : new RectangleF(0, 0, b.Width, b.Height);
+        }
+
+        /// <summary>Set while a focus effect is drawn a second time over pasted pictures: its border is drawn once.</summary>
+        [ThreadStatic] static bool noBorder;
+
+        static Bitmap picsCache;
+        static Bitmap picsFor;
+        static string picsKey;
+        static RectangleF picsWorld;
+
+        /// <summary>The picture with the pasted pictures on it, so focus effects (pixelate, grayscale, magnify) also
+        /// change what was pasted. Kept until the picture or a pasted picture changes.</summary>
+        static Bitmap WithPictures(Bitmap img, List<Shape> shapes, ScaleInfo sc, Shape skip)
+        {
+            StringBuilder key = new StringBuilder();
+            foreach (Shape s in shapes)
+            {
+                if (s == skip || s.Kind != ShapeKind.Image || s.Img == null || s.Pts.Count < 2) continue;
+                key.Append(RuntimeHelpers.GetHashCode(s.Img)).Append(':');
+                foreach (PointF p in s.Pts) key.Append(p.X).Append(',').Append(p.Y).Append(';');
+                key.Append(s.FillOpacity).Append('|').Append(s.Angle).Append('|').Append(s.Width).Append('|').Append(s.Stroke.ToArgb()).Append('|')
+                   .Append(s.StrokeOpacity).Append('|').Append(s.Shadow).Append('/');
+            }
+            if (key.Length == 0) return img;
+            string k = key.ToString();
+            if (picsCache != null && picsFor == img && picsKey == k) return picsCache;
+            // only where the pasted pictures lie (they may reach past the captured picture): the screenshot's own
+            // grayscale / pixelated copies stay valid while a picture is moved, and this stays small
+            RectangleF world = RectangleF.Empty;
+            foreach (Shape s in shapes)
+            {
+                if (s == skip || s.Kind != ShapeKind.Image || s.Img == null || s.Pts.Count < 2) continue;
+                RectangleF b = ShapeOps.Bounds(s);
+                b.Inflate(s.Width + 12f, s.Width + 12f);          // frame and shadow
+                world = world.IsEmpty ? b : RectangleF.Union(world, b);
+            }
+            Rectangle wr = Rectangle.FromLTRB((int)Math.Floor(world.Left), (int)Math.Floor(world.Top), (int)Math.Ceiling(world.Right), (int)Math.Ceiling(world.Bottom));
+            // keep it sane: pictures pasted miles apart must not ask for a giant bitmap
+            if (wr.Width < 1 || wr.Height < 1 || (long)wr.Width * wr.Height > 120000000L) return img;
+            Bitmap res = new Bitmap(wr.Width, wr.Height, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(res))
+            {
+                g.TranslateTransform(-wr.X, -wr.Y);
+                g.DrawImage(img, new Rectangle(0, 0, img.Width, img.Height), new Rectangle(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                foreach (Shape s in shapes)
+                {
+                    if (s == skip || s.Kind != ShapeKind.Image || s.Img == null || s.Pts.Count < 2) continue;
+                    try
+                    {
+                        if (s.Shadow && s.CanShadow) DrawShadow(g, s, img, sc, null);
+                        Draw(g, s, img, sc, null);
+                    }
+                    catch (Exception) { }
+                }
+            }
+            Bitmap old = picsCache;
+            picsCache = res; picsFor = img; picsKey = k; picsWorld = wr;
+            if (old != null) { ReleaseCache(old); old.Dispose(); }
+            return res;
         }
 
         static void DrawDimension(Graphics g, Shape s, ScaleInfo sc, Color col, float w)
@@ -2138,13 +2302,14 @@ namespace SnapMeasure
         {
             if (s.Pts.Count < 2 || img == null) return;
             Rectangle r = Rectangle.Round(Geo.Rect(s.Pts[0], s.Pts[1]));
-            r.Intersect(new Rectangle(0, 0, img.Width, img.Height));
+            Rectangle world = Rectangle.Round(WorldOf(img));         // the picture may reach past 0,0 (pasted pictures)
+            r.Intersect(world);
             if (r.Width < 1 || r.Height < 1) return;
             int block = s.PixelBlock;
-            string key = r.ToString() + "|" + block + "|" + img.GetHashCode();
+            string key = r.ToString() + "|" + block + "|" + img.GetHashCode() + "|" + world.ToString();
             if (s.Cache == null || s.CacheKey != key)
             {
-                Bitmap big = Blocks(img, r, block);
+                Bitmap big = Blocks(img, new Rectangle(r.X - world.X, r.Y - world.Y, r.Width, r.Height), block);
                 if (s.Cache != null) s.Cache.Dispose();
                 s.Cache = big;
                 s.CacheKey = key;
@@ -2266,6 +2431,9 @@ namespace SnapMeasure
                         h.Add(new Handle(Geo.Mid(a, b), HKind.DimOffset, 2));
                     }
                     break;
+                case ShapeKind.Highlight:
+                    if (!s.IsFocusPoly) goto default;
+                    goto case ShapeKind.Polygon;                       // a focus perimeter: its corners, like an area
                 case ShapeKind.Polygon:
                 case ShapeKind.Area:
                 case ShapeKind.Polyline:
@@ -2565,6 +2733,13 @@ namespace SnapMeasure
                 case ShapeKind.Stamp:
                 case ShapeKind.Markup:
                     {
+                        if (s.IsFocusPoly)
+                        {
+                            // a focus perimeter: inside it, or near one of its sides
+                            if (Geo.InPolygon(p, s.Pts)) return true;
+                            for (int i = 0; i < s.Pts.Count; i++) if (Geo.SegDist(p, s.Pts[i], s.Pts[(i + 1) % s.Pts.Count]) <= t) return true;
+                            return false;
+                        }
                         if (s.Pts.Count < 2) return false;
                         RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
                         r.Inflate(tol, tol);
@@ -2940,7 +3115,7 @@ namespace SnapMeasure
             if (!CleanPoints(s.Pts)) return false;
             if (s.Holes != null)
             {
-                if ((s.Kind != ShapeKind.Area && s.Kind != ShapeKind.Polygon) || s.Holes.Count > 1000) s.Holes = null;
+                if ((s.Kind != ShapeKind.Area && s.Kind != ShapeKind.Polygon && s.Kind != ShapeKind.Highlight) || s.Holes.Count > 1000) s.Holes = null;
                 else
                 {
                     s.Holes.RemoveAll(h => h == null || h.Count < 3 || !CleanPoints(h));
@@ -2969,7 +3144,14 @@ namespace SnapMeasure
             s.HeadEnd = Math.Max(0, Math.Min(9, s.HeadEnd));
             s.Mode = Math.Max(0, Math.Min(Math.Max(20, Stamps.Custom), s.Mode));   // stamps go up to Custom
             s.Dash = Math.Max(0, Math.Min(5, s.Dash));
-            s.Form = Math.Max(0, Math.Min(4, s.Form));
+            s.Form = Math.Max(0, Math.Min((int)HighlightForm.Perimeter, s.Form));
+            if (s.Kind == ShapeKind.Highlight)
+            {
+                if (!Enum.IsDefined(typeof(HighlightMode), s.Mode)) s.Mode = (int)HighlightMode.Marker;
+                // a perimeter needs three corners; a box form uses only its two corners
+                if (s.IsFocusPoly && s.Pts.Count < 3) s.Form = (int)HighlightForm.Rectangle;
+                if (!s.IsFocusPoly && s.Pts.Count > 2) s.Pts.RemoveRange(2, s.Pts.Count - 2);
+            }
             s.Strength = Math.Max(0, Math.Min(10, s.Strength));
             s.FromArea = s.Kind == ShapeKind.Perimeter ? Math.Max(0, Math.Min(3, s.FromArea)) : 0;
             if (s.Text != null && s.Text.Length > 100000) s.Text = s.Text.Substring(0, 100000);

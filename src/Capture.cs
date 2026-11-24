@@ -441,4 +441,193 @@ namespace SnapMeasure
             base.Dispose(disposing);
         }
     }
+
+    /// <summary>Screen colour picker (like PowerToys): every screen is frozen, a magnifier follows the pointer with the
+    /// colour under it as HEX and RGB. Left-click = take it as the line colour, right-click = as the fill colour,
+    /// arrow keys = 1 px nudge, Enter = line colour, Esc = cancel.</summary>
+    internal class ScreenColorPicker : Form
+    {
+        readonly Bitmap shot;
+        readonly Rectangle vs;
+        Point cur;
+        Rectangle lastDirty;
+        readonly float k;
+        readonly Font font, small;
+        public Color Picked;
+        public bool ForFill;
+        const int Cells = 13, Half = 6;
+        int Zoom { get { return Math.Max(10, (int)Math.Round(210 * k / Cells)); } }    // magnifier pixels per screen pixel (about 210 px wide)
+
+        /// <summary>Shows the picker; null when cancelled.</summary>
+        public static Color? Pick(out bool forFill)
+        {
+            forFill = false;
+            Rectangle vs = ScreenCapture.VirtualBounds;
+            Bitmap shot = new Bitmap(Math.Max(1, vs.Width), Math.Max(1, vs.Height), PixelFormat.Format24bppRgb);
+            try
+            {
+                using (Graphics g = Graphics.FromImage(shot)) g.CopyFromScreen(vs.Left, vs.Top, 0, 0, vs.Size, CopyPixelOperation.SourceCopy);
+                using (ScreenColorPicker f = new ScreenColorPicker(shot, vs))
+                {
+                    if (f.ShowDialog() != DialogResult.OK) return null;
+                    forFill = f.ForFill;
+                    return f.Picked;
+                }
+            }
+            finally { shot.Dispose(); }
+        }
+
+        ScreenColorPicker(Bitmap shot, Rectangle vs)
+        {
+            this.shot = shot; this.vs = vs;
+            k = Native.ScaleAt(Cursor.Position);
+            font = new Font("Segoe UI", 15f * k, FontStyle.Bold, GraphicsUnit.Pixel);
+            small = new Font(Lang.UiFamily, 12f * k, FontStyle.Regular, GraphicsUnit.Pixel);
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.Manual;
+            ShowInTaskbar = false;
+            TopMost = true;
+            AutoScaleMode = AutoScaleMode.None;
+            KeyPreview = true;
+            Cursor = Cursors.Cross;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Opaque, true);
+            Bounds = vs;
+            Point cp = Cursor.Position;
+            cur = new Point(cp.X - vs.X, cp.Y - vs.Y);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            // spans monitors with different scaling: never let Windows resize it on a DPI change
+            if (m.Msg == Native.WM_DPICHANGED) { m.Result = IntPtr.Zero; return; }
+            base.WndProc(ref m);
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            Bounds = vs;
+            Activate();
+            Focus();
+        }
+
+        Color At(Point p)
+        {
+            if (p.X < 0 || p.Y < 0 || p.X >= shot.Width || p.Y >= shot.Height) return Color.Black;
+            return shot.GetPixel(p.X, p.Y);
+        }
+
+        static string Hex(Color c) { return "#" + c.R.ToString("X2") + c.G.ToString("X2") + c.B.ToString("X2"); }
+
+        Rectangle PanelRect()
+        {
+            int z = Zoom, w = Math.Max(Cells * z, (int)(230 * k)), h = Cells * z + (int)(104 * k), gap = (int)(26 * k);
+            Rectangle area = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height);
+            try
+            {
+                Rectangle s = Screen.FromPoint(new Point(cur.X + vs.X, cur.Y + vs.Y)).Bounds;
+                s.Offset(-vs.X, -vs.Y);
+                s.Intersect(area);
+                if (s.Width > 0 && s.Height > 0) area = s;
+            }
+            catch (Exception) { }
+            int x = cur.X + gap, y = cur.Y + gap;
+            if (x + w > area.Right) x = cur.X - gap - w;
+            if (y + h > area.Bottom) y = cur.Y - gap - h;
+            x = Math.Max(area.X, Math.Min(x, Math.Max(area.X, area.Right - w)));
+            y = Math.Max(area.Y, Math.Min(y, Math.Max(area.Y, area.Bottom - h)));
+            return new Rectangle(x, y, w, h);
+        }
+
+        void Dirty()
+        {
+            Rectangle d = PanelRect();
+            d.Inflate(2, 2);
+            Invalidate(lastDirty.IsEmpty ? d : Rectangle.Union(d, lastDirty));
+            lastDirty = d;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            Rectangle clip = e.ClipRectangle;
+            g.DrawImage(shot, clip, clip, GraphicsUnit.Pixel);
+
+            Rectangle m = PanelRect();
+            int z = Zoom;
+            Rectangle src = new Rectangle(cur.X - Half, cur.Y - Half, Cells, Cells);
+            Rectangle dst = new Rectangle(m.X + (m.Width - Cells * z) / 2, m.Y, Cells * z, Cells * z);
+            using (SolidBrush bg = new SolidBrush(Color.FromArgb(32, 32, 36))) g.FillRectangle(bg, m);
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.DrawImage(shot, dst, src, GraphicsUnit.Pixel);
+            g.PixelOffsetMode = PixelOffsetMode.Default;
+            Color c = At(cur);
+            // the pixel being picked: framed in black and white so it shows on any colour
+            Rectangle px = new Rectangle(dst.X + Half * z, dst.Y + Half * z, z, z);
+            g.DrawRectangle(Pens.Black, px.X - 1, px.Y - 1, px.Width + 1, px.Height + 1);
+            g.DrawRectangle(Pens.White, px);
+
+            // colour swatch, HEX and RGB under the magnifier
+            int pad = (int)(8 * k), sw = (int)(40 * k);
+            Rectangle swatch = new Rectangle(m.X + pad, dst.Bottom + pad, sw, sw);
+            using (SolidBrush b = new SolidBrush(c)) g.FillRectangle(b, swatch);
+            g.DrawRectangle(Pens.White, swatch);
+            Rectangle txt = new Rectangle(swatch.Right + pad, swatch.Y - (int)(2 * k), m.Right - swatch.Right - 2 * pad, (int)(24 * k));
+            TextRenderer.DrawText(g, Hex(c), font, txt, Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            txt.Y += (int)(22 * k);
+            TextRenderer.DrawText(g, "RGB " + c.R + ", " + c.G + ", " + c.B, small, txt, Color.FromArgb(215, 215, 220), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            Rectangle hint = new Rectangle(m.X + pad, swatch.Bottom + (int)(4 * k), m.Width - 2 * pad, m.Bottom - swatch.Bottom - (int)(4 * k));
+            TextRenderer.DrawText(g, Lang.T("Click = line · Right-click = fill · Esc"), small, hint, Color.FromArgb(170, 175, 185),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+            g.DrawRectangle(Pens.White, m.X, m.Y, m.Width - 1, m.Height - 1);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            cur = e.Location;
+            Dirty();
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left && e.Button != MouseButtons.Right) return;
+            cur = e.Location;
+            Finish(e.Button == MouseButtons.Right);
+        }
+
+        void Finish(bool fill)
+        {
+            Picked = At(cur);
+            ForFill = fill;
+            DialogResult = DialogResult.OK;
+            Close();
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            int dx = 0, dy = 0, step = e.Shift ? 10 : 1;
+            switch (e.KeyCode)
+            {
+                case Keys.Escape: DialogResult = DialogResult.Cancel; Close(); return;
+                case Keys.Enter: Finish(e.Shift); return;
+                case Keys.Left: dx = -step; break;
+                case Keys.Right: dx = step; break;
+                case Keys.Up: dy = -step; break;
+                case Keys.Down: dy = step; break;
+            }
+            if (dx != 0 || dy != 0)
+            {
+                Point p = Cursor.Position;
+                Cursor.Position = new Point(p.X + dx, p.Y + dy);
+                e.Handled = true;
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { font.Dispose(); small.Dispose(); }
+            base.Dispose(disposing);
+        }
+    }
 }

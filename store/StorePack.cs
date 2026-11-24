@@ -207,6 +207,12 @@ static class StorePack
     {
         string cfg = Path.Combine(work, "priconfig.xml");
         Run(makepri, "createconfig /cf \"" + cfg + "\" /dq en-US /pv 10.0.0 /o");
+        // one resources.pri for the single package: the default config splits scales into resources.scale-*.pri,
+        // which only works in a bundle with resource packages
+        System.Xml.XmlDocument x = new System.Xml.XmlDocument();
+        x.Load(cfg);
+        foreach (System.Xml.XmlNode n in x.SelectNodes("//packaging")) n.ParentNode.RemoveChild(n);
+        x.Save(cfg);
         Run(makepri, "new /pr \"" + work + "\" /cf \"" + cfg + "\" /mn \"" + manifest + "\" /of \"" + Path.Combine(work, "resources.pri") + "\" /o");
         File.Delete(cfg);
         Console.WriteLine("  resources.pri made with " + makepri);

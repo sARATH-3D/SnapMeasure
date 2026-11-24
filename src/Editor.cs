@@ -164,7 +164,7 @@ namespace SnapMeasure
                 cv.Scale.Upp = Settings.GetDouble("Upp", 1.0);
             }
             cv.Scale.Decimals = Settings.GetInt("Decimals", 2);
-            cv.Scale.Rounding = Math.Max(0, Math.Min(2, Settings.GetInt("Rounding", 0)));
+            cv.Scale.Rounding = 0;          // Ceil / Floor always start unticked (a project keeps its own)
             cv.ShowRulers = Settings.GetBool("ShowRulers", true);
             cv.AskText = (t, init) => Dialogs.Ask(this, t, init, false);
             cv.AskNote = (t, init) => Dialogs.Ask(this, t, init, true);
@@ -510,29 +510,9 @@ namespace SnapMeasure
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
             IconOnly(AddBtn(bar, "Zoom to area", "Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)", (s, e) => { cv.StartZoomBox(); cv.Focus(); }), "zoomarea");
             IconOnly(AddBtn(bar, "Actual pixels", "Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)", (s, e) => { cv.ZoomCenter(1f); cv.Focus(); }), "actual");
-            bar.Items.Add(new ToolStripSeparator());
-            // rulers sit with the other on/off switch for the view (keep inside)
-            bRulers = IconOnly(AddBtn(bar, "Rulers", "Rulers along the top and left edge (Ctrl+R)", (s, e) => ToggleRulers()), "rulers");
-            bRulers.CheckOnClick = false;
-            bRulers.Checked = cv.ShowRulers;
-            // lock: everything drawn, moved, pasted or resized stays inside the picture
-            bLock = IconOnly(AddBtn(bar, "Keep inside", "Keep inside the picture: drawing, moving, pasting and resizing stay within the screenshot (Ctrl+L)", (s, e) => ToggleLock()), "lock");
-            bLock.CheckOnClick = false;
-            cv.LockInside = Settings.GetBool("LockInside", false);
-            bLock.Checked = cv.LockInside;
-            bar.Items.Add(new ToolStripSeparator());
 
-            // add-ons: tools that float over any window, not just this picture
-            ToolStripDropDownButton addons = new ToolStripDropDownButton("Add-ons");
-            addons.Image = Icons.Cmd("ruler", CmdIcon);
-            addons.ImageScaling = ToolStripItemImageScaling.None;
-            addons.AutoToolTip = false;      // no tooltip: it would cover the menu
-            addons.DropDown.Font = Font;
-            MenuItem(addons, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler()).ToolTipText = Lang.T("Measure anything on screen");
-            MenuItem(addons, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor()).ToolTipText = Lang.T("Measure an angle on screen");
-            bar.Items.Add(addons);
-
-            // right end, next to the window's own buttons: side panel, pin, settings, help (the first added sits furthest right)
+            // right end, next to the window's own buttons (the first added sits furthest right):
+            // keep inside, rulers | add-ons | side panel, pin, settings, help
             ToolStripButton bHelp = IconOnly(AddBtn(bar, "About", "About SnapMeasure, shortcuts and the GitHub page", (s, e) => App.ShowAbout(this)), "help");
             bHelp.Alignment = ToolStripItemAlignment.Right;
             ToolStripButton bSet = Ic(AddBtn(bar, "Settings", "Settings: capture keys, what a capture does, save folder, file name, format – and About", (s, e) => Dialogs.ShowSettings(this, 0)), "settings");
@@ -544,6 +524,31 @@ namespace SnapMeasure
             bPanel.Checked = Settings.GetBool("ShowPanel", true);
             ToolStripSeparator sepR = new ToolStripSeparator(); sepR.Alignment = ToolStripItemAlignment.Right;
             bar.Items.Add(sepR);
+
+            // add-ons: tools that float over any window, not just this picture
+            ToolStripDropDownButton addons = new ToolStripDropDownButton("Add-ons");
+            addons.Image = Icons.Cmd("ruler", CmdIcon);
+            addons.ImageScaling = ToolStripItemImageScaling.None;
+            addons.AutoToolTip = false;      // no tooltip: it would cover the menu
+            addons.DropDown.Font = Font;
+            addons.Alignment = ToolStripItemAlignment.Right;
+            MenuItem(addons, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler()).ToolTipText = Lang.T("Measure anything on screen");
+            MenuItem(addons, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor()).ToolTipText = Lang.T("Measure an angle on screen");
+            bar.Items.Add(addons);
+            ToolStripSeparator sepA = new ToolStripSeparator(); sepA.Alignment = ToolStripItemAlignment.Right;
+            bar.Items.Add(sepA);
+
+            // the two on/off switches for the view: rulers, and the lock (everything drawn, moved, pasted or
+            // resized stays inside the picture)
+            bRulers = IconOnly(AddBtn(bar, "Rulers", "Rulers along the top and left edge (Ctrl+R)", (s, e) => ToggleRulers()), "rulers");
+            bRulers.CheckOnClick = false;
+            bRulers.Checked = cv.ShowRulers;
+            bRulers.Alignment = ToolStripItemAlignment.Right;
+            bLock = IconOnly(AddBtn(bar, "Keep inside", "Keep inside the picture: drawing, moving, pasting and resizing stay within the screenshot (Ctrl+L)", (s, e) => ToggleLock()), "lock");
+            bLock.CheckOnClick = false;
+            cv.LockInside = Settings.GetBool("LockInside", false);
+            bLock.Checked = cv.LockInside;
+            bLock.Alignment = ToolStripItemAlignment.Right;
             bar.ResumeLayout(false);
         }
 
@@ -613,6 +618,7 @@ namespace SnapMeasure
         {
             toolBar = new ClickStrip();
             toolBar.SuspendLayout();
+            toolIconPx = S(IconSize);      // the icons AddTool draws
             toolBar.Font = Font;
             toolBar.Dock = DockStyle.Left;
             toolBar.AutoSize = false;
@@ -695,9 +701,9 @@ namespace SnapMeasure
         Panel toolHost;
         bool fittingToolBar;
 
-        /// <summary>One column, always. A short window or a large display scale first gets the compact column
-        /// (the group titles become thin dividers, the buttons a little closer); if that still does not fit,
-        /// the column scrolls with the mouse wheel. No tool is ever hidden.</summary>
+        /// <summary>Always one column. A short window or a large display scale first gets the compact column (the group
+        /// titles become thin dividers, the buttons a little closer), then smaller icons; only if even the smallest do
+        /// not fit does the column scroll with the mouse wheel. No tool is ever hidden.</summary>
         void FitToolBar()
         {
             if (fittingToolBar || toolBar == null || toolHost == null) return;
@@ -707,17 +713,30 @@ namespace SnapMeasure
                 int avail = toolHost.Height;
                 if (avail <= 0) return;
                 toolBar.SuspendLayout();
+                SetToolBarIcons(S(IconSize));
                 SetToolBarCompact(false);
-                bool compact = ToolBarNeed() > avail;
-                if (compact) SetToolBarCompact(true);
+                if (ToolBarNeed() > avail) SetToolBarCompact(true);
                 int need = ToolBarNeed();
+                foreach (float f in new[] { 0.85f, 0.72f, 0.6f })
+                {
+                    if (need <= avail) break;
+                    SetToolBarIcons((int)Math.Round(S(IconSize) * f));
+                    SetToolBarCompact(true);
+                    need = ToolBarNeed();
+                }
                 bool scroll = need > avail;
                 int w = S(IconSize + 32);
                 toolBar.Width = w;
                 toolBar.Height = scroll ? need : avail;
                 toolBar.ResumeLayout(true);
-                toolHost.Width = w + (scroll ? SystemInformation.VerticalScrollBarWidth : 0);
+                // scroll bars only when needed: a bar exactly as big as its holder could otherwise still get
+                // both (one makes room for the other)
                 if (!scroll) toolHost.AutoScrollPosition = Point.Empty;
+                toolHost.AutoScroll = scroll;
+                toolHost.Width = w + (scroll ? SystemInformation.VerticalScrollBarWidth : 0);
+                // the real scroll bar can be wider than SystemInformation says (high display scale): make room for
+                // it, or a sideways scroll bar appears as well
+                if (scroll && toolHost.ClientSize.Width < w) toolHost.Width += w - toolHost.ClientSize.Width;
             }
             finally { fittingToolBar = false; }
         }
@@ -727,6 +746,31 @@ namespace SnapMeasure
             int need = toolBar.Padding.Vertical + S(2);
             foreach (ToolStripItem it in toolBar.Items) if (it.Available) need += it.Height + it.Margin.Vertical;
             return need;
+        }
+
+        /// <summary>Pixel size of the tool icons now (smaller when the window is short).</summary>
+        int toolIconPx;
+        readonly Dictionary<string, Image> toolIconCache = new Dictionary<string, Image>();
+
+        /// <summary>Redraws the tool icons at 'px' pixels (sharp, not scaled bitmaps); kept per size.</summary>
+        void SetToolBarIcons(int px)
+        {
+            if (px == toolIconPx) return;
+            toolIconPx = px;
+            foreach (KeyValuePair<Tool, ToolStripButton> kv in toolButtons)
+            {
+                string key = kv.Key + "|" + px;
+                Image im;
+                if (!toolIconCache.TryGetValue(key, out im)) { im = Icons.Make(kv.Key, px); toolIconCache[key] = im; }
+                kv.Value.Image = im;
+            }
+            if (bMatch != null)
+            {
+                string key = "match|" + px;
+                Image im;
+                if (!toolIconCache.TryGetValue(key, out im)) { im = Icons.Cmd("match", px); toolIconCache[key] = im; }
+                bMatch.Image = im;
+            }
         }
 
         void SetToolBarCompact(bool on)
@@ -790,7 +834,7 @@ namespace SnapMeasure
         }
 
         /// <summary>Tool button height: the icon, 2 px of border above and below, and 1 px of air (whole pixels at any scale).</summary>
-        int ToolButtonH { get { return S(IconSize) + 2 * Math.Max(3, S(3)); } }
+        int ToolButtonH { get { return (toolIconPx > 0 ? toolIconPx : S(IconSize)) + 2 * Math.Max(3, S(3)); } }
 
         void AddTool(Tool t, string tip)
         {
@@ -1061,7 +1105,14 @@ namespace SnapMeasure
         void LazyItemHeight(ComboBox c, int itemH)
         {
             c.DrawMode = DrawMode.OwnerDrawFixed;
-            c.HandleCreated += (s, e) => { if (c.ItemHeight != itemH) c.ItemHeight = itemH; };
+            c.HandleCreated += (s, e) =>
+            {
+                if (c.ItemHeight == itemH) return;
+                c.ItemHeight = itemH;
+                // the box grows natively, without telling its group: lay the group (and the style bar) out again,
+                // or the bottom of the box is cut off
+                if (IsHandleCreated) BeginInvoke((Action)FitStyleBar);
+            };
         }
 
         /// <summary>One labelled group in the style bar: "Line [colour] [opacity] [width]".</summary>
@@ -1108,18 +1159,21 @@ namespace SnapMeasure
         {
             styleBar = new FlowLayoutPanel();
             styleBar.SuspendLayout();
-            styleBar.AutoSize = true;
-            styleBar.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            styleBar.WrapContents = true;
+            // always one row: what does not fit goes behind the » button at its end (FitStyleBar)
+            styleBar.AutoSize = false;
+            styleBar.WrapContents = false;
             styleBar.Padding = new Padding(S(6), S(3), S(6), S(3));
             styleBar.BackColor = Color.FromArgb(246, 247, 249);
 
             lStyleFor = new Label();
-            lStyleFor.AutoSize = true;
             lStyleFor.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
             lStyleFor.ForeColor = Ink;
             lStyleFor.Margin = new Padding(0, S(6), S(12), 0);
-            lStyleFor.MinimumSize = new Size(S(150), 0);
+            // one fixed width whatever it says ("Pick a tool or shape", "Rectangle (selected)" …), so the groups
+            // after it never move; a longer name ends in "…" and shows whole on hover
+            lStyleFor.AutoSize = false;
+            lStyleFor.AutoEllipsis = true;
+            lStyleFor.Size = new Size(S(180), lStyleFor.PreferredHeight);
 
             bStroke = ColorButton((s, e) => PickColor(true));
             bFill = ColorButton((s, e) => PickColor(false));
@@ -1136,7 +1190,7 @@ namespace SnapMeasure
 
             // Focus modes: list index = HighlightMode (0 = Highlight, the see-through box; the default)
             cHlMode = Combo(110, "Highlight", "Spotlight", "Grayscale", "Magnify", "Pixelate");
-            tip.SetToolTip(cHlMode, Lang.T("Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate"));
+            tip.SetToolTip(cHlMode, Lang.T("Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate · Cut-out tool (X) cuts holes in a focus"));
             // strength: magnify ×1.5 … ×6, pixelate 4 … 40 px blocks
             tStr = new TrackBar();
             tStr.Minimum = 1; tStr.Maximum = 10; tStr.TickStyle = TickStyle.None; tStr.AutoSize = false;
@@ -1161,7 +1215,7 @@ namespace SnapMeasure
                     // keep each mode's usual side when switching mode; the Inside / Outside box picks the other side
                     int m = FocusMode(b, s == cWhere ? inside : (b == (int)HighlightMode.Grayscale ? false : true));
                     // switching to magnify: the lens gets a magenta outline (the line colour can be changed after)
-                    if (m == (int)HighlightMode.Magnify && x.Mode != m) x.Stroke = MagnifyOutline;
+                    if (m == (int)HighlightMode.Magnify && x.Mode != m) { x.Stroke = MagnifyOutline; x.Width = Math.Max(x.Width, 2f); }
                     x.Mode = m;
                     if ((m == (int)HighlightMode.Spotlight || m == (int)HighlightMode.Marker) && x.FillOpacity < 20) x.FillOpacity = 45;
                 });
@@ -1191,9 +1245,9 @@ namespace SnapMeasure
             cDash = DashCombo();
             cDash.SelectedIndexChanged += (s, e) => { int m = cDash.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.HasOutlineStyle && (m != (int)LineStyle.Cloud || x.CanBeCloud)) x.Dash = m; }); };
             tip.SetToolTip(cDash, Lang.T("Line style: solid, dashed, dotted, dash-dot, long dash or cloud"));
-            cForm = Combo(96, "Rectangle", "Ellipse", "Triangle", "Diamond", "Rounded");
-            cForm.SelectedIndexChanged += (s, e) => { int m = cForm.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.Kind == ShapeKind.Highlight) x.Form = m; }); };
-            tip.SetToolTip(cForm, Lang.T("Shape of the highlight"));
+            cForm = Combo(96, "Rectangle", "Ellipse", "Triangle", "Diamond", "Rounded", "Perimeter");
+            cForm.SelectedIndexChanged += (s, e) => { int m = cForm.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.Kind == ShapeKind.Highlight) SetFocusForm(x, m); }); };
+            tip.SetToolTip(cForm, Lang.T("Shape of the focus · Perimeter = click its corners like an area (double-click or right-click to finish)"));
             cCallout = Combo(130, "No callout", "Revision triangle", "Text box");
             cCallout.SelectedIndexChanged += (s, e) => CalloutChanged();
             tip.SetToolTip(cCallout, Lang.T("Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)"));
@@ -1265,16 +1319,17 @@ namespace SnapMeasure
                 sw.MouseUp += (s, e) => SetPaletteColor(e.Button != MouseButtons.Right, idx);
                 tip.SetToolTip(sw, PaletteNames[i] + " – click = line (Alt+" + (i + 1) + "), right-click = fill (Alt+Shift+" + (i + 1) + ")");
                 pal.Controls.Add(sw);
+                palSwatches.Add(sw);
             }
-            // last: any colour, from the Windows colour picker. It shows the last colour picked, with a picker icon on it
+            // last: the screen colour picker (pick any colour on any screen). It shows the last colour picked, with a pipette on it
             Panel more = new Panel();
             more.Size = new Size(S(16), S(16));
             more.Margin = new Padding(S(3), 0, 0, 0);
             more.BorderStyle = BorderStyle.FixedSingle;
             more.Cursor = Cursors.Hand;
             more.Paint += (s, e) => DrawPickerSwatch(e.Graphics, more.ClientRectangle);
-            more.MouseUp += (s, e) => PickColor(e.Button != MouseButtons.Right);
-            tip.SetToolTip(more, Lang.T("More colours – click = line colour (Alt+L), right-click = fill colour (Alt+F)"));
+            more.MouseUp += (s, e) => PickScreenColor();
+            tip.SetToolTip(more, Lang.T("Colour picker – pick a colour anywhere on screen: click = line colour, right-click = fill colour; the HEX code is copied (Ctrl+Shift+C)"));
             pickerSwatch = more;
             pal.Controls.Add(more);
 
@@ -1318,28 +1373,97 @@ namespace SnapMeasure
             rowShow = Grp("Show", cShow);
             rowFrame = Grp("", cFrame);
             gShadow = Grp("", cShadow);
-            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowStrength, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart, gShadow })
-                styleBar.Controls.Add(c);
+            // the groups every shape has come first (Line, Fill, Shadow), so they stay put; the shape's own after them
+            styleOrder = new Control[] { lStyleFor, gLine, gFill, gShadow, gDash, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowStrength, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart };
+            foreach (Control c in styleOrder) styleBar.Controls.Add(c);
             ReturnFocusToCanvas(styleBar);
             ReturnFocusToCanvas(pal);
             styleBar.ResumeLayout(false);
 
-            // the quick colours stay at the right end whatever the tool, so the hand finds them in the same place:
-            // the groups wrap in the room to their left
+            // » at the end of the row: the groups that do not fit, in a small panel under it
+            bMore = new Button();
+            bMore.Text = "»";
+            bMore.FlatStyle = FlatStyle.Flat;
+            bMore.FlatAppearance.BorderSize = 0;
+            bMore.BackColor = styleBar.BackColor;
+            bMore.Font = Native.UiFont("Segoe UI", 11f, k, FontStyle.Bold);
+            bMore.Size = new Size(S(30), S(28));
+            bMore.TabStop = false;
+            bMore.Visible = false;
+            bMore.Click += (s, e) => ShowMoreStyle();
+            tip.SetToolTip(bMore, Lang.T("More options for this tool (the window is too narrow to show them all)"));
+
+            // the quick colours stay at the right end whatever the tool, so the hand finds them in the same place
             styleHost = new Panel();
             styleHost.Dock = DockStyle.Top;
             styleHost.BackColor = styleBar.BackColor;
             styleHost.Controls.Add(styleBar);
+            styleHost.Controls.Add(bMore);
             styleHost.Controls.Add(pal);
             styleBar.Location = Point.Empty;
             styleHost.Resize += (s, e) => FitStyleBar();
-            styleBar.SizeChanged += (s, e) => FitStyleBar();
             FitStyleBar();
         }
 
         Panel styleHost;
         FlowLayoutPanel palBar;
         bool fittingStyle;
+        Control[] styleOrder;
+        readonly List<Control> palSwatches = new List<Control>();
+        Button bMore;
+        Form morePanel;
+        int styleShown;           // the bar's width that is shown: the groups after it are behind »
+
+        /// <summary>» : the groups that do not fit on the row, in a small panel under the button. They go back to the
+        /// row when it closes (click outside it, or Esc).</summary>
+        void ShowMoreStyle()
+        {
+            if (morePanel != null) { morePanel.Close(); return; }
+            List<Control> hidden = new List<Control>();
+            foreach (Control c in styleOrder) if (c.Parent == styleBar && c.Visible && c.Right > styleShown) hidden.Add(c);
+            if (hidden.Count == 0) return;
+            FlowLayoutPanel fp = new FlowLayoutPanel();
+            fp.WrapContents = true;
+            fp.AutoSize = true;
+            fp.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            fp.MaximumSize = new Size(Math.Max(S(320), Math.Min(S(640), ClientSize.Width - S(40))), 0);
+            fp.Padding = new Padding(S(8), S(6), S(4), S(6));
+            fp.BackColor = styleBar.BackColor;
+            fp.SuspendLayout();
+            foreach (Control c in hidden) fp.Controls.Add(c);
+            fp.ResumeLayout(true);
+            Form f = new Form();
+            f.FormBorderStyle = FormBorderStyle.FixedSingle;
+            f.ControlBox = false;
+            f.Text = "";
+            f.ShowInTaskbar = false;
+            f.StartPosition = FormStartPosition.Manual;
+            f.KeyPreview = true;
+            f.Font = Font;
+            f.BackColor = styleBar.BackColor;
+            f.AutoSize = true;
+            f.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            f.Controls.Add(fp);
+            Point at = bMore.PointToScreen(new Point(0, bMore.Height));
+            Rectangle wa = Screen.FromControl(this).WorkingArea;
+            Size sz = f.GetPreferredSize(Size.Empty);
+            f.Location = new Point(Math.Max(wa.Left, Math.Min(at.X + bMore.Width - sz.Width, wa.Right - sz.Width)), at.Y);
+            f.KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) f.Close(); };
+            // closes when another window gets the focus (a colour dialog opened from it, too)
+            f.Deactivate += (s, e) => { if (!f.IsDisposed) f.BeginInvoke((Action)(() => { if (!f.IsDisposed && !f.ContainsFocus) f.Close(); })); };
+            f.FormClosed += (s, e) =>
+            {
+                morePanel = null;
+                if (IsDisposed) return;
+                styleBar.SuspendLayout();
+                foreach (Control c in hidden) styleBar.Controls.Add(c);
+                for (int i = 0; i < styleOrder.Length; i++) styleBar.Controls.SetChildIndex(styleOrder[i], i);
+                styleBar.ResumeLayout(true);
+                FitStyleBar();
+            };
+            morePanel = f;
+            f.Show(this);
+        }
 
         void FitStyleBar()
         {
@@ -1347,12 +1471,58 @@ namespace SnapMeasure
             fittingStyle = true;
             try
             {
+                // a group keeps the height it measured before its drop-down boxes grew (they grow natively when
+                // their handle is made): make each group tall enough for what is in it, so nothing is cut off
+                bool grew = false;
+                foreach (Control g in styleBar.Controls)
+                {
+                    if (!(g is FlowLayoutPanel)) continue;
+                    int need = 0;
+                    foreach (Control x in g.Controls) if (x.Visible) need = Math.Max(need, x.Bottom + x.Margin.Bottom);
+                    need += g.Padding.Bottom;
+                    if (need > g.Height && g.MinimumSize.Height < need) { g.MinimumSize = new Size(0, need); grew = true; }
+                }
+                if (grew) styleBar.PerformLayout();
+                // strictly one row, whatever the window width: the canvas (and its rulers) never move down.
+                // The groups that do not fit are hidden behind » ; the quick colours stay at the right end.
                 int right = S(10);
-                int room = Math.Max(S(200), styleHost.ClientSize.Width - palBar.PreferredSize.Width - right - S(8));
-                if (styleBar.MaximumSize.Width != room) styleBar.MaximumSize = new Size(room, 0);
-                int h = Math.Max(styleBar.Height, palBar.PreferredSize.Height + S(14));
+                Size ps = styleBar.GetPreferredSize(Size.Empty);      // one row (no wrapping)
+                // short of room, the quick colours go first (Alt+1…8 still pick them); the colour picker always stays
+                if (morePanel == null)
+                {
+                    bool showSw = true;
+                    foreach (Control c in palSwatches) if (!c.Visible) { c.Visible = true; }
+                    if (ps.Width + S(8) + palBar.GetPreferredSize(Size.Empty).Width + right > styleHost.ClientSize.Width) showSw = false;
+                    if (!showSw) foreach (Control c in palSwatches) c.Visible = false;
+                }
+                Size palSize = palBar.GetPreferredSize(Size.Empty);
+                int h = Math.Max(ps.Height, palSize.Height + S(14));
                 if (styleHost.Height != h) styleHost.Height = h;
-                palBar.Location = new Point(Math.Max(room, styleHost.ClientSize.Width - palBar.Width - right), styleBar.Padding.Top + S(4));
+                if (palBar.Size != palSize) palBar.Size = palSize;
+                int palX = Math.Max(S(240), styleHost.ClientSize.Width - palSize.Width - right);
+                palBar.Location = new Point(palX, Math.Max(0, (h - palSize.Height) / 2));
+                palBar.BringToFront();
+                int room = palX - S(8);
+                // lay the bar out at its full length, then show only the groups that end inside the room
+                if (styleBar.Size != new Size(ps.Width, h)) styleBar.Size = new Size(ps.Width, h);
+                styleBar.PerformLayout();
+                int shown = ps.Width;
+                bool cut = ps.Width > room;
+                if (cut)
+                {
+                    int avail = room - bMore.Width - S(4);
+                    shown = styleBar.Padding.Left;
+                    foreach (Control c in styleOrder)
+                        if (c.Parent == styleBar && c.Visible)
+                        {
+                            if (c.Right > avail) break;
+                            shown = c.Right + c.Margin.Right;
+                        }
+                }
+                styleShown = shown;
+                styleBar.Width = shown;
+                bMore.Visible = cut || morePanel != null;
+                bMore.Location = new Point(shown + S(2), (h - bMore.Height) / 2);
             }
             finally { fittingStyle = false; }
         }
@@ -1580,11 +1750,39 @@ namespace SnapMeasure
         }
 
         /// <summary>Radius Show list, in the order the user wants, and the stored mode of each entry (see Renderer.RadiusText).</summary>
-        static readonly string[] RadiusShow = { "Diameter", "Radius", "Diameter + Arc length", "Radius + Arc length", "Arc length", "None" };
-        static readonly int[] RadiusShowMode = { 2, 1, 3, 4, 6, 5 };
+        static readonly string[] RadiusShow = { "Diameter", "Radius", "Arc length", "Diameter + Arc length", "Radius + Arc length", "All", "None" };
+        static readonly int[] RadiusShowMode = { 2, 1, 6, 3, 4, 7, 5 };
 
         /// <summary>Shown in place of line breaks in the one-line text list (typed back, it becomes a line break again).</summary>
         const string LineMark = "↵";
+
+        /// <summary>Focus form change. A drawn focus keeps its place: a box becomes a perimeter through its (turned)
+        /// corners; a perimeter becomes the box round its corners.</summary>
+        static void SetFocusForm(Shape x, int form)
+        {
+            bool toPoly = form == (int)HighlightForm.Perimeter;
+            if (x.Pts.Count >= 2 && toPoly != x.IsFocusPoly)
+            {
+                if (toPoly)
+                {
+                    RectangleF r = Geo.Rect(x.Pts[0], x.Pts[1]);
+                    PointF c = Geo.Center(r);
+                    x.Pts.Clear();
+                    foreach (PointF p in new[] { new PointF(r.Left, r.Top), new PointF(r.Right, r.Top), new PointF(r.Right, r.Bottom), new PointF(r.Left, r.Bottom) })
+                        x.Pts.Add(Geo.Rot(p, c, x.Angle));
+                    x.Angle = 0f;
+                }
+                else
+                {
+                    RectangleF r = ShapeOps.Bounds(x);
+                    x.Pts.Clear();
+                    x.Pts.Add(r.Location);
+                    x.Pts.Add(new PointF(r.Right, r.Bottom));
+                }
+            }
+            x.Form = form;
+            x.Cache = null;
+        }
 
         /// <summary>Focus: the mode picked in the list (spotlight, grayscale, magnify, pixelate) without its side.</summary>
         static int FocusBase(int mode)
@@ -1865,8 +2063,10 @@ namespace SnapMeasure
                 bool lineOnly = kd == ShapeKind.Line || kd == ShapeKind.Arrow || kd == ShapeKind.Freehand || kd == ShapeKind.Dimension || kd == ShapeKind.Angle ||
                                 kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Arc || kd == ShapeKind.Radius ||
                                 (kd == ShapeKind.Polygon && s.IsOpenPath);
-                gFill.Visible = !lineOnly && kd != ShapeKind.Note;
-                gLine.Visible = kd != ShapeKind.Note;
+                // Line, Fill and Shadow keep their place for every shape (greyed out where they do not apply), so
+                // the groups after them do not jump sideways when another tool or shape is picked
+                gFill.Visible = gLine.Visible = gShadow.Visible = kd != ShapeKind.Note;
+                if (lineOnly) gFill.Enabled = false;
                 gFont.Visible = s.HasTextStyle || kd == ShapeKind.Counter || kd == ShapeKind.Dimension || kd == ShapeKind.Area || kd == ShapeKind.Angle || kd == ShapeKind.Radius ||
                                 kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Note;
                 gHeads.Visible = s.HasHeads;
@@ -1889,7 +2089,7 @@ namespace SnapMeasure
                     cDash.SelectedIndex = Math.Max(0, Math.Min(cDash.Items.Count - 1, s.Dash));
                 }
                 rowForm.Visible = kd == ShapeKind.Highlight;
-                if (rowForm.Visible) cForm.SelectedIndex = Math.Max(0, Math.Min(4, s.Form));
+                if (rowForm.Visible) cForm.SelectedIndex = Math.Max(0, Math.Min((int)HighlightForm.Perimeter, s.Form));
                 rowCallout.Visible = kd == ShapeKind.Cloud;
                 if (rowCallout.Visible) cCallout.SelectedIndex = Math.Max(0, Math.Min(2, s.Mode));
                 // length (W) and polygon: tick Closed to close the outline. The Area tool (M) is always closed: no tick.
@@ -1906,7 +2106,6 @@ namespace SnapMeasure
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
                 rowFrame.Visible = false;
                 tip.SetToolTip(nWidth, kd == ShapeKind.Text ? "Frame width – 0 = no frame" : "Line width");
-                gShadow.Visible = s.CanShadow;
                 SetColorButton(bStroke, s.Stroke);
                 SetColorButton(bFill, s.Fill);
                 nWidth.Value = Math.Max(nWidth.Minimum, Math.Min(nWidth.Maximum, (decimal)s.Width));
@@ -1919,21 +2118,19 @@ namespace SnapMeasure
                 if (rowHl.Visible)
                 {
                     int b = FocusBase(s.Mode);
-                    cHlMode.SelectedIndex = Math.Max(0, Math.Min(4, b));
+                    cHlMode.SelectedIndex = Math.Max(0, Math.Min((int)HighlightMode.Pixelate, b));
                     // Inside / Outside stays in place for every mode (so nothing on the bar moves); it only matters for grayscale and pixelate
                     cWhere.Visible = true;
                     cWhere.Enabled = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate;
                     cWhere.SelectedIndex = s.Mode == (int)HighlightMode.Grayscale || s.Mode == (int)HighlightMode.PixelateOutside ? 1 : 0;
-                    // the highlight box has no outline of its own
-                    if (b == (int)HighlightMode.Marker) gLine.Enabled = false;
                 }
                 bool magnify = kd == ShapeKind.Highlight && s.Mode == (int)HighlightMode.Magnify;
                 rowStrength.Visible = magnify || kd == ShapeKind.Pixelate ||
                                       (kd == ShapeKind.Highlight && FocusBase(s.Mode) == (int)HighlightMode.Pixelate);
                 if (rowStrength.Visible) { strMagnify = magnify; tStr.Value = s.ShownStrength(magnify); ShowStrength(); }
-                // pixelate draws no outline or fill: grey the Line and Fill groups out but keep their place,
-                // so Shape, Mode and Strength stay put when the mode changes
-                if (rowStrength.Visible && !magnify) gLine.Enabled = gFill.Enabled = false;
+                // pixelate has no fill (the pixelate tool no outline either): grey them out but keep their place,
+                // so Shape, Mode and Strength stay put when the mode changes. A pixelate focus keeps its border.
+                if (rowStrength.Visible && !magnify) { gFill.Enabled = false; if (kd == ShapeKind.Pixelate) gLine.Enabled = false; }
                 rowMarkStart.Visible = s.Kind == ShapeKind.Counter;
                 rowTextStyle.Visible = s.HasTextStyle;
                 cBold.Checked = s.Bold;
@@ -1944,6 +2141,7 @@ namespace SnapMeasure
             }
             LoadMarker();
             loading = false;
+            FitStyleBar();      // groups shown / hidden: the bar may now need one row more or less
         }
 
         static void SetColorButton(Button b, Color c)
@@ -2015,6 +2213,35 @@ namespace SnapMeasure
         }
 
         Panel pickerSwatch;
+
+        /// <summary>The screen colour picker: the colour clicked becomes the line colour (right-click: the fill colour)
+        /// of the tool or the selected shapes, and its HEX code goes to the clipboard.</summary>
+        void PickScreenColor()
+        {
+            bool fill;
+            Color? got;
+            try { got = ScreenColorPicker.Pick(out fill); }
+            catch (Exception ex) { ErrorLog.Write("colour picker", ex); return; }
+            Activate();
+            if (!got.HasValue) { cv.Focus(); return; }
+            Color c = Color.FromArgb(255, got.Value);
+            string hex = "#" + c.R.ToString("X2") + c.G.ToString("X2") + c.B.ToString("X2");
+            Settings.Set("PickedColor", (c.ToArgb() & 0xFFFFFF).ToString(CultureInfo.InvariantCulture));
+            if (pickerSwatch != null) pickerSwatch.Invalidate();
+            App.TrySetClipboardText(hex);
+            if (StyleTarget() == null)
+            {
+                Flash(hex + " " + Lang.T("copied") + " – " + Lang.T("pick a tool or select a shape to use it"));
+            }
+            else
+            {
+                if (!fill) ApplyStyle(x => x.Stroke = c);
+                else ApplyStyle(x => { x.Fill = c; if (x.FillOpacity == 0) x.FillOpacity = 50; });
+                LoadStyle();
+                Flash((fill ? Lang.T("Fill colour: ") : Lang.T("Line colour: ")) + hex + " (" + Lang.T("copied") + ")");
+            }
+            cv.Focus();
+        }
 
         /// <summary>The colour picker's swatch: the last colour picked (light grey before any), a pipette on top in
         /// black or white, whichever shows on that colour.</summary>
@@ -2182,7 +2409,6 @@ namespace SnapMeasure
         void SaveScaleDefaults()
         {
             Settings.Set("Decimals", cv.Scale.Decimals.ToString(CultureInfo.InvariantCulture));
-            Settings.Set("Rounding", cv.Scale.Rounding.ToString(CultureInfo.InvariantCulture));
             if (cKeepScale != null && cKeepScale.Checked)
             {
                 Settings.Set("Unit", cv.Scale.Unit);
@@ -2311,11 +2537,27 @@ namespace SnapMeasure
         void NewCapture()
         {
             cv.EndTextEdit(true);
-            Hide();
-            App.Later(250, () =>
+            // minimized, not hidden: a hidden window comes back as the newest taskbar button, so the old capture
+            // would sit after the new one; minimized it keeps its place and the new capture comes after it
+            FormWindowState was = WindowState;
+            WindowState = FormWindowState.Minimized;
+            List<Form> before = new List<Form>();
+            foreach (Form f in Application.OpenForms) before.Add(f);
+            App.Later(350, () =>       // after the minimize animation, so the editor is not in the picture
             {
-                try { App.CaptureRegion(); }
-                finally { if (!IsDisposed) Show(); }
+                try { App.CaptureRegionToEditor(); }
+                finally
+                {
+                    if (!IsDisposed)
+                    {
+                        // the new capture opened in its own editor: this one stays on the taskbar, out of its way;
+                        // cancelled (or copied / saved without an editor): this one comes back
+                        Form opened = null;
+                        foreach (Form f in Application.OpenForms) if (f is EditorForm && f != this && !before.Contains(f)) opened = f;
+                        if (opened != null) { if (!opened.IsDisposed) opened.Activate(); }
+                        else { WindowState = was == FormWindowState.Minimized ? FormWindowState.Normal : was; Activate(); }
+                    }
+                }
             });
         }
 
@@ -2486,6 +2728,7 @@ namespace SnapMeasure
                 case Keys.Control | Keys.S: QuickSave(); return true;
                 case Keys.Control | Keys.Shift | Keys.S: SaveAs(); return true;
                 case Keys.Control | Keys.Shift | Keys.M: if (!inText) { ToggleMatch(); return true; } break;
+                case Keys.Control | Keys.Shift | Keys.C: if (!inText) { PickScreenColor(); return true; } break;
                 case Keys.Control | Keys.O: OpenFile(); return true;
                 case Keys.Control | Keys.N: NewCapture(); return true;
                 case Keys.Control | Keys.P: Pin(); return true;

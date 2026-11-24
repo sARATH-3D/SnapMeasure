@@ -1,6 +1,6 @@
 <img src="docs/icon.png" alt="SnapMeasure icon: a capture frame with an amber measuring arrow" width="96" align="right">
 
-# SnapMeasure 1.3.2
+# SnapMeasure 1.3.3
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
@@ -24,10 +24,29 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
   or the signed Microsoft Store version that updates itself. Paid takeoff software is great for full projects; SnapMeasure is
   for the quick check, the markup for a colleague, and the takeoff from a screenshot.
 
+**What's new in 1.3.3:**
+* **Focus as a perimeter:** pick *Perimeter* under Shape and click its corners like an area. The **Cut-out** tool (`X`) cuts holes in any focus.
+* Focus effects (grayscale, pixelate, spotlight, magnify) also change **pasted pictures**, even where they lie outside the screenshot.
+* **Screen colour picker** (`Ctrl+Shift+C`, or the pipette next to the colours): pick any colour on screen, with a magnifier and HEX / RGB.
+* The tool column always stays **one column**: on a short window the icons get smaller before it scrolls.
+* **New capture** (in the editor) always opens the capture in a new editor and minimizes the current one. **Ceil / Floor** always start unticked.
+* After a capture the default is now **Only copy it to the clipboard** (change it in Settings → Capture).
+* **Every Focus mode has a border** (thin by default) in the line colour; Magnify keeps its magenta one.
+* **Radius → Show**: Diameter, Radius, Arc length, the pairs, and **All** (R, Ø and arc length).
+* **Open the clipboard picture in the editor** from anywhere: `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` (change them in Settings → General).
+  Clicking the tray icon does the same: a new editor with the clipboard picture, or a blank canvas. The clipboard is only read, never changed.
+  The tray menu is plainer: no key texts (they are in Settings → General and About).
+* Top bar: *Keep inside*, *Rulers* and *Add-ons* sit on the right with *Panel*, *Pin* and *Settings*; the style row no longer
+  jumps sideways when you pick another tool. The style row is always **one line**: on a narrow window the quick colours fold
+  away first (the colour picker stays), then the options that do not fit go behind **»**, so the canvas and rulers never move down.
+* One `Esc` drops the selection and goes back to the Select tool.
+* Markers: resizing one sizes its whole series. Angle: `Shift` snaps the second arm level or plumb. Arrows have a flat tail.
+* The Store version shows its proper icon on the taskbar.
+
 **What's new in 1.3.2** ([full notes](../../releases/tag/v1.3.2)):
 * **한국어 (Korean)** interface: Settings → General → Language.
 * **.snapm thumbnails in File Explorer**, with the markups drawn on (portable version).
-* **Round up / round down** (Ceil / Floor) at the chosen decimals, everywhere a value is shown.
+* **Round up / round down** (Ceil / Floor) at the chosen decimals, everywhere a value is shown (both start unticked; a project keeps its own).
 * **Radius tool shows the arc length**; **markers can count backwards** (Z → A, 10 → 1); markers and pictures **stretch from their corners**.
 * **Resizable side panel**, **colour picker** swatch, **Actual pixels 1:1** and **Rulers** buttons, tool icons **coloured by group**.
 * **Focus → Highlight** is the default; the Magnify outline is magenta.
@@ -54,7 +73,7 @@ pan and zoom on large drawings, a Stop button for scrolling capture and hollow p
 * **Focus** (`H`, was Highlight): spotlight, grayscale, magnify or pixelate; grayscale and pixelate work **inside or outside** the shape. The yellow marker mode is now the highlighter pen.
   A **Strength** slider sets how much magnify enlarges (×1.5 … ×6) and how coarse pixelate is (4 … 40 px blocks).
 * **Tool column in order of work:** Measure (calibrate first), Count, Draw (lines, then shapes), Highlight, Text, Tools.
-  It stays one column: on a short window or a large display scale the group titles become thin dividers, and if it still
+  It stays one column: on a short window or a large display scale the group titles become thin dividers and the icons get smaller, and if it still
   does not fit, the column scrolls with the mouse wheel.
 * **Keep inside** (lock button next to *Zoom to area*, `Ctrl+L`): drawing, moving, pasting, resizing and turning all stay
   inside the screenshot (or its crop), and the view no longer scrolls past the picture. Nothing is moved: whatever lies outside
@@ -149,12 +168,13 @@ In the Store version Windows asks once; you can also switch it in *Windows Setti
 
 | Capture | Keys |
 |---|---|
-| Region, or click a window | `PrtSc` or `Ctrl+Shift+1` (or left-click the tray icon) |
+| Region, or click a window | `PrtSc` or `Ctrl+Shift+1` |
 | Active window | `Alt+PrtSc` or `Ctrl+Shift+2` |
 | Screen under mouse | `Ctrl+PrtSc` or `Ctrl+Shift+3` |
 | Last region again | `Shift+PrtSc` or `Ctrl+Shift+4` |
 | **Scrolling capture** (long page): pick the area, SnapMeasure scrolls it and joins the pieces. Move the mouse to pause; **Stop** (bar under the area) or `Esc` finishes | `Ctrl+Shift+5` |
 | **Capture text (OCR)**: pick an area, its text goes to the clipboard | `Ctrl+Shift+6` |
+| **Open the clipboard picture** in a new editor (blank canvas if there is none) | `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` (or left-click the tray icon) |
 
 These are the default keys. Choose your own in **Settings → General** (click a box and press the keys; two per capture).
 
@@ -186,14 +206,14 @@ Open them from the tray menu or **Add-ons ▾ → On-screen ruler / On-screen pr
 | Path length | `W` | Click points along a run (sealant, gasket, coping) → total length (L1, L2 …). Tick **Closed** for a closed perimeter. |
 | Perimeter | `Q` | The area tool set to perimeter only (P1, P2 …) |
 | Coordinates | `I` | The first click sets the origin 0,0; every point after it shows X / Y (**Y up, like CAD**). Drag the origin, or right-click a point → *Make this point the origin*, and every value updates. X and Y go to Excel. |
-| Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. |
+| Angle | `G` | **3 points:** end of the first arm → vertex → end of the second arm. Shows the angle (∠1, ∠2 …); also listed under Measurements. Hold `Shift` to snap an arm horizontal, vertical or to 45° steps. |
 | Radius / diameter | `Shift+R` | **3 points** on a curve or circle edge → R, Ø and arc length (R1, R2 …), with a centre mark. **Show** R, Ø or both; the label can be moved. Listed under Measurements and in Excel. |
 | Calibrate | `K` | Draw over a known length, type its real size → sets the scale factor |
 | Number marker | `N` | 1, 2, 3 … renumbers itself when one is deleted – **the count is listed** (Σ1 = 14 nr) |
 | Letter marker | `Shift+N` | A, B, C … Z, AA, AB … is **its own series**, separate from the numbers, also counted |
 | Polygon | `P` | Any number of edges, with fill colour and opacity. |
 | Polyline | `Shift+P` | Open line through any number of points; arrowheads optional. Tick **Closed** to make it a polygon. |
-| Focus | `H` | Spotlight, grayscale, magnify, **pixelate** (`B`) – grayscale and pixelate inside or outside, **Strength** slider for magnify (×1.5 … ×6) and pixelate (4 … 40 px) – as a rectangle (always the start), ellipse, triangle, diamond or rounded box |
+| Focus | `H` | Spotlight, grayscale, magnify, **pixelate** (`B`) – grayscale and pixelate inside or outside, **Strength** slider for magnify (×1.5 … ×6) and pixelate (4 … 40 px) – as a rectangle (always the start), ellipse, triangle, diamond, rounded box or a **perimeter** (click its corners like an area). The **Cut-out** tool (`X`) cuts holes in a focus, like openings in an area. Every effect also works on **pasted pictures**, also where they lie outside the screenshot. |
 | Highlighter pen | `Shift+H` | Drag over text like a marker pen: see-through yellow, square ends. `Shift` = straight stroke. Colour, width and opacity on the style bar. |
 | Rectangle / Ellipse | `R` `E` | Fill and line colour, each with its own opacity. The centre mark snaps to points. |
 | Revision cloud | `U` | Drag a cloud around a change; the line width sets the size of the scallops. **Callout:** none, revision triangle (number) or text box, on a leader |
@@ -215,8 +235,8 @@ The same choices are on the style bar.
 *Copy measurements (for Excel)* gives one row per item: Name, Type, Value, Unit, Perimeter, Gross, Cut-outs, Label, X, Y –
 including the marker counts and the notes.
 
-**Markers:** *Start at* (style bar) continues a series. Changing the colour, size or shadow of one marker
-changes **every marker in that series**.
+**Markers:** *Start at* (style bar) continues a series. Changing the colour, size or shadow of one marker – on the style bar,
+by dragging its corner or with *Match properties* – changes **every marker in that series**, and new markers look the same.
 
 **Style bar** (right above the canvas): line colour, opacity and width; fill colour and opacity; text size; B / I / alignment;
 start / end line ends; highlight, text-markup and stamp type; marker *Start at*; shadow; and a quick palette.
@@ -225,6 +245,8 @@ In the palette, click a colour for the line and right-click it for the fill.
 
 **Colour keys:**
 * `Alt+L` = pick the line colour, `Alt+F` = pick the fill colour.
+* `Ctrl+Shift+C` (or the pipette swatch) = **screen colour picker**: pick a colour anywhere on any screen with a magnifier and live
+  HEX / RGB. Click = line colour, right-click = fill colour; the HEX code is copied. Arrow keys nudge 1 px, `Esc` cancels.
 * `Alt+1`…`Alt+9` = line colour from the palette (red, orange, yellow, green, blue, purple, black, white, grey).
 * `Alt+Shift+1`…`9` = the same colours for the fill. `Alt+Shift+0` = no fill.
 
