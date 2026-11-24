@@ -1,11 +1,11 @@
 <img src="docs/icon.png" alt="SnapMeasure icon: a capture frame with an amber measuring arrow" width="96" align="right">
 
-# SnapMeasure 1.3
+# SnapMeasure 1.3.2
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
-plus an **on-screen ruler and protractor** that float over any app.
-One file, `SnapMeasure.exe` (~400 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
+plus an **on-screen ruler and protractor** that float over any app. In English and 한국어 (Korean).
+One file, `SnapMeasure.exe` (~520 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
 (it uses the .NET Framework 4.x, the PDF reader and the text recognition that are built into Windows).
 **Download:** install it from the [Microsoft Store](https://apps.microsoft.com/detail/9pgk12tn6wqj?mode=direct) (signed, updates
 itself, no "Windows protected your PC" warning), take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases)
@@ -13,6 +13,29 @@ page, or build it yourself (see below).
 Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 
 <a href="https://apps.microsoft.com/detail/9pgk12tn6wqj?mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get SnapMeasure from the Microsoft Store" width="200"></a>
+
+![SnapMeasure in action: an area with cut-outs (gross, openings, net), dimensions, window counts, and every value in one list ready for Excel](docs/demo.gif)
+
+**Why SnapMeasure?**
+* **Measure anything you can see on screen:** a PDF in any viewer, a drawing in AutoCAD or Revit, a web map, a photo. No import, no file conversion.
+* **A real takeoff, not just a ruler:** calibrated scales (1:50 on A1, or from a known length), areas with cut-outs (gross, openings, net),
+  lengths, perimeters, angles, radius and arc length, counts. **Every value goes to Excel in one click.**
+* **Free and light:** no subscription, no account, no ads, no telemetry. One ~520 KB exe that runs without installing,
+  or the signed Microsoft Store version that updates itself. Paid takeoff software is great for full projects; SnapMeasure is
+  for the quick check, the markup for a colleague, and the takeoff from a screenshot.
+
+**What's new in 1.3.2** ([full notes](../../releases/tag/v1.3.2)):
+* **한국어 (Korean)** interface: Settings → General → Language.
+* **.snapm thumbnails in File Explorer**, with the markups drawn on (portable version).
+* **Round up / round down** (Ceil / Floor) at the chosen decimals, everywhere a value is shown.
+* **Radius tool shows the arc length**; **markers can count backwards** (Z → A, 10 → 1); markers and pictures **stretch from their corners**.
+* **Resizable side panel**, **colour picker** swatch, **Actual pixels 1:1** and **Rulers** buttons, tool icons **coloured by group**.
+* **Focus → Highlight** is the default; the Magnify outline is magenta.
+* Fixed: outside pixelate left text readable along the edges; AutoCAD's crosshair showed up in screenshots.
+* The editor opens faster (about 290 → 215 ms).
+
+**1.3.1** added Start with Windows, correct sizing when the editor moves between monitors with different scaling, much faster
+pan and zoom on large drawings, a Stop button for scrolling capture and hollow polygons ([notes](../../releases/tag/v1.3.1)).
 
 **What's new in 1.3:**
 * **Radius / diameter** (`Shift+R`): click 3 points on a curve or circle → R, Ø and the arc length (R1, R2 … in Excel).

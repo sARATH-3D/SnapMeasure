@@ -1,4 +1,35 @@
-# Microsoft Store listing – SnapMeasure 1.3.0
+# Microsoft Store listing – SnapMeasure
+
+## Next listing update (after 1.3.2 is live) – no new package needed
+
+Partner Center → SnapMeasure → *Start update* → Store listings. Keep the package as it is.
+
+### Short description (both languages; this field is empty today)
+* **English:** Screenshot, measure and take off quantities: dimensions, areas with cut-outs, lengths, angles, counts and drawing scales, with mark-up, OCR and an on-screen ruler.
+* **한국어:** 화면을 캡처하고 측정하여 물량을 산출합니다: 치수, 개구부를 뺀 면적, 길이, 각도, 개수, 도면 축척, 마크업, 텍스트 인식(OCR), 화면 눈금자.
+
+### Search terms (up to 7 each)
+* **English:** quantity takeoff · measure PDF · screenshot measure · construction estimating · area calculator · drawing scale · markup
+* **한국어:** 물량 산출 · 적산 · 도면 측정 · 면적 계산 · 화면 캡처 · PDF 측정 · 마크업
+
+### Trailer and artwork (already made, in `Share\Store\Listing`)
+* Trailer: `SnapMeasure-trailer-1080p.mp4` with `trailer-thumbnail-1920x1080.png` as its thumbnail.
+* 16:9 Super hero art: `hero-1920x1080.png` (needed for the trailer to show at the top of the listing).
+* Use the same files for the Korean listing.
+
+### Screenshot captions (screenshot order: facade, area/magnifier, ruler/protractor)
+| # | English | 한국어 |
+|---|---------|--------|
+| 1 | Takeoff on a facade drawing: areas with cut-outs, dimensions and counts | 입면도 물량 산출: 개구부를 뺀 면적, 치수, 개수 |
+| 2 | Gross, openings and net area, with a magnifier for exact points | 총면적, 개구부, 순면적 – 정확한 점을 위한 확대경 |
+| 3 | On-screen ruler and protractor over any app | 어떤 앱 위에서도 쓰는 화면 눈금자와 각도기 |
+
+On the Korean listing, put the facade screenshot first (it was uploaded third).
+Later: take Korean screenshots with Settings → General → Language = 한국어, and 1.3.2 screenshots (coloured tool icons).
+
+---
+
+## Original 1.3.0 listing text
 
 Text to paste into Partner Center → the submission's *Store listings* (English).
 
