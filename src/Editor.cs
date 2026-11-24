@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
@@ -38,8 +39,20 @@ namespace SnapMeasure
         CheckBox cShadow, cKeepScale;
         ComboBox cWhere;
         ComboBox cUnit, cHlMode, cHeadS, cHeadE, cStamp, cMarkup, cDash, cForm, cCallout, cShow;
-        CheckBox cClosed, cFrame;
+        CheckBox cClosed, cFrame, cCeil, cFloor, cReverse;
         TextBox tUpp, tMarkStart;
+        Label lUppNote;
+        Panel uppBox;
+
+        /// <summary>After the "1 pixel =" box: its unit, and the readable size ("m  = 9.97 mm") when the panel is wide enough.</summary>
+        void ShowUppNote()
+        {
+            if (lUppNote == null || uppBox == null) return;
+            string unit = cv.Scale.Calibrated ? cv.Scale.Unit : "px", nice = cv.Scale.PixelSize();
+            string full = !cv.Scale.Calibrated || nice.EndsWith(" " + unit) ? unit : unit + "  = " + nice;
+            int room = uppBox.Width - lUppNote.Left;
+            lUppNote.Text = TextRenderer.MeasureText(full, lUppNote.Font).Width <= room ? full : unit;
+        }
         TrackBar tStr;
         Label lStr;
         Panel rowStrength;
@@ -47,9 +60,8 @@ namespace SnapMeasure
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
         CheckBox cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR;
-        ToolStripMenuItem bRulers;
+        ToolStripButton bRulers;
         ToolStripButton bPanel;
-        ToolStripStatusLabel lVersion;
         readonly ToolTip tip = new ToolTip();
         ListView lv, lvText;
         bool textListEditing;
@@ -92,6 +104,12 @@ namespace SnapMeasure
             { Tool.Markup, "Text markup: drag over a line of text." },
             { Tool.Ocr, "Copy text: drag over the text (a click = all)." },
         };
+
+        /// <summary>How long each step of opening the last editor took (for the speed benchmark).</summary>
+        public static string OpenTiming = "";
+        System.Diagnostics.Stopwatch openWatch = System.Diagnostics.Stopwatch.StartNew();
+        System.Text.StringBuilder openSteps = new System.Text.StringBuilder();
+        void Step(string what) { openSteps.Append(what).Append(' ').Append(openWatch.ElapsedMilliseconds).Append("  "); }
 
         public EditorForm(Bitmap img, string title)
         {
@@ -146,6 +164,7 @@ namespace SnapMeasure
                 cv.Scale.Upp = Settings.GetDouble("Upp", 1.0);
             }
             cv.Scale.Decimals = Settings.GetInt("Decimals", 2);
+            cv.Scale.Rounding = Math.Max(0, Math.Min(2, Settings.GetInt("Rounding", 0)));
             cv.ShowRulers = Settings.GetBool("ShowRulers", true);
             cv.AskText = (t, init) => Dialogs.Ask(this, t, init, false);
             cv.AskNote = (t, init) => Dialogs.Ask(this, t, init, true);
@@ -158,16 +177,18 @@ namespace SnapMeasure
                 return TextRecognition.Read(cv.Image, r).Boxes;
             };
 
-            BuildTopBar();
-            BuildToolBar();
-            BuildStyleBar();
-            BuildProps();
-            BuildStatus();
+            Step("canvas");
+            SuspendLayout();             // one layout pass for the whole window, not one per button added
+            BuildTopBar(); Step("top");
+            BuildToolBar(); Step("tools");
+            BuildStyleBar(); Step("style");
+            BuildProps(); Step("panel");
+            BuildStatus(); Step("status");
 
             Controls.Add(cv);
             Controls.Add(props);
             Controls.Add(toolHost);
-            Controls.Add(styleBar);
+            Controls.Add(styleHost);
             Controls.Add(bar);
             Controls.Add(status);
 
@@ -176,10 +197,17 @@ namespace SnapMeasure
             cv.StateChanged += (s, e) => UpdateGuide();
             cv.ToolChanged += (s, e) => { SyncToolButtons(); LoadStyle(); };
             cv.MatchChanged += (s, e) => SyncToolButtons();
-            cv.ViewChanged += (s, e) => { UpdateZoom(); if (bRulers != null) bRulers.Checked = cv.ShowRulers; };
+            cv.ViewChanged += (s, e) => { UpdateZoom(); if (bRulers != null) bRulers.Checked = cv.ShowRulers; if (!rescaling && cv.Size == viewSize) viewWhole = WholeVisible(); viewSize = cv.Size; };
             cv.CursorMoved = UpdatePos;
 
             Shown += (s, e) => { cv.Fit(); cv.Focus(); };
+            // a widened panel never takes more than half the window
+            Resize += (s, e) =>
+            {
+                if (props == null || WindowState == FormWindowState.Minimized || ClientSize.Width <= 0) return;
+                int max = Math.Max(S(PanelMin), ClientSize.Width / 2);
+                if (props.Width > max) props.Width = max;
+            };
             DragEnter += (s, e) => { if (e.Data.GetDataPresent(DataFormats.FileDrop)) e.Effect = DragDropEffects.Copy; };
             DragDrop += (s, e) =>
             {
@@ -196,12 +224,17 @@ namespace SnapMeasure
                 }
             };
 
+            Step("added");
             SyncToolButtons();
             LoadStyle();
             LoadScale();
             LoadMarker();
             RefreshMeasurements();
             UpdateUndo();
+            ResumeLayout(false);
+            Lang.Apply(this, tip);       // other languages: the finished window, all at once
+            Step("filled");
+            Shown +=(s, e) => { Step("shown"); BeginInvoke((Action)(() => { Step("painted"); OpenTiming = openSteps.ToString(); })); };
         }
 
         int S(float v) { return (int)Math.Round(v * k); }
@@ -276,6 +309,18 @@ namespace SnapMeasure
         float pendingK;
         Rectangle? pendingBounds;
 
+        // was the whole picture on screen after the user's last zoom or pan? (view changes caused by the window being
+        // resized don't count: Windows shrinks the window for a new monitor before the editor rescales)
+        bool viewWhole = true;
+        Size viewSize;
+
+        /// <summary>Is the whole picture (or crop) on screen at the current zoom?</summary>
+        bool WholeVisible()
+        {
+            RectangleF vr = cv.ViewRect;
+            return vr.Width * cv.Zoom <= cv.Width - cv.RulerSize + 1 && vr.Height * cv.Zoom <= cv.Height - cv.RulerSize + 1;
+        }
+
         void ApplyPendingScale(bool dragged)
         {
             if (rescaling || moving || IsDisposed) return;
@@ -315,11 +360,11 @@ namespace SnapMeasure
                 target.Y = Math.Max(wa.Top, Math.Min(target.Y, wa.Bottom - target.Height));
             }
             // the view: was the whole picture on screen (then fit it again), else which spot was in the middle
-            RectangleF vr0 = cv.ViewRect;
-            bool wholeVisible = vr0.Width * cv.Zoom <= cv.Width - cv.RulerSize + 1 && vr0.Height * cv.Zoom <= cv.Height - cv.RulerSize + 1;
+            // (remembered from the last view change: Windows may already have shrunk the window for the new monitor)
+            bool wholeVisible = viewWhole || WholeVisible();
             PointF midImg = cv.ToImg(new Point(cv.Width / 2, cv.Height / 2));
             bool panel = props.Visible;
-            Control[] old = { props, toolHost, styleBar, bar, status };
+            Control[] old = { props, toolHost, styleHost, bar, status };
             Native.SendMessage(Handle, 0x000B, IntPtr.Zero, IntPtr.Zero);       // WM_SETREDRAW off: one clean repaint at the end
             SuspendLayout();
             try
@@ -346,7 +391,7 @@ namespace SnapMeasure
                 // the canvas stays first in the list, so it still fills what the docked bars leave (same order as at start)
                 Controls.Add(props);
                 Controls.Add(toolHost);
-                Controls.Add(styleBar);
+                Controls.Add(styleHost);
                 Controls.Add(bar);
                 Controls.Add(status);
                 LoadStyle();               // shows the rows for the current tool: needs the bars on the window
@@ -355,7 +400,16 @@ namespace SnapMeasure
             {
                 ResumeLayout(true);
                 FitToolBar();
-                if (wholeVisible) cv.Fit();
+                if (wholeVisible)
+                {
+                    cv.Fit();
+                    // Windows can still resize the window after this (Win+Shift+arrow, snapping): fit again then
+                    DateTime until = DateTime.Now.AddSeconds(1);
+                    EventHandler refit = null;
+                    refit = (s, e) => { if (DateTime.Now > until || IsDisposed) cv.SizeChanged -= refit; else if (cv.Width > 10 && cv.Height > 10) cv.Fit(); };
+                    cv.SizeChanged += refit;
+                    BeginInvoke((Action)(() => { if (!IsDisposed) cv.Fit(); }));
+                }
                 else
                 {
                     cv.Pan = new PointF(cv.Width / 2f - midImg.X * cv.Zoom, cv.Height / 2f - midImg.Y * cv.Zoom);
@@ -378,6 +432,7 @@ namespace SnapMeasure
             ProjectExtras ex;
             Bitmap img = ProjectFile.Load(path, shapes, sc, out ex);
             EditorForm f = new EditorForm(img, Path.GetFileName(path));
+            f.projectPath = Path.GetFullPath(path);
             f.cv.Shapes = shapes;
             f.cv.Scale = sc;
             if (ex.Crop.HasValue)
@@ -406,6 +461,7 @@ namespace SnapMeasure
         void BuildTopBar()
         {
             bar = new ClickStrip();
+            bar.SuspendLayout();
             bar.Font = Font;
             bar.GripStyle = ToolStripGripStyle.Hidden;
             bar.Padding = new Padding(S(4), S(2), S(4), S(2));
@@ -453,24 +509,17 @@ namespace SnapMeasure
             IconOnly(AddBtn(bar, "Zoom in", "Zoom in (Ctrl++, or Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(1)), "zoomin");
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
             IconOnly(AddBtn(bar, "Zoom to area", "Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)", (s, e) => { cv.StartZoomBox(); cv.Focus(); }), "zoomarea");
+            IconOnly(AddBtn(bar, "Actual pixels", "Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)", (s, e) => { cv.ZoomCenter(1f); cv.Focus(); }), "actual");
             bar.Items.Add(new ToolStripSeparator());
+            // rulers sit with the other on/off switch for the view (keep inside)
+            bRulers = IconOnly(AddBtn(bar, "Rulers", "Rulers along the top and left edge (Ctrl+R)", (s, e) => ToggleRulers()), "rulers");
+            bRulers.CheckOnClick = false;
+            bRulers.Checked = cv.ShowRulers;
             // lock: everything drawn, moved, pasted or resized stays inside the picture
             bLock = IconOnly(AddBtn(bar, "Keep inside", "Keep inside the picture: drawing, moving, pasting and resizing stay within the screenshot (Ctrl+L)", (s, e) => ToggleLock()), "lock");
             bLock.CheckOnClick = false;
             cv.LockInside = Settings.GetBool("LockInside", false);
             bLock.Checked = cv.LockInside;
-            bar.Items.Add(new ToolStripSeparator());
-
-            ToolStripDropDownButton view = new ToolStripDropDownButton("View");
-            view.Image = Icons.Cmd("panel", CmdIcon);
-            view.ImageScaling = ToolStripItemImageScaling.None;
-            view.AutoToolTip = false;
-            view.DropDown.Font = Font;
-            MenuItem(view, "Actual pixels 1:1   (Ctrl+1)", "actual", (s, e) => cv.ZoomCenter(1f));
-            view.DropDownItems.Add(new ToolStripSeparator());
-            bRulers = MenuItem(view, "Rulers   (Ctrl+R)", "rulers", (s, e) => ToggleRulers());
-            bRulers.Checked = cv.ShowRulers;
-            bar.Items.Add(view);
             bar.Items.Add(new ToolStripSeparator());
 
             // add-ons: tools that float over any window, not just this picture
@@ -479,8 +528,8 @@ namespace SnapMeasure
             addons.ImageScaling = ToolStripItemImageScaling.None;
             addons.AutoToolTip = false;      // no tooltip: it would cover the menu
             addons.DropDown.Font = Font;
-            MenuItem(addons, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler()).ToolTipText = "Measure anything on screen";
-            MenuItem(addons, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor()).ToolTipText = "Measure an angle on screen";
+            MenuItem(addons, "On-screen ruler", "ruler", (s, e) => Overlays.ShowRuler()).ToolTipText = Lang.T("Measure anything on screen");
+            MenuItem(addons, "On-screen protractor", "protractor", (s, e) => Overlays.ShowProtractor()).ToolTipText = Lang.T("Measure an angle on screen");
             bar.Items.Add(addons);
 
             // right end, next to the window's own buttons: side panel, pin, settings, help (the first added sits furthest right)
@@ -495,6 +544,7 @@ namespace SnapMeasure
             bPanel.Checked = Settings.GetBool("ShowPanel", true);
             ToolStripSeparator sepR = new ToolStripSeparator(); sepR.Alignment = ToolStripItemAlignment.Right;
             bar.Items.Add(sepR);
+            bar.ResumeLayout(false);
         }
 
         /// <summary>Top-bar icon size in pixels (Settings → General → icon size, scaled for the screen).</summary>
@@ -562,6 +612,7 @@ namespace SnapMeasure
         void BuildToolBar()
         {
             toolBar = new ClickStrip();
+            toolBar.SuspendLayout();
             toolBar.Font = Font;
             toolBar.Dock = DockStyle.Left;
             toolBar.AutoSize = false;
@@ -574,7 +625,7 @@ namespace SnapMeasure
             AddTool(Tool.Select, "Select / move / rotate (V)");
             // order of work: set the scale, measure (straight → paths → areas → angles), count,
             // then draw (lines → shapes), highlight, write, and the picture tools last
-            AddHeading("MEASURE");
+            AddHeading("Measure", Icons.MeasureCol);
             AddTool(Tool.Calibrate, "Calibrate scale from a known length (K)");
             AddTool(Tool.Dimension, "Dimension (D)");
             AddTool(Tool.Perimeter, "Length: path along a run; tick Closed for a closed perimeter (W)");
@@ -583,10 +634,10 @@ namespace SnapMeasure
             AddTool(Tool.Angle, "Angle – 3 points: arm, vertex, arm (G)");
             AddTool(Tool.Radius, "Radius / diameter – 3 points on a curve or circle (Shift+R)");
             AddTool(Tool.Coord, "Coordinates: first click = origin 0,0, then points show X / Y (I)");
-            AddHeading("COUNT");
+            AddHeading("Count", Icons.CountCol);
             AddTool(Tool.Counter, "Number marker 1, 2, 3 … – counts (N)");
             AddTool(Tool.Letter, "Letter marker A, B, C … – counts (Shift+N)");
-            AddHeading("DRAW");
+            AddHeading("Draw", Icons.DrawCol);
             AddTool(Tool.Arrow, "Arrow (A) – right-click it for more line ends");
             AddTool(Tool.Line, "Line (L)");
             AddTool(Tool.PolyDraw, "Polyline – an open line through any number of points, arrowheads optional (Shift+P)");
@@ -596,15 +647,15 @@ namespace SnapMeasure
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
             AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
             AddTool(Tool.Cloud, "Revision cloud, with or without a callout (U)");
-            AddHeading("HIGHLIGHT");
-            AddTool(Tool.Highlight, "Focus: spotlight, grayscale, magnify or pixelate, in several shapes; Strength slider for magnify / pixelate (H, B = pixelate)");
+            AddHeading("Highlight", Icons.HighlightCol);
+            AddTool(Tool.Highlight, "Focus: highlight box, spotlight, grayscale, magnify or pixelate, in several shapes; Strength slider for magnify / pixelate (H, B = pixelate)");
             AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
-            AddHeading("TEXT");
+            AddHeading("Text", Icons.TextCol);
             AddTool(Tool.Text, "Text – click and type, or drag a box (T)");
             AddTool(Tool.Bubble, "Speech bubble (S)");
             AddTool(Tool.Stamp, "Stamp: Approved / Revise / Draft / For construction … (Z)");
             AddTool(Tool.Note, "Note – shown here only, not printed (O)");
-            AddHeading("TOOLS");
+            AddHeading("Tools", Icons.ToolInk);
             AddTool(Tool.Crop, "Crop (C)");
             AddTool(Tool.Ocr, "Copy text from an area – text recognition (Shift+T)");
             // match properties: not a drawing tool, a brush that stays on until Esc / right-click
@@ -615,10 +666,11 @@ namespace SnapMeasure
             bMatch.AutoSize = false;
             bMatch.Padding = Padding.Empty;
             bMatch.Size = new Size(S(IconSize + 24), ToolButtonH);
-            bMatch.ToolTipText = "Match properties: select a shape, then click the shapes to give its look (Ctrl+Shift+M; Esc or right-click ends)";
+            bMatch.ToolTipText = Lang.T("Match properties: select a shape, then click the shapes to give its look (Ctrl+Shift+M; Esc or right-click ends)");
             bMatch.Margin = new Padding(0, S(1), 0, S(1));
             bMatch.Click += (s, e) => { ToggleMatch(); cv.Focus(); };
             toolBar.Items.Add(bMatch);
+            toolBar.ResumeLayout(false);
 
             // the column sits in a holder that scrolls (mouse wheel) when even the compact column is too tall
             toolHost = new Panel();
@@ -715,18 +767,18 @@ namespace SnapMeasure
             cv.StartMatch();
         }
 
-        /// <summary>Small section title in the tool column.</summary>
-        void AddHeading(string text)
+        /// <summary>Small section title in the tool column, in the colour its tools' icons share.</summary>
+        void AddHeading(string text, Color group)
         {
             ToolStripLabel l = new ToolStripLabel(text);
-            l.Font = Native.UiFont("Segoe UI", 5.8f, k, FontStyle.Bold);
-            l.ForeColor = Color.FromArgb(110, 120, 135);
+            l.Font = Native.UiFont("Segoe UI", 6.4f, k, FontStyle.Bold);
+            l.ForeColor = Color.FromArgb(110, 120, 135);     // quiet grey: the icons carry the group colour
             l.AutoSize = false;
             l.Size = new Size(S(IconSize + 28), S(13));
             l.TextAlign = ContentAlignment.BottomCenter;
             l.Margin = new Padding(0, S(4), 0, 0);
             l.ToolTipText = text;
-            // compact column: no title, a short divider line instead
+            // compact column: no title, a short thin grey divider instead
             l.Paint += (s, e) =>
             {
                 if (l.Text.Length > 0) return;
@@ -752,17 +804,32 @@ namespace SnapMeasure
             b.ToolTipText = tip;
             b.Margin = new Padding(0, S(1), 0, S(1));
             b.Click += (s, e) => { cv.CurrentTool = t; cv.Focus(); };
+            // the tool in use: a bar in its group's colour along the column's edge
+            Color group = Icons.Group(t);
+            b.Paint += (s, e) =>
+            {
+                if (!b.Checked) return;
+                using (SolidBrush br = new SolidBrush(group))
+                    e.Graphics.FillRectangle(br, 0, S(3), Math.Max(3, S(3)), b.Height - 2 * S(3));
+            };
             toolButtons[t] = b;
             toolBar.Items.Add(b);
         }
+
+        /// <summary>Text colour of headings and the current tool's name (near-black, softer than pure black on grey).</summary>
+        static readonly Color Ink = Color.FromArgb(36, 40, 48);
+
+        /// <summary>Default outline of a magnify lens.</summary>
+        static readonly Color MagnifyOutline = Color.FromArgb(230, 0, 200);
 
         Label Header(string text)
         {
             Label l = new Label();
             l.UseMnemonic = false;     // show "&" as a character
             l.Text = text;
-            l.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
-            l.ForeColor = Color.FromArgb(0, 90, 170);
+            // dark and heavier, in sentence case: blue is kept for what can be clicked
+            l.Font = Native.UiFont("Segoe UI", 9.5f, k, FontStyle.Bold);
+            l.ForeColor = Ink;
             l.AutoSize = false;
             l.Width = S(236);
             l.Height = S(26);
@@ -864,11 +931,10 @@ namespace SnapMeasure
         {
             ComboBox c = new ComboBox();
             c.DropDownStyle = ComboBoxStyle.DropDownList;
-            c.DrawMode = DrawMode.OwnerDrawFixed;
-            c.ItemHeight = S(20);
+            LazyItemHeight(c, S(20));    // (setting ItemHeight here made the window early: ~50 ms per list)
             c.Width = S(64);
             c.DropDownWidth = S(150);
-            for (int i = 0; i < Icons.HeadNames.Length; i++) c.Items.Add(Icons.HeadNames[i]);
+            c.Items.AddRange(Icons.HeadNames);
             c.DrawItem += (s, e) =>
             {
                 e.DrawBackground();
@@ -892,8 +958,7 @@ namespace SnapMeasure
         {
             ComboBox c = new ComboBox();
             c.DropDownStyle = ComboBoxStyle.DropDownList;
-            c.DrawMode = DrawMode.OwnerDrawFixed;
-            c.ItemHeight = S(20);
+            LazyItemHeight(c, S(20));
             c.Width = S(78);
             c.DropDownWidth = S(150);
             c.Items.AddRange(DashNames);
@@ -988,6 +1053,17 @@ namespace SnapMeasure
             return c;
         }
 
+        /// <summary>
+        /// Picture drop-downs (line ends, line style). Setting ItemHeight straight away made the list's window at once, and
+        /// filling a live list costs a few ms per item: ~120 ms per editor for lists that are hidden until a line tool is
+        /// picked. The height is set when the window is made, so nothing is built until the row is first shown.
+        /// </summary>
+        void LazyItemHeight(ComboBox c, int itemH)
+        {
+            c.DrawMode = DrawMode.OwnerDrawFixed;
+            c.HandleCreated += (s, e) => { if (c.ItemHeight != itemH) c.ItemHeight = itemH; };
+        }
+
         /// <summary>One labelled group in the style bar: "Line [colour] [opacity] [width]".</summary>
         FlowLayoutPanel Grp(string label, params Control[] cs)
         {
@@ -1031,7 +1107,7 @@ namespace SnapMeasure
         void BuildStyleBar()
         {
             styleBar = new FlowLayoutPanel();
-            styleBar.Dock = DockStyle.Top;
+            styleBar.SuspendLayout();
             styleBar.AutoSize = true;
             styleBar.AutoSizeMode = AutoSizeMode.GrowAndShrink;
             styleBar.WrapContents = true;
@@ -1041,25 +1117,26 @@ namespace SnapMeasure
             lStyleFor = new Label();
             lStyleFor.AutoSize = true;
             lStyleFor.Font = Native.UiFont("Segoe UI", 9f, k, FontStyle.Bold);
-            lStyleFor.ForeColor = Color.FromArgb(0, 90, 170);
+            lStyleFor.ForeColor = Ink;
             lStyleFor.Margin = new Padding(0, S(6), S(12), 0);
             lStyleFor.MinimumSize = new Size(S(150), 0);
 
             bStroke = ColorButton((s, e) => PickColor(true));
             bFill = ColorButton((s, e) => PickColor(false));
-            tip.SetToolTip(bStroke, "Line colour (Alt+L) · quick colours: Alt+1 … Alt+9");
-            tip.SetToolTip(bFill, "Fill colour (Alt+F) · quick colours: Alt+Shift+1 … 9 · Alt+Shift+0 = no fill");
+            tip.SetToolTip(bStroke, Lang.T("Line colour (Alt+L) · quick colours: Alt+1 … Alt+9"));
+            tip.SetToolTip(bFill, Lang.T("Fill colour (Alt+F) · quick colours: Alt+Shift+1 … 9 · Alt+Shift+0 = no fill"));
             nWidth = new NumericUpDown();
             nWidth.DecimalPlaces = 1; nWidth.Increment = 0.5m; nWidth.Minimum = 0; nWidth.Maximum = 200; nWidth.Width = S(52);
             nWidth.ValueChanged += (s, e) => ApplyStyle(x => x.Width = (float)nWidth.Value);
-            tip.SetToolTip(nWidth, "Line width");
+            tip.SetToolTip(nWidth, Lang.T("Line width"));
             tSO = Slider(out lSO, (s, e) => { lSO.Text = tSO.Value + "%"; ApplyStyle(x => x.StrokeOpacity = tSO.Value); });
             tFO = Slider(out lFO, (s, e) => { lFO.Text = tFO.Value + "%"; ApplyStyle(x => x.FillOpacity = tFO.Value); });
-            tip.SetToolTip(tSO, "Line opacity");
-            tip.SetToolTip(tFO, "Fill opacity (for pictures: picture opacity)");
+            tip.SetToolTip(tSO, Lang.T("Line opacity"));
+            tip.SetToolTip(tFO, Lang.T("Fill opacity (for pictures: picture opacity)"));
 
-            // Focus modes (the yellow text marker is now the highlighter pen): list index + 1 = HighlightMode
-            cHlMode = Combo(110, "Spotlight", "Grayscale", "Magnify", "Pixelate");
+            // Focus modes: list index = HighlightMode (0 = Highlight, the see-through box; the default)
+            cHlMode = Combo(110, "Highlight", "Spotlight", "Grayscale", "Magnify", "Pixelate");
+            tip.SetToolTip(cHlMode, Lang.T("Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate"));
             // strength: magnify ×1.5 … ×6, pixelate 4 … 40 px blocks
             tStr = new TrackBar();
             tStr.Minimum = 1; tStr.Maximum = 10; tStr.TickStyle = TickStyle.None; tStr.AutoSize = false;
@@ -1071,63 +1148,72 @@ namespace SnapMeasure
                 int v = tStr.Value;
                 ApplyStyle(x => { if (x.Kind == ShapeKind.Highlight || x.Kind == ShapeKind.Pixelate) { x.Strength = v; x.Cache = null; } });
             };
-            tip.SetToolTip(tStr, "Strength: how much to magnify, or how big the pixel blocks are");
+            tip.SetToolTip(tStr, Lang.T("Strength: how much to magnify, or how big the pixel blocks are"));
             cWhere = Combo(80, "Inside", "Outside");
-            tip.SetToolTip(cWhere, "Gray or pixelate the marked area itself (inside) or everything around it (outside)");
+            tip.SetToolTip(cWhere, Lang.T("Gray or pixelate the marked area itself (inside) or everything around it (outside)"));
             EventHandler focusChanged = (s, e) =>
             {
                 if (loading || cHlMode.SelectedIndex < 0) return;
-                int b = cHlMode.SelectedIndex + 1;
+                int b = cHlMode.SelectedIndex;
                 bool inside = cWhere.SelectedIndex != 1;
                 ApplyStyle(x =>
                 {
                     // keep each mode's usual side when switching mode; the Inside / Outside box picks the other side
                     int m = FocusMode(b, s == cWhere ? inside : (b == (int)HighlightMode.Grayscale ? false : true));
+                    // switching to magnify: the lens gets a magenta outline (the line colour can be changed after)
+                    if (m == (int)HighlightMode.Magnify && x.Mode != m) x.Stroke = MagnifyOutline;
                     x.Mode = m;
-                    if (m == (int)HighlightMode.Spotlight && x.FillOpacity < 20) x.FillOpacity = 45;
+                    if ((m == (int)HighlightMode.Spotlight || m == (int)HighlightMode.Marker) && x.FillOpacity < 20) x.FillOpacity = 45;
                 });
                 LoadStyle();
             };
             cHlMode.SelectedIndexChanged += focusChanged;
             cWhere.SelectedIndexChanged += focusChanged;
             cShadow = new CheckBox();
-            cShadow.Text = "Shadow";
+            cShadow.Text = Lang.T("Shadow");
             cShadow.AutoSize = true;
             cShadow.CheckedChanged += (s, e) => ApplyStyle(x => x.Shadow = cShadow.Checked);
             nFont = new NumericUpDown();
             nFont.Minimum = 6; nFont.Maximum = 200; nFont.Width = S(52);
             nFont.ValueChanged += (s, e) => ApplyStyle(x => x.FontSize = (float)nFont.Value);
-            tip.SetToolTip(nFont, "Text size");
+            tip.SetToolTip(nFont, Lang.T("Text size"));
             cHeadS = HeadCombo(true);
             cHeadE = HeadCombo(false);
             cHeadS.SelectedIndexChanged += (s, e) => { int h = cHeadS.SelectedIndex; if (h >= 0) ApplyStyle(x => { if (x.HasHeads) x.HeadStart = h; }); };
             cHeadE.SelectedIndexChanged += (s, e) => { int h = cHeadE.SelectedIndex; if (h >= 0) ApplyStyle(x => { if (x.HasHeads) x.HeadEnd = h; }); };
-            tip.SetToolTip(cHeadS, "Line end at the start point (also on the right-click menu)");
-            tip.SetToolTip(cHeadE, "Line end at the end point (also on the right-click menu)");
+            tip.SetToolTip(cHeadS, Lang.T("Line end at the start point (also on the right-click menu)"));
+            tip.SetToolTip(cHeadE, Lang.T("Line end at the end point (also on the right-click menu)"));
             cStamp = Combo(130, Stamps.Names);
             cStamp.SelectedIndexChanged += (s, e) => StampModeChanged();
-            tip.SetToolTip(cStamp, "Stamp type – sets the word and colour (double-click a stamp to edit its text)");
+            tip.SetToolTip(cStamp, Lang.T("Stamp type – sets the word and colour (double-click a stamp to edit its text)"));
             cMarkup = Combo(110, "Underline", "Strike out", "Highlight text");
             cMarkup.SelectedIndexChanged += (s, e) => { int m = cMarkup.SelectedIndex; if (m >= 0) { ApplyStyle(x => { if (x.Kind == ShapeKind.Markup) x.Mode = m; }); LoadStyle(); } };
             cDash = DashCombo();
             cDash.SelectedIndexChanged += (s, e) => { int m = cDash.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.HasOutlineStyle && (m != (int)LineStyle.Cloud || x.CanBeCloud)) x.Dash = m; }); };
-            tip.SetToolTip(cDash, "Line style: solid, dashed, dotted, dash-dot, long dash or cloud");
+            tip.SetToolTip(cDash, Lang.T("Line style: solid, dashed, dotted, dash-dot, long dash or cloud"));
             cForm = Combo(96, "Rectangle", "Ellipse", "Triangle", "Diamond", "Rounded");
             cForm.SelectedIndexChanged += (s, e) => { int m = cForm.SelectedIndex; if (m >= 0) ApplyStyle(x => { if (x.Kind == ShapeKind.Highlight) x.Form = m; }); };
-            tip.SetToolTip(cForm, "Shape of the highlight");
+            tip.SetToolTip(cForm, Lang.T("Shape of the highlight"));
             cCallout = Combo(130, "No callout", "Revision triangle", "Text box");
             cCallout.SelectedIndexChanged += (s, e) => CalloutChanged();
-            tip.SetToolTip(cCallout, "Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)");
+            tip.SetToolTip(cCallout, Lang.T("Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)"));
             cShow = Combo(150, "Area + perimeter", "Area only", "Perimeter only", "None");
             cShow.SelectedIndexChanged += (s, e) =>
             {
-                int m = cShow.SelectedIndex;
-                if (loading || m < 0) return;
-                ApplyStyle(x => { if (x.Kind == ShapeKind.Area || x.Kind == ShapeKind.Radius) x.Mode = m; });
+                int i = cShow.SelectedIndex;
+                if (loading || i < 0) return;
+                // the list holds either the area choices or the radius choices: each kind only takes its own
+                bool radiusList = (string)cShow.Items[0] == RadiusShow[0];
+                int m = radiusList ? RadiusShowMode[Math.Min(i, RadiusShowMode.Length - 1)] : i;
+                ApplyStyle(x =>
+                {
+                    if (radiusList && x.Kind == ShapeKind.Radius) x.Mode = m;
+                    else if (!radiusList && x.Kind == ShapeKind.Area) x.Mode = Math.Min(m, 3);
+                });
             };
-            tip.SetToolTip(cShow, "What the label shows");
+            tip.SetToolTip(cShow, Lang.T("What the label shows"));
             cClosed = new CheckBox();
-            cClosed.Text = "Closed";
+            cClosed.Text = Lang.T("Closed");
             cClosed.AutoSize = true;
             cClosed.CheckedChanged += (s, e) =>
             {
@@ -1141,10 +1227,10 @@ namespace SnapMeasure
                 LoadStyle();
             };
             cFrame = new CheckBox();
-            cFrame.Text = "Frame";
+            cFrame.Text = Lang.T("Frame");
             cFrame.AutoSize = true;
             cFrame.CheckedChanged += (s, e) => { bool c = cFrame.Checked; ApplyStyle(x => { if (x.Kind == ShapeKind.Text) { x.Frame = c; if (c && x.Width < 0.5f) x.Width = 1.5f; } }); LoadStyle(); };
-            tip.SetToolTip(cFrame, "Frame round the text, in the line colour and width");
+            tip.SetToolTip(cFrame, Lang.T("Frame round the text, in the line colour and width"));
             cBold = StyleToggle("B", "Bold", FontStyle.Bold);
             cBold.CheckedChanged += (s, e) => ApplyStyle(x => x.Bold = cBold.Checked);
             cItalic = StyleToggle("I", "Italic", FontStyle.Italic);
@@ -1160,11 +1246,13 @@ namespace SnapMeasure
             tMarkStart.Width = S(44);
             tMarkStart.Leave += (s, e) => MarkerEdited();
             tMarkStart.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { MarkerEdited(); e.SuppressKeyPress = true; cv.Focus(); } };
-            tip.SetToolTip(tMarkStart, "First number (or letter) of this marker series");
+            tip.SetToolTip(tMarkStart, Lang.T("First number (or letter) of this marker series"));
 
             // quick palette: left-click = line colour, right-click = fill colour
             FlowLayoutPanel pal = new FlowLayoutPanel();
-            pal.WrapContents = false; pal.AutoSize = true; pal.Margin = new Padding(0, S(4), S(10), 0);
+            pal.WrapContents = false; pal.AutoSize = true; pal.Margin = Padding.Empty;
+            pal.BackColor = styleBar.BackColor;
+            palBar = pal;
             for (int i = 0; i < Palette.Length; i++)
             {
                 int idx = i;
@@ -1178,6 +1266,17 @@ namespace SnapMeasure
                 tip.SetToolTip(sw, PaletteNames[i] + " – click = line (Alt+" + (i + 1) + "), right-click = fill (Alt+Shift+" + (i + 1) + ")");
                 pal.Controls.Add(sw);
             }
+            // last: any colour, from the Windows colour picker. It shows the last colour picked, with a picker icon on it
+            Panel more = new Panel();
+            more.Size = new Size(S(16), S(16));
+            more.Margin = new Padding(S(3), 0, 0, 0);
+            more.BorderStyle = BorderStyle.FixedSingle;
+            more.Cursor = Cursors.Hand;
+            more.Paint += (s, e) => DrawPickerSwatch(e.Graphics, more.ClientRectangle);
+            more.MouseUp += (s, e) => PickColor(e.Button != MouseButtons.Right);
+            tip.SetToolTip(more, Lang.T("More colours – click = line colour (Alt+L), right-click = fill colour (Alt+F)"));
+            pickerSwatch = more;
+            pal.Controls.Add(more);
 
             gLine = Grp("Line", bStroke, tSO, lSO, nWidth);
             gFill = Grp("Fill", bFill, tFO, lFO);
@@ -1185,7 +1284,7 @@ namespace SnapMeasure
             rowTextStyle = Grp("", cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR);
             gHeads = Grp("Start", cHeadS);
             Label lEnd = new Label();
-            lEnd.Text = "End";
+            lEnd.Text = Lang.T("End");
             lEnd.AutoSize = true;
             lEnd.ForeColor = Color.FromArgb(80, 80, 80);
             lEnd.Margin = new Padding(S(4), S(6), S(3), 0);
@@ -1194,13 +1293,19 @@ namespace SnapMeasure
             gHeads.Controls.Add(cHeadE);
             rowHl = Grp("Mode", cHlMode, cWhere);
             rowStrength = Grp("Strength", tStr, lStr);
-            rowMarkStart = Grp("Start at", tMarkStart);
+            cReverse = new CheckBox();
+            cReverse.Text = Lang.T("Reverse");
+            cReverse.AutoSize = true;
+            cReverse.Margin = new Padding(S(6), S(4), 0, 0);
+            cReverse.CheckedChanged += (s, e) => ReverseEdited();
+            tip.SetToolTip(cReverse, Lang.T("Count down: Z, Y, X … A for letters, 10, 9, 8 … 1 for numbers"));
+            rowMarkStart = Grp("Start at", tMarkStart, cReverse);
             ComboBox cDate = Combo(150, Stamps.DateNames);
             cDate.SelectedIndex = Math.Max(0, Math.Min(Stamps.DateNames.Length - 1, Settings.GetInt("StampDate", 0)));
             cDate.SelectedIndexChanged += (s, e) => StampDateChanged(cDate.SelectedIndex);
-            tip.SetToolTip(cDate, "Date line on the stamp (keeps the stamp's own date, just changes how it is written)");
+            tip.SetToolTip(cDate, Lang.T("Date line on the stamp (keeps the stamp's own date, just changes how it is written)"));
             rowStamp = Grp("Stamp", cStamp);
-            Label lDate = new Label(); lDate.Text = "Date"; lDate.AutoSize = true; lDate.ForeColor = Color.FromArgb(80, 80, 80);
+            Label lDate = new Label(); lDate.Text = Lang.T("Date"); lDate.AutoSize = true; lDate.ForeColor = Color.FromArgb(80, 80, 80);
             lDate.Margin = new Padding(S(4), S(6), S(3), 0);
             rowStamp.Controls.Add(lDate);
             cDate.Margin = new Padding(0, S(2), S(3), 0);
@@ -1213,9 +1318,43 @@ namespace SnapMeasure
             rowShow = Grp("Show", cShow);
             rowFrame = Grp("", cFrame);
             gShadow = Grp("", cShadow);
-            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowStrength, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart, gShadow, pal })
+            foreach (Control c in new Control[] { lStyleFor, gLine, gDash, gFill, gFont, rowTextStyle, rowFrame, gHeads, rowHl, rowStrength, rowForm, rowStamp, rowMarkup, rowCallout, rowShow, rowClosed, rowMarkStart, gShadow })
                 styleBar.Controls.Add(c);
             ReturnFocusToCanvas(styleBar);
+            ReturnFocusToCanvas(pal);
+            styleBar.ResumeLayout(false);
+
+            // the quick colours stay at the right end whatever the tool, so the hand finds them in the same place:
+            // the groups wrap in the room to their left
+            styleHost = new Panel();
+            styleHost.Dock = DockStyle.Top;
+            styleHost.BackColor = styleBar.BackColor;
+            styleHost.Controls.Add(styleBar);
+            styleHost.Controls.Add(pal);
+            styleBar.Location = Point.Empty;
+            styleHost.Resize += (s, e) => FitStyleBar();
+            styleBar.SizeChanged += (s, e) => FitStyleBar();
+            FitStyleBar();
+        }
+
+        Panel styleHost;
+        FlowLayoutPanel palBar;
+        bool fittingStyle;
+
+        void FitStyleBar()
+        {
+            if (fittingStyle || styleHost == null) return;
+            fittingStyle = true;
+            try
+            {
+                int right = S(10);
+                int room = Math.Max(S(200), styleHost.ClientSize.Width - palBar.PreferredSize.Width - right - S(8));
+                if (styleBar.MaximumSize.Width != room) styleBar.MaximumSize = new Size(room, 0);
+                int h = Math.Max(styleBar.Height, palBar.PreferredSize.Height + S(14));
+                if (styleHost.Height != h) styleHost.Height = h;
+                palBar.Location = new Point(Math.Max(room, styleHost.ClientSize.Width - palBar.Width - right), styleBar.Padding.Top + S(4));
+            }
+            finally { fittingStyle = false; }
         }
 
         /// <summary>After using a style-bar control, give the keyboard back to the canvas so tool keys (V, T, K …) work at once.</summary>
@@ -1238,9 +1377,9 @@ namespace SnapMeasure
         {
             Panel outer = new Panel();
             outer.Dock = DockStyle.Right;
-            outer.Width = S(262);
+            outer.Width = S(Math.Max(PanelMin, Math.Min(1600, Settings.GetInt("PanelWidth", PanelMin))));
             outer.BackColor = SystemColors.Control;
-            outer.Padding = new Padding(S(10), S(2), S(6), S(6));
+            outer.Padding = new Padding(0, S(2), S(6), S(6));
             outer.Visible = Settings.GetBool("ShowPanel", true);
             props = outer;
 
@@ -1249,8 +1388,38 @@ namespace SnapMeasure
             f.FlowDirection = FlowDirection.TopDown;
             f.WrapContents = false;
             f.AutoScroll = true;
+            f.Padding = new Padding(S(4), 0, 0, 0);
+            f.ClientSizeChanged += (s, e) => LayoutPanel();      // panel dragged wider, or a scrollbar came or went
+            propsFlow = f;
 
-            f.Controls.Add(Header("SCALE"));
+            // the panel's left edge: drag it to make the panel wider (to read long labels), double-click = normal width
+            Panel grip = new Panel();
+            grip.Dock = DockStyle.Left;
+            grip.Width = S(6);
+            grip.Cursor = Cursors.SizeWE;
+            grip.Paint += (s, e) => { using (Pen p = new Pen(SystemColors.ControlDark)) e.Graphics.DrawLine(p, S(2), 0, S(2), grip.Height); };
+            tip.SetToolTip(grip, Lang.T("Drag to make the panel wider or narrower · double-click = normal width"));
+            int dragX = 0, dragW = 0;
+            bool dragging = false;
+            grip.MouseDown += (s, e) => { if (e.Button != MouseButtons.Left) return; dragging = true; dragX = Cursor.Position.X; dragW = outer.Width; };
+            grip.MouseMove += (s, e) =>
+            {
+                if (!dragging) return;
+                int w = dragW + (dragX - Cursor.Position.X);
+                w = Math.Max(S(PanelMin), Math.Min(Math.Max(S(PanelMin), ClientSize.Width / 2), w));
+                if (w != outer.Width) { outer.Width = w; outer.Update(); }
+            };
+            grip.MouseUp += (s, e) =>
+            {
+                if (!dragging) return;
+                dragging = false;
+                Settings.Set("PanelWidth", ((int)Math.Round(outer.Width / k)).ToString(CultureInfo.InvariantCulture));
+                cv.Focus();
+            };
+            grip.DoubleClick += (s, e) => { outer.Width = S(PanelMin); Settings.Set("PanelWidth", PanelMin.ToString(CultureInfo.InvariantCulture)); };
+            outer.Resize += (s, e) => LayoutPanel();
+
+            f.Controls.Add(Header("Scale"));
             cUnit = Combo(80, ScaleInfo.Units);
             cUnit.SelectedIndexChanged += (s, e) => ScaleEdited();
             tUpp = new TextBox();
@@ -1261,28 +1430,62 @@ namespace SnapMeasure
             nDec.Minimum = 0; nDec.Maximum = 6; nDec.Width = S(60);
             nDec.ValueChanged += (s, e) => ScaleEdited();
             Button bCal = new Button();
-            bCal.Text = "Calibrate from a known length…";
+            bCal.Text = Lang.T("Calibrate from a known length…");
             bCal.Size = new Size(S(236), S(28));
             bCal.Click += (s, e) => { cv.CurrentTool = Tool.Calibrate; cv.Focus(); };
             cKeepScale = new CheckBox();
-            cKeepScale.Text = "Keep this scale for new captures";
+            cKeepScale.Text = Lang.T("Keep this scale for new captures");
             cKeepScale.AutoSize = true;
             cKeepScale.Checked = Settings.GetBool("KeepScale", false);
             cKeepScale.CheckedChanged += (s, e) => { Settings.Set("KeepScale", cKeepScale.Checked ? "1" : "0"); SaveScaleDefaults(); };
 
             Button bPreset = new Button();
-            bPreset.Text = "Drawing scale (1:50 on A1 …) / saved scales…";
+            bPreset.Text = Lang.T("Drawing scales…");
             bPreset.Size = new Size(S(236), S(28));
+            bPreset.AutoEllipsis = true;          // one line: "…" when the panel is too narrow for all of it
+            tip.SetToolTip(bPreset, Lang.T("Set the scale from the drawing (1:50 on A1 …), or use a saved scale"));
             bPreset.Click += (s, e) => ScalePresetDialog();
 
             f.Controls.Add(Row("Unit", cUnit));
-            f.Controls.Add(Row("1 pixel =", tUpp));
-            f.Controls.Add(Row("Decimals", nDec));
+            // the exact value to type in, then its unit and the readable size (the same as the status bar shows)
+            lUppNote = new Label();
+            lUppNote.AutoSize = true;
+            lUppNote.ForeColor = Color.FromArgb(90, 96, 106);
+            Panel upp = new Panel();
+            upp.Size = new Size(S(140), Math.Max(tUpp.PreferredHeight, S(22)));
+            tUpp.Location = new Point(0, 0);
+            lUppNote.Location = new Point(tUpp.Width + S(5), Math.Max(0, (upp.Height - lUppNote.PreferredHeight) / 2));
+            upp.Controls.Add(tUpp); upp.Controls.Add(lUppNote);
+            Panel rowUpp = Row("1 pixel =", upp);
+            // the row grows with the panel: the readable size joins the unit when there is room for it
+            upp.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
+            upp.Resize += (s, e) => ShowUppNote();
+            uppBox = upp;
+            f.Controls.Add(rowUpp);
+            // Ceil / Floor on the Decimals row, right after the (narrow: 0–6) decimals box
+            cCeil = new CheckBox(); cCeil.Text = Lang.T("Ceil"); cCeil.AutoSize = true;
+            cFloor = new CheckBox(); cFloor.Text = Lang.T("Floor"); cFloor.AutoSize = true;
+            nDec.Width = S(42);
+            cCeil.Font = cFloor.Font = Font;     // measured before they are on the window: with the editor's (scaled) font
+            Panel rounding = new Panel();
+            rounding.Size = new Size(nDec.Width + S(6) + cCeil.PreferredSize.Width + S(4) + cFloor.PreferredSize.Width,
+                                     Math.Max(nDec.PreferredSize.Height, Math.Max(cCeil.PreferredSize.Height, S(22))));
+            nDec.Location = new Point(0, (rounding.Height - nDec.Height) / 2);
+            cCeil.Location = new Point(nDec.Width + S(6), (rounding.Height - cCeil.PreferredSize.Height) / 2);
+            cFloor.Location = new Point(cCeil.Left + cCeil.PreferredSize.Width + S(4), cCeil.Top);
+            rounding.Controls.Add(nDec); rounding.Controls.Add(cCeil); rounding.Controls.Add(cFloor);
+            Panel rowDec = Row("Decimals", rounding);
+            tip.SetToolTip(cCeil, Lang.T("Round every value up (ceiling) at the chosen decimals"));
+            tip.SetToolTip(cFloor, Lang.T("Round every value down (floor) at the chosen decimals"));
+            // only one of the two: ticking one clears the other; neither = round to the nearest
+            cCeil.CheckedChanged += (s, e) => { if (loading) return; if (cCeil.Checked) { loading = true; cFloor.Checked = false; loading = false; } RoundingEdited(); };
+            cFloor.CheckedChanged += (s, e) => { if (loading) return; if (cFloor.Checked) { loading = true; cCeil.Checked = false; loading = false; } RoundingEdited(); };
+            f.Controls.Add(rowDec);
             f.Controls.Add(bCal);
             f.Controls.Add(bPreset);
             f.Controls.Add(cKeepScale);
 
-            f.Controls.Add(Header("MEASUREMENTS & COUNTS"));
+            f.Controls.Add(Header("Measurements & counts"));
             lv = new ListView();
             lv.View = View.Details;
             lv.FullRowSelect = true;
@@ -1302,13 +1505,13 @@ namespace SnapMeasure
             };
             f.Controls.Add(lv);
             Button bCopyM = new Button();
-            bCopyM.Text = "Copy measurements (for Excel)";
+            bCopyM.Text = Lang.T("Copy measurements (for Excel)");
             bCopyM.Size = new Size(S(236), S(28));
             bCopyM.Click += (s, e) => CopyMeasurements();
             f.Controls.Add(bCopyM);
 
             // every text on the picture in one list: click a line to select it, click again (or F2) to edit it here
-            f.Controls.Add(Header("TEXTS"));
+            f.Controls.Add(Header("Texts"));
             lvText = new ListView();
             lvText.View = View.Details;
             lvText.FullRowSelect = true;
@@ -1343,14 +1546,42 @@ namespace SnapMeasure
             lvText.KeyDown += (s, e) => { if (e.KeyCode == Keys.F2 && lvText.SelectedItems.Count > 0) lvText.SelectedItems[0].BeginEdit(); };
             f.Controls.Add(lvText);
             Button bCopyT = new Button();
-            bCopyT.Text = "Copy all text";
+            bCopyT.Text = Lang.T("Copy all text");
             bCopyT.Size = new Size(S(236), S(28));
             bCopyT.Click += (s, e) => CopyAllText();
             f.Controls.Add(bCopyT);
 
             outer.Controls.Add(f);
+            outer.Controls.Add(grip);      // added last = docked first: the grip takes the left edge, the lists fill the rest
+            LayoutPanel();
             return outer;
         }
+
+        const int PanelMin = 262;          // the panel's normal (and smallest) width, at 100 % scaling
+        FlowLayoutPanel propsFlow;
+        int laidOut = int.MinValue;
+
+        /// <summary>Stretches the panel's rows, buttons and lists to its width; the label columns take the extra room.</summary>
+        void LayoutPanel()
+        {
+            if (props == null || propsFlow == null || lv == null || lvText == null) return;
+            // fill the room inside the panel: its width less the grip, the padding, the rows' margins and – in a short
+            // window – the vertical scrollbar, so the panel never needs to scroll sideways
+            int room = propsFlow.ClientSize.Width - propsFlow.Padding.Horizontal - S(6);
+            int d = Math.Max(-S(20), room - S(236));
+            if (laidOut == d) return;
+            laidOut = d;
+            propsFlow.SuspendLayout();
+            foreach (Control c in propsFlow.Controls)
+                if (!(c is CheckBox)) c.Width = S(236) + d;
+            lv.Columns[2].Width = S(96) + d;
+            lvText.Columns[0].Width = S(176) + d;
+            propsFlow.ResumeLayout(true);
+        }
+
+        /// <summary>Radius Show list, in the order the user wants, and the stored mode of each entry (see Renderer.RadiusText).</summary>
+        static readonly string[] RadiusShow = { "Diameter", "Radius", "Diameter + Arc length", "Radius + Arc length", "Arc length", "None" };
+        static readonly int[] RadiusShowMode = { 2, 1, 3, 4, 6, 5 };
 
         /// <summary>Shown in place of line breaks in the one-line text list (typed back, it becomes a line break again).</summary>
         const string LineMark = "↵";
@@ -1452,7 +1683,7 @@ namespace SnapMeasure
             status.Items.Add(new ToolStripSeparator());
             status.Items.Add(lHint);
             Version v = typeof(EditorForm).Assembly.GetName().Version;
-            lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor + (v.Build > 0 ? "." + v.Build : ""));
+            ToolStripStatusLabel lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor + (v.Build > 0 ? "." + v.Build : ""));
             lVersion.ForeColor = Color.FromArgb(0, 102, 204);
             lVersion.IsLink = true;
             lVersion.LinkBehavior = LinkBehavior.HoverUnderline;
@@ -1476,7 +1707,7 @@ namespace SnapMeasure
         void UpdateGuide()
         {
             if (lHint == null || DateTime.Now < flashUntil) return;
-            string t = GuideText();
+            string t = Lang.T(GuideText());
             if (lHint.Text != t) lHint.Text = t;
         }
 
@@ -1508,8 +1739,8 @@ namespace SnapMeasure
                     return name + ": click the next point. Double-click to finish.";
                 case Tool.Angle:
                     if (n < 0) return "Angle: click the end of the first arm.";
-                    if (n == 2) return "Angle: click the corner.";
-                    return "Angle: click the end of the second arm.";
+                    if (n == 2) return "Angle: click the corner. Shift = 45° steps.";
+                    return "Angle: click the end of the second arm. Shift = 45°, 90°, 135° …";
                 case Tool.Arc: case Tool.Radius:
                     if (n < 0) return name + ": click the start.";
                     if (n == 2) return name + ": click a point on the curve.";
@@ -1575,7 +1806,7 @@ namespace SnapMeasure
                 case ShapeKind.Counter:
                     return "double-click to name what this series counts.";
                 case ShapeKind.Image:
-                    return s.Text == "Mouse pointer" ? "drag to move it, or press Delete to remove it." : "drag a corner to resize it.";
+                    return s.Text == "Mouse pointer" ? "drag to move it, or press Delete to remove it." : "drag a corner to stretch it, hold Shift to keep its proportions.";
                 default:
                     return "drag to move it. Del to delete.";
             }
@@ -1606,7 +1837,7 @@ namespace SnapMeasure
                 case ShapeKind.Coord: return "Coordinate point";
                 case ShapeKind.Origin: return "Origin 0,0";
                 case ShapeKind.Highlight:
-                    return s.Mode == (int)HighlightMode.Pixelate || s.Mode == (int)HighlightMode.PixelateOutside ? "Pixelate" : s.Mode == 0 ? "Text marker" : "Focus";
+                    return s.Mode == (int)HighlightMode.Pixelate || s.Mode == (int)HighlightMode.PixelateOutside ? "Pixelate" : s.Mode == 0 ? "Highlight" : "Focus";
                 case ShapeKind.Freehand: return s.IsMarkerPen ? "Highlighter pen" : "Freehand";
                 case ShapeKind.Polygon: return s.IsOpenPath ? "Polyline (open polygon)" : "Polygon";
                 case ShapeKind.Radius: return "Radius / diameter";
@@ -1619,16 +1850,17 @@ namespace SnapMeasure
             Shape s = StyleTarget();
             loading = true;
             foreach (Control c in styleBar.Controls) c.Enabled = s != null || c == lStyleFor;
+            palBar.Enabled = s != null;
             if (s == null)
             {
-                lStyleFor.Text = cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's or polygon's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape";
+                lStyleFor.Text = Lang.T(cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's or polygon's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape");
                 rowHl.Visible = rowStrength.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
                 gDash.Visible = rowForm.Visible = rowCallout.Visible = rowClosed.Visible = rowFrame.Visible = rowShow.Visible = false;
             }
             else
             {
-                string sel = cv.Sel.Count > 1 ? " (" + cv.Sel.Count + " selected)" : (cv.Selected != null ? " (selected)" : "");
-                lStyleFor.Text = KindName(s) + sel;
+                string sel = cv.Sel.Count > 1 ? " (" + cv.Sel.Count + " " + Lang.T("selected") + ")" : (cv.Selected != null ? " (" + Lang.T("selected") + ")" : "");
+                lStyleFor.Text = Lang.T(KindName(s)) + sel;
                 ShapeKind kd = s.Kind;
                 bool lineOnly = kd == ShapeKind.Line || kd == ShapeKind.Arrow || kd == ShapeKind.Freehand || kd == ShapeKind.Dimension || kd == ShapeKind.Angle ||
                                 kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Arc || kd == ShapeKind.Radius ||
@@ -1665,10 +1897,10 @@ namespace SnapMeasure
                 rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout) || kd == ShapeKind.Radius;
                 if (rowShow.Visible)
                 {
-                    string[] items = kd == ShapeKind.Radius ? new[] { "Radius + diameter", "Radius only", "Diameter only" }
-                                                            : new[] { "Area + perimeter", "Area only", "Perimeter only", "None" };
+                    string[] items = kd == ShapeKind.Radius ? RadiusShow : new[] { "Area + perimeter", "Area only", "Perimeter only", "None" };
                     if ((string)cShow.Items[0] != items[0]) { cShow.Items.Clear(); cShow.Items.AddRange(items); }
-                    cShow.SelectedIndex = Math.Max(0, Math.Min(items.Length - 1, s.Mode));
+                    // radius: list position ↔ stored mode; an old "radius + diameter" (0) shows no entry
+                    cShow.SelectedIndex = kd == ShapeKind.Radius ? Array.IndexOf(RadiusShowMode, s.Mode) : Math.Max(0, Math.Min(items.Length - 1, s.Mode));
                 }
                 if (rowClosed.Visible) cClosed.Checked = s.Mode == 0 && s.FromArea == 0;
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
@@ -1687,16 +1919,21 @@ namespace SnapMeasure
                 if (rowHl.Visible)
                 {
                     int b = FocusBase(s.Mode);
-                    cHlMode.SelectedIndex = b >= 1 ? Math.Min(3, b - 1) : -1;   // an old text marker shows no mode
-                    cWhere.Visible = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate;
+                    cHlMode.SelectedIndex = Math.Max(0, Math.Min(4, b));
+                    // Inside / Outside stays in place for every mode (so nothing on the bar moves); it only matters for grayscale and pixelate
+                    cWhere.Visible = true;
+                    cWhere.Enabled = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate;
                     cWhere.SelectedIndex = s.Mode == (int)HighlightMode.Grayscale || s.Mode == (int)HighlightMode.PixelateOutside ? 1 : 0;
+                    // the highlight box has no outline of its own
+                    if (b == (int)HighlightMode.Marker) gLine.Enabled = false;
                 }
                 bool magnify = kd == ShapeKind.Highlight && s.Mode == (int)HighlightMode.Magnify;
                 rowStrength.Visible = magnify || kd == ShapeKind.Pixelate ||
                                       (kd == ShapeKind.Highlight && FocusBase(s.Mode) == (int)HighlightMode.Pixelate);
                 if (rowStrength.Visible) { strMagnify = magnify; tStr.Value = s.ShownStrength(magnify); ShowStrength(); }
-                // pixelate / magnify draw no outline of their own width: the Line group only matters for magnify's frame
-                if (rowStrength.Visible && !magnify) gLine.Visible = gFill.Visible = false;
+                // pixelate draws no outline or fill: grey the Line and Fill groups out but keep their place,
+                // so Shape, Mode and Strength stay put when the mode changes
+                if (rowStrength.Visible && !magnify) gLine.Enabled = gFill.Enabled = false;
                 rowMarkStart.Visible = s.Kind == ShapeKind.Counter;
                 rowTextStyle.Visible = s.HasTextStyle;
                 cBold.Checked = s.Bold;
@@ -1765,12 +2002,58 @@ namespace SnapMeasure
             {
                 d.FullOpen = true;
                 d.Color = stroke ? s.Stroke : s.Fill;
+                d.CustomColors = LoadCustomColors();
                 if (d.ShowDialog(this) != DialogResult.OK) return;
+                SaveCustomColors(d.CustomColors);
                 Color c = d.Color;
                 if (stroke) ApplyStyle(x => x.Stroke = c);
                 else ApplyStyle(x => { x.Fill = c; if (x.FillOpacity == 0) x.FillOpacity = 50; });
+                Settings.Set("PickedColor", (c.ToArgb() & 0xFFFFFF).ToString(CultureInfo.InvariantCulture));
+                if (pickerSwatch != null) pickerSwatch.Invalidate();
                 LoadStyle();
             }
+        }
+
+        Panel pickerSwatch;
+
+        /// <summary>The colour picker's swatch: the last colour picked (light grey before any), a pipette on top in
+        /// black or white, whichever shows on that colour.</summary>
+        static void DrawPickerSwatch(Graphics g, Rectangle r)
+        {
+            int v = Settings.GetInt("PickedColor", -1);
+            Color c = v < 0 ? Color.FromArgb(236, 238, 242) : Color.FromArgb(255, Color.FromArgb(v));
+            using (SolidBrush b = new SolidBrush(c)) g.FillRectangle(b, r);
+            bool dark = c.R * 0.299 + c.G * 0.587 + c.B * 0.114 < 140;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            GraphicsState st = g.Save();
+            g.TranslateTransform(r.X, r.Y);
+            g.ScaleTransform(r.Width / 32f, r.Height / 32f);
+            Color ink = dark ? Color.White : Color.FromArgb(36, 40, 48);
+            using (Pen p = new Pen(ink, 4.5f)) { p.StartCap = LineCap.Triangle; p.EndCap = LineCap.Round; g.DrawLine(p, 6, 26, 19, 13); }
+            using (Pen p = new Pen(ink, 3f)) { p.StartCap = p.EndCap = LineCap.Round; g.DrawLine(p, 15, 11, 21, 17); }
+            using (SolidBrush b = new SolidBrush(ink)) g.FillEllipse(b, 18, 4, 10, 10);
+            g.Restore(st);
+        }
+
+        /// <summary>The 16 custom colours of the Windows colour picker, kept between editors.</summary>
+        static int[] LoadCustomColors()
+        {
+            string[] parts = Settings.Get("CustomColors", "").Split(',');
+            List<int> list = new List<int>();
+            foreach (string p in parts)
+            {
+                int v;
+                if (int.TryParse(p, NumberStyles.Integer, CultureInfo.InvariantCulture, out v)) list.Add(v & 0xFFFFFF);
+            }
+            while (list.Count < 16) list.Add(0xFFFFFF);
+            return list.GetRange(0, 16).ToArray();
+        }
+
+        static void SaveCustomColors(int[] colors)
+        {
+            if (colors == null) return;
+            string[] s = Array.ConvertAll(colors, c => (c & 0xFFFFFF).ToString(CultureInfo.InvariantCulture));
+            Settings.Set("CustomColors", string.Join(",", s));
         }
 
         /// <summary>Which marker series the panel's 'Start at' box is for: the selected / current marker type.</summary>
@@ -1787,8 +2070,38 @@ namespace SnapMeasure
         {
             bool old = loading;
             loading = true;
-            tMarkStart.Text = MarkerLetters ? cv.Scale.MarkerLabel(0, true) : cv.Scale.MarkerStart.ToString(CultureInfo.InvariantCulture);
+            bool letters = MarkerLetters;
+            tMarkStart.Text = letters ? cv.Scale.MarkerLabel(0, true) : cv.Scale.MarkerStart.ToString(CultureInfo.InvariantCulture);
+            if (cReverse != null)
+            {
+                cReverse.Checked = letters ? cv.Scale.LetterReverse : cv.Scale.MarkerReverse;
+                cReverse.Text = Lang.T("Reverse");
+            }
             loading = old;
+        }
+
+        void ReverseEdited()
+        {
+            if (loading) return;
+            bool letters = MarkerLetters, on = cReverse.Checked;
+            if (on == (letters ? cv.Scale.LetterReverse : cv.Scale.MarkerReverse)) return;
+            cv.PushUndo(cv.Snapshot());
+            if (letters)
+            {
+                cv.Scale.LetterReverse = on;
+                if (on && cv.Scale.LetterStart <= 1) cv.Scale.LetterStart = 26;          // count down from Z
+                else if (!on && cv.Scale.LetterStart == 26) cv.Scale.LetterStart = 1;   // and back up from A
+            }
+            else
+            {
+                cv.Scale.MarkerReverse = on;
+                int n = Measure.Count(cv.Shapes, false);
+                if (on && n > 0) cv.Scale.MarkerStart = n;            // the series ends at 1
+                else if (on && cv.Scale.MarkerStart < 1) cv.Scale.MarkerStart = 1;
+                else if (!on && n > 0 && cv.Scale.MarkerStart == n) cv.Scale.MarkerStart = 1;   // back to 1, 2, 3 …
+            }
+            cv.NotifyDocChanged();
+            LoadMarker();
         }
 
         void MarkerEdited()
@@ -1807,6 +2120,8 @@ namespace SnapMeasure
             {
                 int v;
                 if (int.TryParse(t, NumberStyles.Integer, CultureInfo.InvariantCulture, out v)) start = Math.Max(0, v);
+                // a countdown can't start below the number of markers (it would go under 1)
+                if (cv.Scale.MarkerReverse) start = Math.Max(Math.Max(1, Measure.Count(cv.Shapes, false)), start);
             }
             if (start != (letters ? cv.Scale.LetterStart : cv.Scale.MarkerStart))
             {
@@ -1824,7 +2139,9 @@ namespace SnapMeasure
             int i = Array.IndexOf(ScaleInfo.Units, cv.Scale.Unit);
             cUnit.SelectedIndex = i >= 0 ? i : ScaleInfo.Units.Length - 1;
             tUpp.Text = cv.Scale.Upp.ToString("G8", CultureInfo.CurrentCulture);
+            ShowUppNote();
             nDec.Value = Math.Max(0, Math.Min(6, cv.Scale.Decimals));
+            if (cCeil != null) { cCeil.Checked = cv.Scale.Rounding == 1; cFloor.Checked = cv.Scale.Rounding == 2; }
             loading = old;
             lScale.Text = cv.Scale.Describe();
             lScale.ForeColor = cv.Scale.Calibrated ? SystemColors.ControlText : Color.DarkOrange;
@@ -1849,15 +2166,32 @@ namespace SnapMeasure
             SaveScaleDefaults();
         }
 
+        void RoundingEdited()
+        {
+            int m = cCeil.Checked ? 1 : cFloor.Checked ? 2 : 0;
+            if (m != cv.Scale.Rounding)
+            {
+                cv.PushUndo(cv.Snapshot());
+                cv.Scale.Rounding = m;
+                cv.NotifyDocChanged();
+            }
+            LoadScale();
+            SaveScaleDefaults();
+        }
+
         void SaveScaleDefaults()
         {
             Settings.Set("Decimals", cv.Scale.Decimals.ToString(CultureInfo.InvariantCulture));
+            Settings.Set("Rounding", cv.Scale.Rounding.ToString(CultureInfo.InvariantCulture));
             if (cKeepScale != null && cKeepScale.Checked)
             {
                 Settings.Set("Unit", cv.Scale.Unit);
                 Settings.Set("Upp", cv.Scale.Upp.ToString("R", CultureInfo.InvariantCulture));
             }
         }
+
+        Font totalFont;
+        Font TotalFont { get { if (totalFont == null) totalFont = new Font(lv.Font, FontStyle.Bold); return totalFont; } }
 
         void RefreshMeasurements()
         {
@@ -1870,9 +2204,10 @@ namespace SnapMeasure
                 string extra = string.IsNullOrEmpty(r.Label) ? (r.Extra ?? "") : r.Label + (string.IsNullOrEmpty(r.Extra) ? "" : " · " + r.Extra);
                 string name = r.Shape != null ? r.Name : (r.Name == "Letters" ? "ΣA" : "Σ1");     // marker totals
                 ListViewItem it = new ListViewItem(new string[] { name, r.Display, extra });
-                it.ToolTipText = r.Shape == null ? r.Name + " markers – double-click to say what they count" : "Double-click to label";
+                string full = r.Display + (extra.Length > 0 ? "  ·  " + extra : "");
+                it.ToolTipText = full + "\n" + (r.Shape == null ? r.Name + " markers – double-click to say what they count" : "Double-click to label");
                 it.Tag = r.Shape;
-                if (r.Shape == null) it.ForeColor = Color.FromArgb(0, 90, 170);
+                if (r.Shape == null) it.Font = TotalFont;      // marker totals: bold, not blue (blue = can be clicked)
                 if (r.Shape != null && r.Shape == cv.Selected) it.Selected = true;
                 lv.Items.Add(it);
             }
@@ -1952,7 +2287,7 @@ namespace SnapMeasure
         {
             string t = "X " + Math.Floor(ip.X) + "  Y " + Math.Floor(ip.Y) + " px";
             if (cv.Scale.Calibrated)
-                t += "   (" + (ip.X * cv.Scale.Upp).ToString("N" + cv.Scale.Decimals) + ", " + (ip.Y * cv.Scale.Upp).ToString("N" + cv.Scale.Decimals) + " " + cv.Scale.Unit + ")";
+                t += "   (" + cv.Scale.Num(ip.X) + ", " + cv.Scale.Num(ip.Y) + " " + cv.Scale.Unit + ")";
             lPos.Text = t;
         }
 
@@ -1964,7 +2299,7 @@ namespace SnapMeasure
 
         void Flash(string msg)
         {
-            lHint.Text = msg;
+            lHint.Text = Lang.T(msg);
             flashUntil = DateTime.Now.AddMilliseconds(3900);
             Timer t = new Timer();
             t.Interval = 4000;
@@ -2028,6 +2363,14 @@ namespace SnapMeasure
         {
             try
             {
+                // an opened project: Ctrl+S saves over that .snapm (no new picture or project)
+                if (projectPath != null)
+                {
+                    SaveTo(projectPath);
+                    if (Output.CopyPath) { try { Clipboard.SetText(projectPath); } catch { } }
+                    Flash("Saved " + Path.GetFileName(projectPath) + (Output.CopyPath ? "  (path copied)" : ""));
+                    return;
+                }
                 string dir = Settings.SaveFolder;
                 Directory.CreateDirectory(dir);
                 string ext = Output.Format;
@@ -2046,6 +2389,7 @@ namespace SnapMeasure
         }
 
         string quickBase;
+        string projectPath;      // the .snapm this editor was opened from (Ctrl+S saves over it)
         readonly DateTime captureTime = DateTime.Now;
         string captureTitle;
 

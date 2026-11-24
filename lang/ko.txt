@@ -1,0 +1,358 @@
+# SnapMeasure – 한국어 (Korean) user interface
+# One text per line: English, a Tab, Korean. "\n" is a line break. Lines starting with # are notes.
+# Texts not listed here stay in English. A text such as "Rectangle (R)" or "Width:" is also found through
+# "Rectangle" / "Width" – the key in brackets, "…" and ":" are kept.
+# Stamp words (APPROVED, DRAFT …), units and dates are content, not interface: they stay as they are.
+
+# ---- tray menu ----
+Capture region / window	영역 / 창 캡처
+Capture active window	활성 창 캡처
+Capture screen under mouse	마우스 아래 화면 캡처
+Capture all screens	모든 화면 캡처
+Capture last region again	마지막 영역 다시 캡처
+Capture region in 3 seconds	3초 후 영역 캡처
+Scrolling capture (long page)	스크롤 캡처 (긴 페이지)
+Capture text (OCR) to clipboard	텍스트 캡처 (OCR) → 클립보드
+New blank canvas	새 빈 캔버스
+Open image, PDF or project	이미지, PDF 또는 프로젝트 열기
+Open image from clipboard	클립보드에서 이미지 열기
+On-screen ruler	화면 눈금자
+On-screen protractor	화면 각도기
+Close rulers && protractors	눈금자 및 각도기 닫기
+Copy every capture to clipboard	모든 캡처를 클립보드에 복사
+Start with Windows	Windows 시작 시 실행
+Start SnapMeasure in the tray when you sign in, so the capture keys always work	로그인할 때 SnapMeasure를 트레이에서 시작하여 캡처 키를 항상 사용할 수 있습니다
+Settings (capture, output)	설정 (캡처, 출력)
+Open save folder	저장 폴더 열기
+About SnapMeasure && shortcuts	SnapMeasure 정보 및 단축키
+Exit	종료
+SnapMeasure – Print Screen to capture	SnapMeasure – Print Screen 키로 캡처
+
+# ---- editor: top bar ----
+New capture	새 캡처
+Capture a new region (Ctrl+N) · ▾ = blank canvas	새 영역 캡처 (Ctrl+N) · ▾ = 빈 캔버스
+Blank canvas	빈 캔버스
+Open	열기
+Open an image, PDF page or .snapm project (Ctrl+O)	이미지, PDF 페이지 또는 .snapm 프로젝트 열기 (Ctrl+O)
+Save	저장
+Save as	다른 이름으로 저장
+Save the picture (and an editable .snapm) to your save folder (Ctrl+S) · ▾ = Save as	그림(및 편집 가능한 .snapm)을 저장 폴더에 저장 (Ctrl+S) · ▾ = 다른 이름으로 저장
+Copy	복사
+Copy picture	그림 복사
+Copy the marked-up picture (Ctrl+C with nothing selected) · ▾ = copy text or measurements	마크업된 그림 복사 (선택 없이 Ctrl+C) · ▾ = 텍스트 또는 측정값 복사
+Copy text (OCR)	텍스트 복사 (OCR)
+Capture text (OCR)	텍스트 캡처 (OCR)
+Copy text: drag over the text (a click = all).	텍스트 복사: 텍스트 위로 드래그하세요 (클릭 = 전체).
+About SnapMeasure	SnapMeasure 정보
+Copy text from the picture (OCR)	그림에서 텍스트 복사 (OCR)
+Copy text from an area – text recognition (Shift+T)	영역에서 텍스트 복사 – 텍스트 인식 (Shift+T)
+Copy all text	모든 텍스트 복사
+Copy all typed text	입력한 모든 텍스트 복사
+Copy measurements (for Excel)	측정값 복사 (Excel용)
+Undo	실행 취소
+Redo	다시 실행
+Rotate left 90°	왼쪽으로 90° 회전
+Rotate right 90°	오른쪽으로 90° 회전
+Mirror horizontally	좌우 반전
+Mirror vertically	상하 반전
+Border	테두리
+Shadow	그림자
+Drop shadow	그림자 효과
+Torn edge	찢어진 가장자리
+Invert colours	색 반전
+Adjust	조정
+View	보기
+Zoom in	확대
+Zoom in (Ctrl++, or Ctrl+mouse wheel)	확대 (Ctrl++ 또는 Ctrl+마우스 휠)
+Zoom out	축소
+Zoom out (Ctrl+−, or Ctrl+mouse wheel)	축소 (Ctrl+− 또는 Ctrl+마우스 휠)
+Fit	맞춤
+Fit and centre the image (Home, 0, or double-click the middle mouse button)	이미지를 창에 맞추고 가운데 정렬 (Home, 0 또는 마우스 가운데 버튼 두 번 클릭)
+Actual pixels 1:1	실제 픽셀 1:1
+Zoom to area	영역 확대
+Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)	영역 확대: 보고 싶은 부분을 상자로 드래그 (Shift+Z, Esc 취소)
+Keep inside	안쪽 유지
+Keep inside the picture: drawing, moving, pasting and resizing stay within the screenshot (Ctrl+L)	그림 안쪽 유지: 그리기, 이동, 붙여넣기, 크기 조정이 스크린샷 안에서만 됩니다 (Ctrl+L)
+Panel	패널
+Show or hide the side panel: scale, measurements & counts, texts (F4)	측면 패널 표시/숨기기: 축척, 측정 및 개수, 텍스트 (F4)
+Rulers	눈금자
+Pin	고정
+Pin the picture on screen, always on top (Ctrl+P) · in the pin, Ctrl+P or double-click brings the editor back	그림을 화면 맨 위에 고정 (Ctrl+P) · 고정 창에서 Ctrl+P 또는 두 번 클릭하면 편집기로 돌아갑니다
+Measure anything on screen	화면의 무엇이든 측정
+Measure an angle on screen	화면의 각도 측정
+Settings	설정
+Settings: capture keys, what a capture does, save folder, file name, format – and About	설정: 캡처 키, 캡처 후 동작, 저장 폴더, 파일 이름, 형식 – 및 정보
+About	정보
+About SnapMeasure, shortcuts and the GitHub page	SnapMeasure 정보, 단축키 및 GitHub 페이지
+Add-ons	추가 기능
+Capture	캡처
+
+# ---- editor: tools ----
+Tools	도구
+Draw	그리기
+Measure	측정
+TEXT	텍스트
+Select / move / rotate (V)	선택 / 이동 / 회전 (V)
+Rectangle	사각형
+Rectangle: drag from corner to corner. Shift = square.	사각형: 모서리에서 모서리로 드래그. Shift = 정사각형.
+Ellipse	타원
+Ellipse / circle	타원 / 원
+Ellipse: drag from corner to corner. Shift = circle.	타원: 모서리에서 모서리로 드래그. Shift = 원.
+Circle	원
+Line	선
+Line: press at the start point.	선: 시작점에서 누르세요.
+Arrow	화살표
+Arrow (A) – right-click it for more line ends	화살표 (A) – 마우스 오른쪽 클릭으로 다른 선 끝 모양
+Arrow: press at the start point.	화살표: 시작점에서 누르세요.
+Arrow (filled)	화살표 (채움)
+Arrow (hollow)	화살표 (속 빈)
+Arrow (open)	화살표 (열림)
+Freehand	자유곡선
+Freehand, with arrowheads if you like (F)	자유곡선, 원하면 화살촉 추가 (F)
+Freehand: press and draw.	자유곡선: 누른 채로 그리세요.
+Polygon	다각형
+Polygon – any number of edges (P)	다각형 – 변의 개수 제한 없음 (P)
+Polygon: click the corners, double-click to finish.	다각형: 꼭짓점을 클릭하고, 두 번 클릭하여 마칩니다.
+Polyline (open polygon)	폴리라인 (열린 다각형)
+Polyline – an open line through any number of points, arrowheads optional (Shift+P)	폴리라인 – 여러 점을 잇는 열린 선, 화살촉 선택 가능 (Shift+P)
+Polyline: click the points, double-click to finish.	폴리라인: 점을 클릭하고, 두 번 클릭하여 마칩니다.
+Text	텍스트
+Text – click and type, or drag a box (T)	텍스트 – 클릭 후 입력하거나 상자를 드래그 (T)
+Text: click and type, or drag a box.	텍스트: 클릭 후 입력하거나 상자를 드래그하세요.
+Text box	텍스트 상자
+Speech bubble	말풍선
+Speech bubble: drag or click, then type.	말풍선: 드래그하거나 클릭한 뒤 입력하세요.
+Note (not printed)	메모 (인쇄 안 됨)
+Note – shown here only, not printed (O)	메모 – 여기에만 표시, 인쇄되지 않음 (O)
+Note: click where it goes (never printed).	메모: 놓을 위치를 클릭하세요 (인쇄되지 않음).
+Stamp	스탬프
+Stamp: Approved / Revise / Draft / For construction … (Z)	스탬프: 승인 / 수정 / 초안 / 시공용 … (Z)
+Stamp: click where it goes.	스탬프: 놓을 위치를 클릭하세요.
+Stamp type – sets the word and colour (double-click a stamp to edit its text)	스탬프 종류 – 문구와 색을 정합니다 (스탬프를 두 번 클릭하면 문구 편집)
+Revision cloud	수정 구름
+Revision cloud, with or without a callout (U)	수정 구름, 콜아웃 포함 또는 없이 (U)
+Cloud	구름
+Cloud: drag around the change.	구름: 변경 부분을 둘러 드래그하세요.
+Callout	콜아웃
+No callout	콜아웃 없음
+Revision triangle	수정 삼각형
+Callout on a leader: a revision triangle with a number, or a text box (double-click to edit the text)	지시선 콜아웃: 번호가 있는 수정 삼각형 또는 텍스트 상자 (두 번 클릭하여 텍스트 편집)
+Highlight	하이라이트
+Highlight text	텍스트 강조
+Highlighter pen	형광펜
+Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)	형광펜: 마커처럼 텍스트 위를 드래그, Shift = 직선 (Shift+H)
+Highlighter: drag over the text. Shift = straight.	형광펜: 텍스트 위로 드래그하세요. Shift = 직선.
+Text markup	텍스트 마크업
+Text markup: drag over a line of text.	텍스트 마크업: 텍스트 줄 위로 드래그하세요.
+Focus: highlight box, spotlight, grayscale, magnify or pixelate, in several shapes; Strength slider for magnify / pixelate (H, B = pixelate)	포커스: 하이라이트 상자, 스포트라이트, 흑백, 확대, 모자이크를 여러 모양으로; 확대/모자이크는 강도 슬라이더 (H, B = 모자이크)
+Focus: drag over the area to bring out.	포커스: 강조할 영역 위로 드래그하세요.
+Spotlight	스포트라이트
+Grayscale	흑백
+Magnify	확대경
+Pixelate	모자이크
+Pixelate: drag over what to hide.	모자이크: 가릴 부분 위로 드래그하세요.
+Crop	자르기
+Crop: drag the part to keep, then press Enter.	자르기: 남길 부분을 드래그한 뒤 Enter를 누르세요.
+Dimension	치수
+Dimension: press at the start point.	치수: 시작점에서 누르세요.
+Area	면적
+Area / perimeter: click the corners, show area, perimeter or both (M; Q = perimeter only)	면적 / 둘레: 꼭짓점을 클릭, 면적·둘레·둘 다 표시 (M, Q = 둘레만)
+Area: click the corners, double-click to finish.	면적: 꼭짓점을 클릭하고, 두 번 클릭하여 마칩니다.
+Area + perimeter	면적 + 둘레
+Area only	면적만
+Perimeter only	둘레만
+Cut-out (uses the area's or polygon's style)	잘라내기 (면적 또는 다각형의 스타일 사용)
+Cut-out: subtract an opening from an area, or make a hollow in a polygon (X)	잘라내기: 면적에서 개구부를 빼거나 다각형에 구멍을 만듭니다 (X)
+Cut-out: click the corners of the opening inside an area, or of the hollow inside a polygon.	잘라내기: 면적 안 개구부 또는 다각형 안 구멍의 꼭짓점을 클릭하세요.
+Length (open)	길이 (열림)
+Length: path along a run; tick Closed for a closed perimeter (W)	길이: 경로를 따라 측정, 닫힌 둘레는 '닫힘' 선택 (W)
+Length: click along the run, double-click to finish.	길이: 경로를 따라 클릭하고, 두 번 클릭하여 마칩니다.
+Path length	경로 길이
+Angle	각도
+Angle – 3 points: arm, vertex, arm (G)	각도 – 3점: 변, 꼭짓점, 변 (G)
+Angle: click the end of the first arm.	각도: 첫 번째 변의 끝을 클릭하세요.
+Angle: click the corner. Shift = 45° steps.	각도: 꼭짓점을 클릭하세요. Shift = 45° 단위.
+Angle: click the end of the second arm. Shift = 45°, 90°, 135° …	각도: 두 번째 변의 끝을 클릭하세요. Shift = 45°, 90°, 135° …
+Arc	호
+Arc – 3 points: start, a point on the arc, end (Shift+L)	호 – 3점: 시작, 호 위의 점, 끝 (Shift+L)
+Arc: click the start.	호: 시작점을 클릭하세요.
+Radius / diameter	반지름 / 지름
+Radius / diameter – 3 points on a curve or circle (Shift+R)	반지름 / 지름 – 곡선이나 원 위의 3점 (Shift+R)
+Radius / diameter: click the start.	반지름 / 지름: 시작점을 클릭하세요.
+Coordinate point	좌표점
+Coordinates: first click = origin 0,0, then points show X / Y (I)	좌표: 첫 클릭 = 원점 0,0, 이후 점은 X / Y 표시 (I)
+Coordinates: click the origin (0,0).	좌표: 원점 (0,0)을 클릭하세요.
+Number marker	숫자 마커
+Number marker 1, 2, 3 … – counts (N)	숫자 마커 1, 2, 3 … – 개수 세기 (N)
+Numbers: click each item to count it.	숫자: 세려는 항목을 하나씩 클릭하세요.
+Letter marker	문자 마커
+Letter marker A, B, C … – counts (Shift+N)	문자 마커 A, B, C … – 개수 세기 (Shift+N)
+Letters: click each item to count it.	문자: 세려는 항목을 하나씩 클릭하세요.
+Calibrate from a known length	알려진 길이로 보정
+Calibrate scale from a known length (K)	알려진 길이로 축척 보정 (K)
+Calibrate: press at the start point.	보정: 시작점에서 누르세요.
+Match properties: select a shape, then click the shapes to give its look (Ctrl+Shift+M; Esc or right-click ends)	속성 일치: 도형을 선택한 뒤 같은 모양을 줄 도형을 클릭 (Ctrl+Shift+M, Esc 또는 오른쪽 클릭으로 종료)
+Click a shape to select it. Drag a box to select several.	도형을 클릭하여 선택합니다. 상자를 드래그하면 여러 개를 선택합니다.
+Pick a tool or shape	도구 또는 도형을 고르세요
+selected	선택됨
+SnapMeasure is running	SnapMeasure 실행 중
+Press {0} to capture. Right-click this icon for more.	{0} 키를 눌러 캡처합니다. 다른 기능은 이 아이콘을 마우스 오른쪽 버튼으로 클릭하세요.
+Ready. These keys are taken by another app (e.g. Windows Snipping Tool or Greenshot): {0}.	준비되었습니다. 다음 키는 다른 앱(예: Windows 캡처 도구, Greenshot)이 사용 중입니다: {0}.
+Pick other keys in Settings → General.	설정 → 일반에서 다른 키를 고르세요.
+
+# ---- editor: style bar ----
+Style	스타일
+Fill	채우기
+Line colour (Alt+L) · quick colours: Alt+1 … Alt+9	선 색 (Alt+L) · 빠른 색: Alt+1 … Alt+9
+Fill colour (Alt+F) · quick colours: Alt+Shift+1 … 9 · Alt+Shift+0 = no fill	채우기 색 (Alt+F) · 빠른 색: Alt+Shift+1 … 9 · Alt+Shift+0 = 채우기 없음
+Red – click = line (Alt+1), right-click = fill (Alt+Shift+1)	빨강 – 클릭 = 선 (Alt+1), 오른쪽 클릭 = 채우기 (Alt+Shift+1)
+Orange – click = line (Alt+2), right-click = fill (Alt+Shift+2)	주황 – 클릭 = 선 (Alt+2), 오른쪽 클릭 = 채우기 (Alt+Shift+2)
+Yellow – click = line (Alt+3), right-click = fill (Alt+Shift+3)	노랑 – 클릭 = 선 (Alt+3), 오른쪽 클릭 = 채우기 (Alt+Shift+3)
+Green – click = line (Alt+4), right-click = fill (Alt+Shift+4)	초록 – 클릭 = 선 (Alt+4), 오른쪽 클릭 = 채우기 (Alt+Shift+4)
+Blue – click = line (Alt+5), right-click = fill (Alt+Shift+5)	파랑 – 클릭 = 선 (Alt+5), 오른쪽 클릭 = 채우기 (Alt+Shift+5)
+Purple – click = line (Alt+6), right-click = fill (Alt+Shift+6)	보라 – 클릭 = 선 (Alt+6), 오른쪽 클릭 = 채우기 (Alt+Shift+6)
+Black – click = line (Alt+7), right-click = fill (Alt+Shift+7)	검정 – 클릭 = 선 (Alt+7), 오른쪽 클릭 = 채우기 (Alt+Shift+7)
+White – click = line (Alt+8), right-click = fill (Alt+Shift+8)	흰색 – 클릭 = 선 (Alt+8), 오른쪽 클릭 = 채우기 (Alt+Shift+8)
+Grey – click = line (Alt+9), right-click = fill (Alt+Shift+9)	회색 – 클릭 = 선 (Alt+9), 오른쪽 클릭 = 채우기 (Alt+Shift+9)
+Line width	선 두께
+Line opacity	선 불투명도
+Fill opacity (for pictures: picture opacity)	채우기 불투명도 (그림: 그림 불투명도)
+Line style: solid, dashed, dotted, dash-dot, long dash or cloud	선 스타일: 실선, 파선, 점선, 일점쇄선, 긴 파선 또는 구름
+Solid	실선
+Dashed	파선
+Dotted	점선
+Dash-dot	일점쇄선
+Long dash	긴 파선
+Line end at the start point (also on the right-click menu)	시작점의 선 끝 모양 (오른쪽 클릭 메뉴에도 있음)
+Line end at the end point (also on the right-click menu)	끝점의 선 끝 모양 (오른쪽 클릭 메뉴에도 있음)
+None	없음
+Dot	점
+Tick	틱
+Slash	사선
+Diamond	마름모
+Square	정사각형
+Triangle	삼각형
+Text size	글자 크기
+Bold	굵게
+Italic	기울임
+Underline	밑줄
+Strike out	취소선
+Align left	왼쪽 정렬
+Centre	가운데
+Align right	오른쪽 정렬
+Frame	틀
+Frame round the text, in the line colour and width	텍스트 둘레의 틀 (선 색과 두께 사용)
+Frame width – 0 = no frame	틀 두께 – 0 = 틀 없음
+Rounded	둥근 모서리
+Closed	닫힘
+Shape	모양
+Shape of the highlight	하이라이트 모양
+Mode	모드
+Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate	하이라이트 = 채우기 색의 반투명 상자 · 스포트라이트, 흑백, 확대경, 모자이크
+Inside	안쪽
+Outside	바깥쪽
+Gray or pixelate the marked area itself (inside) or everything around it (outside)	표시한 영역 자체(안쪽) 또는 그 주변 전체(바깥쪽)를 흑백 또는 모자이크로
+Strength	강도
+Strength: how much to magnify, or how big the pixel blocks are	강도: 확대 배율 또는 모자이크 블록 크기
+Show	표시
+What the label shows	라벨에 표시할 내용
+Diameter	지름
+Radius	반지름
+Diameter + Arc length	지름 + 호 길이
+Radius + Arc length	반지름 + 호 길이
+Arc length	호 길이
+Start at	시작 값
+First number (or letter) of this marker series	이 마커 시리즈의 첫 번호(또는 문자)
+Reverse	역순
+Reverse (Z→A)	역순 (Z→A)
+Reverse (10→1)	역순 (10→1)
+Count down: Z, Y, X … A for letters, 10, 9, 8 … 1 for numbers	거꾸로 세기: 문자는 Z, Y, X … A, 숫자는 10, 9, 8 … 1
+Date	날짜
+No date	날짜 없음
+Date line on the stamp (keeps the stamp's own date, just changes how it is written)	스탬프의 날짜 줄 (스탬프의 날짜는 그대로, 표시 형식만 바뀝니다)
+Custom	사용자 지정
+Start	시작
+End	끝
+
+# ---- editor: side panel and status ----
+Scale	축척
+Measurements & counts	측정 및 개수
+Texts	텍스트
+Unit	단위
+Decimals	소수 자릿수
+Round	반올림
+Ceil	올림
+Floor	내림
+Round every value up (ceiling) at the chosen decimals	모든 값을 선택한 소수 자릿수에서 올림
+Round every value down (floor) at the chosen decimals	모든 값을 선택한 소수 자릿수에서 내림
+Keep this scale for new captures	새 캡처에도 이 축척 유지
+Drawing scale (1:50 on A1 …) / saved scales	도면 축척 (A1에서 1:50 …) / 저장된 축척
+Scale: not set (pixels)	축척: 설정 안 됨 (픽셀)
+Value	값
+Label / extra	라벨 / 추가
+Count	개수
+Drag to make the panel wider or narrower · double-click = normal width	드래그하여 패널 너비 조정 · 두 번 클릭 = 기본 너비
+
+# ---- settings ----
+SnapMeasure settings	SnapMeasure 설정
+General	일반
+Output	출력
+OK	확인
+Cancel	취소
+Capture keys – click a box and press the keys you want. Delete or Backspace clears it.	캡처 키 – 상자를 클릭하고 원하는 키를 누르세요. Delete 또는 Backspace로 지웁니다.
+Key	키
+Also	추가 키
+Default keys	기본 키
+Tool icon size	도구 아이콘 크기
+Small (16 px)	작게 (16 px)
+Medium (20 px)	보통 (20 px)
+Large (24 px)	크게 (24 px)
+(new editor windows)	(새 편집기 창)
+Editor: start with "Keep inside" locked (Ctrl+L switches it in the editor)	편집기: "안쪽 유지"를 켠 상태로 시작 (편집기에서 Ctrl+L로 전환)
+Language	언어
+(new windows; restart for the tray menu)	(새 창에 적용, 트레이 메뉴는 다시 시작 후)
+After a capture (PrtSc, Ctrl+Shift+1 …)	캡처한 뒤 (PrtSc, Ctrl+Shift+1 …)
+Open it in the SnapMeasure editor (default)	SnapMeasure 편집기에서 열기 (기본)
+Only copy it to the clipboard	클립보드에 복사만
+Only save it to the save folder	저장 폴더에 저장만
+Copy it and save it (no editor)	복사하고 저장 (편집기 없이)
+When the editor opens, also copy the capture to the clipboard	편집기가 열릴 때 캡처를 클립보드에도 복사
+Capture the mouse pointer	마우스 포인터 캡처
+Play a camera sound	카메라 소리 재생
+Show a notification when a capture is copied or saved	캡처를 복사하거나 저장하면 알림 표시
+Show the magnifier while picking an area	영역을 고를 때 돋보기 표시
+milliseconds to wait before capturing (lets menus close)	캡처 전 대기 시간(밀리초, 메뉴가 닫히도록)
+Editor: match the capture size (open the window just big enough for the picture at 100 %)	편집기: 캡처 크기에 맞춤 (그림이 100 %로 보이는 크기로 창 열기)
+Save folder	저장 폴더
+File name	파일 이름
+Example	예시
+Image format	이미지 형식
+JPEG quality	JPEG 품질
+PNG – best quality, keeps transparency	PNG – 최고 품질, 투명도 유지
+JPG – smaller files	JPG – 더 작은 파일
+BMP – uncompressed	BMP – 무압축
+GIF – 256 colours	GIF – 256색
+TIFF – lossless, for print / archives	TIFF – 무손실, 인쇄 / 보관용
+PDF – one page, for documents	PDF – 한 페이지, 문서용
+ICO – Windows icon (max 256 px)	ICO – Windows 아이콘 (최대 256 px)
+Ctrl+S also saves an editable .snapm project next to the picture	Ctrl+S로 그림 옆에 편집 가능한 .snapm 프로젝트도 저장
+Copy the file path to the clipboard after saving	저장 후 파일 경로를 클립보드에 복사
+Show .snapm projects with their picture in File Explorer (thumbnails and preview pane)	파일 탐색기에서 .snapm 프로젝트를 그림으로 표시 (미리 보기 아이콘 및 미리 보기 창)
+Also in the preview pane (Alt+P), and for projects from other PCs – Windows asks for administrator approval once	미리 보기 창(Alt+P) 및 다른 PC의 프로젝트에도 표시 – Windows에서 관리자 승인을 한 번 요청합니다
+Check for updates	업데이트 확인
+Report a problem or ask for a feature	문제 신고 또는 기능 요청
+Microsoft Store	Microsoft Store
+Portable screenshot, measuring & quantity takeoff tool	휴대용 스크린샷, 측정 및 물량 산출 도구
+Installed from the Microsoft Store – updates arrive through the Store.	Microsoft Store에서 설치됨 – 업데이트는 Store를 통해 제공됩니다.
+SnapMeasure in the Microsoft Store: signed, and it updates itself	Microsoft Store의 SnapMeasure: 서명되어 있고 자동으로 업데이트됩니다
+Checking GitHub…	GitHub 확인 중…
+
+# ---- messages ----
+Countdown reached 1 – the start number was raised to	카운트다운이 1에 도달하여 시작 번호를 올렸습니다:
+Letters ran past A – starting again at Z	문자가 A를 지나 Z부터 다시 시작합니다
+Drawing scales	도면 축척
+Set the scale from the drawing (1:50 on A1 …), or use a saved scale	도면에서 축척 설정 (A1에서 1:50 …) 또는 저장된 축척 사용
+More colours – click = line colour (Alt+L), right-click = fill colour (Alt+F)	더 많은 색 – 클릭 = 선 색 (Alt+L), 오른쪽 클릭 = 채우기 색 (Alt+F)
+Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)	실제 픽셀 1:1 – 화면 픽셀 하나에 그림 픽셀 하나 (Ctrl+1)
+Rulers along the top and left edge (Ctrl+R)	위쪽과 왼쪽 가장자리의 눈금자 (Ctrl+R)
+Actual pixels	실제 픽셀

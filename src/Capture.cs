@@ -14,6 +14,20 @@ namespace SnapMeasure
         /// <summary>Settings → Capture → "Capture the mouse pointer".</summary>
         public static bool IncludeCursor;
 
+        /// <summary>The window that was active when the capture key was pressed (SnapMeasure may take the focus
+        /// for a moment before grabbing, see App.HideCadCrosshair).</summary>
+        public static IntPtr Target;
+        public static IntPtr TargetOrForeground { get { return Target != IntPtr.Zero ? Target : Native.GetForegroundWindow(); } }
+
+        /// <summary>CAD programs that draw their own crosshair into the drawing (not a Windows pointer): it is only
+        /// removed when the program loses the focus.</summary>
+        static readonly string[] CadApps = { "acad", "acadlt", "bricscad", "zwcad", "gcad", "draftsight", "revit", "ustation", "rhino" };
+
+        public static bool IsCadApp(string processName)
+        {
+            return Array.IndexOf(CadApps, (processName ?? "").ToLowerInvariant()) >= 0;
+        }
+
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
         struct CURSORINFO { public int cbSize; public int flags; public IntPtr hCursor; public Point pt; }
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -144,7 +158,7 @@ namespace SnapMeasure
             screenRect = Rectangle.Empty;
             title = "";
             Rectangle vs = VirtualBounds;
-            string active = Native.WindowTitle(Native.GetForegroundWindow());   // the app you were in when you pressed the key
+            string active = Native.WindowTitle(TargetOrForeground);   // the app you were in when you pressed the key
             List<string> titles = new List<string>();
             List<Rectangle> wins = Native.GetVisibleWindowRects(titles);
             using (Bitmap shot = Grab(vs))

@@ -25,6 +25,20 @@ namespace SnapMeasure
         [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
         [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+        /// <summary>Process name of a window's owner (e.g. "acadlt"), or "" if unknown.</summary>
+        public static string ProcessNameOf(IntPtr hWnd)
+        {
+            try
+            {
+                uint pid;
+                if (hWnd == IntPtr.Zero || GetWindowThreadProcessId(hWnd, out pid) == 0 || pid == 0) return "";
+                using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById((int)pid)) return p.ProcessName;
+            }
+            catch { return ""; }
+        }
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
@@ -50,6 +64,7 @@ namespace SnapMeasure
         /// </summary>
         public static Font UiFont(string family, float pt, float k, FontStyle style = FontStyle.Regular)
         {
+            if (family == "Segoe UI") family = Lang.UiFamily;          // Korean: Malgun Gothic
             return new Font(family, pt * 96f / 72f * k, style, GraphicsUnit.Pixel);
         }
 

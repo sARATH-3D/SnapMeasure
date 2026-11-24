@@ -17,6 +17,8 @@ set REFS=%REFS% /r:"%FW%\System.Runtime.dll" /r:"%FW%\System.Runtime.WindowsRunt
 set REFS=%REFS% /r:"%WM%\Windows.Foundation.winmd" /r:"%WM%\Windows.Data.winmd" /r:"%WM%\Windows.Storage.winmd"
 set REFS=%REFS% /r:"%WM%\Windows.Graphics.winmd" /r:"%WM%\Windows.Media.winmd" /r:"%WM%\Windows.Globalization.winmd" /r:"%WM%\Windows.ApplicationModel.winmd"
 set OPTS=/nologo /target:winexe /optimize+ /highentropyva+ /platform:anycpu /codepage:65001 /win32manifest:app.manifest
+rem user-interface translations (lang\<code>.txt)
+set OPTS=%OPTS% /resource:lang\ko.txt,SnapMeasure.ko.txt
 
 if not exist app.ico (
   "%CSC%" %OPTS% %REFS% /out:SnapMeasure.exe src\*.cs || exit /b 1

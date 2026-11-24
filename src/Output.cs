@@ -103,7 +103,7 @@ namespace SnapMeasure
                         case "capturetime": return when.ToString(string.IsNullOrEmpty(fmt) ? "yyyy-MM-dd_HH-mm-ss" : fmt, CultureInfo.InvariantCulture);
                         case "date": return when.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                         case "time": return when.ToString("HH-mm-ss", CultureInfo.InvariantCulture);
-                        case "title": return title ?? "";
+                        case "title": return Regex.Replace(title ?? "", @"\.(snapm|png|jpe?g|bmp|gif|tiff?|pdf|webp)$", "", RegexOptions.IgnoreCase);
                         case "n": return n.ToString(string.IsNullOrEmpty(fmt) ? "D3" : fmt, CultureInfo.InvariantCulture);
                         default: return m.Value;
                     }

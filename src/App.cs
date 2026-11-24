@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.3.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.3.2.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.3.2.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -39,6 +39,8 @@ namespace SnapMeasure
                 try { MessageBox.Show("SnapMeasure hit an unexpected problem and has to close:\n\n" + (ex != null ? ex.Message : "unknown error") + "\n\nDetails: " + ErrorLog.FilePath, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
             };
             if (args.Length == 2 && args[0] == "--write-icon") { AppIcon.WriteIco(args[1]); return; }
+            // Settings → Output → preview pane: the part that needs administrator rights (registers for the machine)
+            if (args.Length >= 2 && args[0] == ShellPreview.ElevatedArg) { Environment.ExitCode = ShellPreview.MachineRegister(args); return; }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -62,6 +64,7 @@ namespace SnapMeasure
                 finally { ErrorLog.Showing = false; }
             };
             Settings.Load();
+            try { StartJitProfile(); } catch { }
 
             // started at sign-in ("Start with Windows"): stay quiet in the tray
             bool atStartup = Array.IndexOf(args, Startup.Arg) >= 0;
@@ -88,6 +91,18 @@ namespace SnapMeasure
                 foreach (string a in args) App.OpenFile(a);
                 Application.Run(tray);
             }
+        }
+
+        /// <summary>Multicore JIT: Windows remembers which code the app needed last time and compiles it on a
+        /// spare core while starting, so the tray and the first editor are ready sooner. The profile is a small
+        /// file in the temp folder; if it is missing it is simply made again.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static void StartJitProfile()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "SnapMeasure");
+            Directory.CreateDirectory(dir);
+            System.Runtime.ProfileOptimization.SetProfileRoot(dir);
+            System.Runtime.ProfileOptimization.StartProfile("SnapMeasure.jitprofile");
         }
 
         /// <summary>Store package: true when Windows started us through the StartupTask at sign-in.</summary>
@@ -184,8 +199,13 @@ namespace SnapMeasure
             Shape rad = Mk(cv, Tool.Radius, 200, 300, 300, 200, 400, 300);
             MeasureRow rr = Measure.Rows(cv.Shapes, sc, false).Find(r => r.Shape == rad);
             CultureInfo cc = CultureInfo.CurrentCulture;
-            check("Radius R / arc length", rr == null ? "-" : rr.Name + "|" + rr.Display + "|" + (rr.Perimeter ?? 0).ToString("F2", CultureInfo.InvariantCulture),
-                  "R1|" + (1.0).ToString("N2", cc) + " m|3.14");
+            // new radius shapes show the diameter (1.3.2 default); the list row follows the label
+            check("Radius Ø / arc length", rr == null ? "-" : rr.Name + "|" + rr.Display + "|" + (rr.Perimeter ?? 0).ToString("F2", CultureInfo.InvariantCulture),
+                  "R1|" + (2.0).ToString("N2", cc) + " m|3.14");
+            rad.Mode = 1;
+            MeasureRow rr1 = Measure.Rows(cv.Shapes, sc, false).Find(r => r.Shape == rad);
+            check("Radius R when set to Radius", rr1 == null ? "-" : rr1.Display, (1.0).ToString("N2", cc) + " m");
+            rad.Mode = 2;
             Shape arc = Mk(cv, Tool.Arc, 500, 300, 600, 200, 700, 300);
             List<Shape> rt5 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { rad, arc }));
             check("Arc and radius round-trip", rt5.Count + "|" + (rt5.Count == 2 ? rt5[0].Kind + "/" + rt5[1].Kind + "/" + rt5[1].Pts.Count : "-"), "2|Radius/Arc/3");
@@ -858,13 +878,112 @@ namespace SnapMeasure
                 Shape im = cv.Selected;
                 check("Picture inserted", im.Kind + "|" + P(ShapeOps.Center(im)), "Image|450.00,300.00");
                 Shape drag = im.Clone();
-                ShapeOps.DragHandle(drag, im, new Handle(PointF.Empty, HKind.Box, 4), new PointF(530, 400), false);
+                ShapeOps.DragHandle(drag, im, new Handle(PointF.Empty, HKind.Box, 4), new PointF(530, 400), true);
                 RectangleF rr2 = Geo.Rect(drag.Pts[0], drag.Pts[1]);
-                check("Picture keeps proportions", (rr2.Width / rr2.Height).ToString("F2", CultureInfo.InvariantCulture), "2.00");
+                check("Picture corner + Shift keeps proportions", (rr2.Width / rr2.Height).ToString("F2", CultureInfo.InvariantCulture), "2.00");
+                Shape drag2 = im.Clone();
+                ShapeOps.DragHandle(drag2, im, new Handle(PointF.Empty, HKind.Box, 4), new PointF(530, 400), false);
+                RectangleF rr3 = Geo.Rect(drag2.Pts[0], drag2.Pts[1]);
+                check("Picture corner stretches freely", rr3.Width.ToString("F0", CultureInfo.InvariantCulture) + "x" + rr3.Height.ToString("F0", CultureInfo.InvariantCulture), "100x110");
                 List<Shape> back3 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { ar, im }));
                 check("Heads + picture round-trip", back3.Count + "|" + back3[0].Heads + "|" + (back3[1].Img != null ? back3[1].Img.Width + "x" + back3[1].Img.Height : "none"), "2|3|40x20");
                 using (Bitmap flat = cv.Flatten(null)) flat.Save(Path.Combine(dir, "selftest_heads.png"), ImageFormat.Png);
                 cv.Shapes.Remove(ln); cv.Shapes.Remove(ar); cv.Shapes.Remove(im); cv.Selected = null;
+            }
+
+            // ---- 1.3.2: rounding, radius labels, reverse markers, project preview, language table ----
+            {
+                Func<double, string> inv = v => v.ToString("0.######", CultureInfo.InvariantCulture);
+                check("Ceil rounds up", inv(ScaleInfo.RoundTo(1.231, 2, 1)), "1.24");
+                check("Floor rounds down", inv(ScaleInfo.RoundTo(1.239, 2, 2)), "1.23");
+                check("Ceil ignores float noise", inv(ScaleInfo.RoundTo(0.1 * 3, 1, 1)) + "|" + inv(ScaleInfo.RoundTo(2.3, 2, 1)), "0.3|2.3");
+                check("Floor ignores float noise", inv(ScaleInfo.RoundTo(0.7 + 0.1, 1, 2)), "0.8");
+                check("Ceil of a negative, no -0", inv(ScaleInfo.RoundTo(-1.231, 2, 1)) + "|" + inv(ScaleInfo.RoundTo(-0.004, 2, 1)), "-1.23|0");
+                check("Nearest unchanged", inv(ScaleInfo.RoundTo(1.23456, 2, 0)), "1.23456");
+
+                ScaleInfo rs = new ScaleInfo();
+                rs.Unit = "mm"; rs.Upp = 1; rs.Decimals = 1;
+                check("Radius label: diameter", Renderer.RadiusText(2, rs, 10f, 31.4159).Replace("\n", " | "), "Ø = " + (20.0).ToString("N1") + " mm");
+                check("Radius label: diameter + arc", Renderer.RadiusText(3, rs, 10f, 31.4159).Replace("\n", " | "), "Ø = " + (20.0).ToString("N1") + " mm | Arc = " + (31.4).ToString("N1") + " mm");
+                check("Radius label: radius + arc", Renderer.RadiusText(4, rs, 10f, 31.4159).Replace("\n", " | "), "R = " + (10.0).ToString("N1") + " mm | Arc = " + (31.4).ToString("N1") + " mm");
+                check("Radius label: none", Renderer.RadiusText(5, rs, 10f, 31.4159), "");
+                rs.Rounding = 1;
+                check("Radius label rounds up", Renderer.RadiusText(1, rs, 10.01f, 0), "R = " + (10.1).ToString("N1") + " mm");
+
+                ScaleInfo mk = new ScaleInfo();
+                mk.LetterStart = 26; mk.LetterReverse = true;
+                check("Letters count down Z→A, then wrap", mk.MarkerLabel(0, true) + mk.MarkerLabel(1, true) + mk.MarkerLabel(25, true) + mk.MarkerLabel(26, true), "ZYAZ");
+                mk.MarkerStart = 10; mk.MarkerReverse = true;
+                check("Numbers count down 10→1, never below 1", mk.MarkerLabel(0, false) + "," + mk.MarkerLabel(9, false) + "," + mk.MarkerLabel(12, false), "10,1,1");
+                mk.LetterReverse = mk.MarkerReverse = false; mk.LetterStart = 1; mk.MarkerStart = 1;
+                check("Markers count up as before", mk.MarkerLabel(0, true) + mk.MarkerLabel(27, true) + "," + mk.MarkerLabel(4, false), "AAB,5");
+
+                // project keeps the new settings, and stores a preview first in the file
+                string pj = Path.Combine(dir, "selftest_132.snapm");
+                ScaleInfo ps = new ScaleInfo(); ps.Rounding = 2; ps.LetterReverse = true; ps.MarkerReverse = true; ps.LetterStart = 26; ps.MarkerStart = 9;
+                Shape pr = new Shape(); pr.Kind = ShapeKind.Rect; pr.Pts.Add(new PointF(10, 10)); pr.Pts.Add(new PointF(200, 120)); pr.Width = 6;
+                using (Bitmap pimg = new Bitmap(1600, 900, PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(pimg)) g.Clear(Color.SteelBlue);
+                    ProjectFile.Save(pj, pimg, new List<Shape> { pr }, ps);
+                }
+                ScaleInfo back132 = new ScaleInfo();
+                List<Shape> backShapes = new List<Shape>();
+                using (Bitmap bimg = ProjectFile.Load(pj, backShapes, back132)) { }
+                check("Project keeps rounding + reverse", back132.Rounding + "|" + back132.LetterReverse + "|" + back132.MarkerReverse + "|" + back132.LetterStart + "|" + back132.MarkerStart + "|" + backShapes.Count,
+                      "2|True|True|26|9|1");
+                string firstChild = "";
+                using (XmlReader xr = XmlReader.Create(pj))
+                {
+                    xr.ReadToFollowing("snapmeasure");
+                    while (xr.Read()) if (xr.NodeType == XmlNodeType.Element) { firstChild = xr.Name; break; }
+                }
+                check("Preview stored before the picture", firstChild, "preview");
+                using (FileStream fs = File.OpenRead(pj))
+                using (Bitmap pv = ProjectFile.ReadPreview(fs))
+                {
+                    Color mid = pv.GetPixel(pv.Width / 2, pv.Height / 2), edge = pv.GetPixel(Math.Min(pv.Width - 1, (int)(12 * pv.Width / 1600f)), Math.Min(pv.Height - 1, (int)(60 * pv.Height / 900f)));
+                    check("Preview size and markups", pv.Width + "x" + pv.Height + "|" + (mid.B > 100 && mid.R < 120) + "|" + (edge.R > 150 && edge.B < 100),
+                          ProjectFile.PreviewSize + "x" + (ProjectFile.PreviewSize * 900 / 1600) + "|True|True");
+                    pv.Save(Path.Combine(dir, "selftest_preview.png"), ImageFormat.Png);
+                }
+
+                // the Korean table loads and translates, keys in brackets kept; English stays as written
+                string was = SnapMeasure.Settings.Get("Language", "en");
+                SnapMeasure.Settings.Set("Language", "ko");
+                string k1 = Lang.T("Rectangle (R)"), k2 = Lang.T("Save as…"), k3 = Lang.T("no such text"), f1 = Lang.UiFamily;
+                SnapMeasure.Settings.Set("Language", "en");
+                string e1 = Lang.T("Rectangle (R)"), f2 = Lang.UiFamily;
+                SnapMeasure.Settings.Set("Language", was);
+                check("Korean table", k1 + "|" + k2 + "|" + k3 + "|" + f1, "사각형 (R)|다른 이름으로 저장…|no such text|Malgun Gothic");
+                check("English unchanged", e1 + "|" + f2, "Rectangle (R)|Segoe UI");
+                ScaleInfo sa = new ScaleInfo(); sa.Unit = "m"; sa.Upp = 0.01; sa.Decimals = 1;
+                string arcOnly = Renderer.RadiusText(6, sa, 100f, 314.159);
+                sa.Rounding = 1; string angUp = sa.Angle(33.69);
+                sa.Rounding = 2; string angDown = sa.Angle(33.69);
+                sa.Rounding = 0; sa.Decimals = 0; string angNear = sa.Angle(126.7);
+                check("Arc length only + angle decimals/rounding", arcOnly + "|" + angUp + "|" + angDown + "|" + angNear,
+                      "Arc = " + (3.1).ToString("N1") + " m|" + (33.7).ToString("N1") + "°|" + (33.6).ToString("N1") + "°|127°");
+                PointF arm = Canvas.SnapArm(new PointF(0, 0), new PointF(10, 0), new PointF(3.09f, 9.51f), 45);   // 72° → 90°
+                PointF arm2 = Canvas.SnapArm(new PointF(0, 0), new PointF(10, 10), new PointF(10, 1), 45);       // 45° arm, p at 5.7° → 0°
+                check("Angle Shift snaps to 45° steps", Math.Round(Geo.AngleAt(new PointF(10, 0), new PointF(0, 0), arm), 3) + "|" +
+                      Math.Round(Geo.AngleAt(new PointF(10, 10), new PointF(0, 0), arm2), 3) + "|" + Math.Round(Geo.Dist(new PointF(0, 0), arm), 2), "90|45|10");
+                check("CAD apps get the crosshair step", ScreenCapture.IsCadApp("acadlt") + "|" + ScreenCapture.IsCadApp("ACAD") + "|" + ScreenCapture.IsCadApp("chrome") + "|" + ScreenCapture.IsCadApp(null), "True|True|False|False");
+                // pixelate: every block solid and opaque, edges included (the outer blocks used to be half see-through)
+                using (Bitmap pz = new Bitmap(100, 60, PixelFormat.Format32bppArgb))
+                {
+                    using (Graphics g = Graphics.FromImage(pz)) { g.Clear(Color.White); g.FillRectangle(Brushes.Black, 0, 0, 4, 60); g.FillRectangle(Brushes.Black, 96, 0, 4, 60); }
+                    using (Bitmap bl = Renderer.Blocks(pz, new Rectangle(0, 0, 100, 60), 40))
+                    {
+                        Color pa = bl.GetPixel(0, 0), pb = bl.GetPixel(39, 39), pc = bl.GetPixel(99, 59), pd = bl.GetPixel(80, 40);
+                        check("Pixelate edge blocks are solid", pa.A + "|" + (pa == pb) + "|" + pc.A + "|" + (pc == pd) + "|" + pa.R, "255|True|255|True|229");
+                    }
+                }
+                Shape mkS = new Shape(); mkS.Kind = ShapeKind.Counter; mkS.FontSize = 18; mkS.Pts.Add(new PointF(100, 100));
+                Shape mkD = mkS.Clone();
+                ShapeOps.DragHandle(mkD, mkS, new Handle(PointF.Empty, HKind.Box, 4), new PointF(127, 118), false);
+                check("Marker stretches by its corner", ShapeOps.Handles(mkS, 20).Count + "|" + mkD.FontSize.ToString("F0", CultureInfo.InvariantCulture), "4|30");
+                check("Title drops file extension", Output.MakeName("${title}", DateTime.Now, "plan A.snapm", 1) + "|" + Output.MakeName("${title}", DateTime.Now, "photo.JPG", 1) + "|" + Output.MakeName("${title}", DateTime.Now, "Chrome", 1), "plan A|photo|Chrome");
             }
 
             // ---- security: hostile project files and clipboard data ----
@@ -1008,6 +1127,31 @@ namespace SnapMeasure
             t.Start();
         }
 
+        /// <summary>Builds one hidden editor and throws it away, a few seconds after the tray starts, so its code is
+        /// compiled and loaded before the first capture: the first editor then opens as fast as later ones.
+        /// Nothing is shown and nothing is saved.</summary>
+        public static void WarmUp()
+        {
+            try
+            {
+                Bitmap pic = new Bitmap(64, 64, PixelFormat.Format32bppArgb);
+                using (EditorForm f = new EditorForm(pic, "warm-up"))
+                {
+                    TouchHandles(f);       // create the windows of every bar and box, without showing them
+                    using (Bitmap shot = new Bitmap(Math.Max(1, f.Width), Math.Max(1, f.Height)))
+                        f.DrawToBitmap(shot, new Rectangle(0, 0, shot.Width, shot.Height));
+                }
+                pic.Dispose();
+            }
+            catch (Exception ex) { ErrorLog.Write("warm-up", ex); }
+        }
+
+        static void TouchHandles(Control c)
+        {
+            IntPtr h = c.Handle;
+            foreach (Control child in c.Controls) TouchHandles(child);
+        }
+
         /// <summary>The captured app's window title (e.g. "Autodesk AutoCAD LT 2026 - [plan.dwg]"), or a fallback name.</summary>
         static string Named(string windowTitle, string fallback)
         {
@@ -1083,21 +1227,70 @@ namespace SnapMeasure
             return Math.Max(0, Math.Min(10000, Settings.GetInt("CaptureDelay", 0)));
         }
 
+        /// <summary>Time AutoCAD needs to erase its crosshair after losing the focus (measured: gone within 30 ms).</summary>
+        const int CadCrosshairWait = 60;
+        static Form focusSink;
+
+        /// <summary>AutoCAD and other CAD programs draw their own crosshair into the drawing, so it lands in any screen
+        /// grab (the Windows pointer setting can't remove it). They erase it as soon as they lose the focus: take the
+        /// focus with an invisible 1×1 window for a moment (like Greenshot, whose own window is in front when it grabs).
+        /// Only for CAD programs: taking the focus would close an open menu in other apps.</summary>
+        static bool HideCadCrosshair(IntPtr target)
+        {
+            if (target == IntPtr.Zero || !ScreenCapture.IsCadApp(Native.ProcessNameOf(target))) return false;
+            if (focusSink == null || focusSink.IsDisposed)
+            {
+                focusSink = new Form();
+                focusSink.FormBorderStyle = FormBorderStyle.None;
+                focusSink.ShowInTaskbar = false;
+                focusSink.StartPosition = FormStartPosition.Manual;
+                focusSink.Bounds = new Rectangle(-32000, -32000, 1, 1);
+                focusSink.Text = "SnapMeasure";
+            }
+            focusSink.Show();
+            return Native.SetForegroundWindow(focusSink.Handle);
+        }
+
+        static void GiveFocusBack(IntPtr target)
+        {
+            try
+            {
+                if (focusSink == null || focusSink.IsDisposed) return;
+                bool ours = Native.GetForegroundWindow() == focusSink.Handle;
+                focusSink.Hide();
+                if (ours && target != IntPtr.Zero) Native.SetForegroundWindow(target);
+            }
+            catch (Exception) { }
+        }
+
         /// <summary>Runs one capture at a time. The capture delay is a timer, so the tray, editors and overlays keep
         /// working while it counts down; 'busy' stays set until the delayed capture has finished.</summary>
         static void Guard(Action a)
         {
             if (busy) return;
             busy = true;
+            ScreenCapture.Target = Native.GetForegroundWindow();
+            bool tookFocus = false;
             Action run = () =>
             {
                 try { a(); }
                 catch (Exception ex) { MessageBox.Show("Capture failed: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
-                finally { busy = false; }
+                finally
+                {
+                    // nothing of ours took over (cancelled, or copied to the clipboard): back to the app you were in
+                    if (tookFocus) GiveFocusBack(ScreenCapture.Target);
+                    ScreenCapture.Target = IntPtr.Zero;
+                    busy = false;
+                }
             };
             int ms;
-            try { ms = PreCapture(); }
-            catch { busy = false; throw; }
+            try
+            {
+                ms = PreCapture();
+                tookFocus = HideCadCrosshair(ScreenCapture.Target);
+                if (tookFocus) ms = Math.Max(ms, CadCrosshairWait);
+            }
+            catch { busy = false; ScreenCapture.Target = IntPtr.Zero; throw; }
             if (ms > 0)
             {
                 try { Later(ms, run); }
@@ -1123,7 +1316,7 @@ namespace SnapMeasure
         {
             Guard(() =>
             {
-                IntPtr h = Native.GetForegroundWindow();
+                IntPtr h = ScreenCapture.TargetOrForeground;
                 Rectangle r = h == IntPtr.Zero ? Rectangle.Empty : Native.GetWindowBounds(h);
                 r.Intersect(ScreenCapture.VirtualBounds);
                 if (r.Width < 2 || r.Height < 2) return;
@@ -1136,7 +1329,7 @@ namespace SnapMeasure
             Guard(() =>
             {
                 Rectangle r = Screen.FromPoint(Cursor.Position).Bounds;
-                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(Native.GetForegroundWindow()), "Screen " + r.Width + "×" + r.Height), r);
+                Deliver(ScreenCapture.Grab(r), Named(Native.WindowTitle(ScreenCapture.TargetOrForeground), "Screen " + r.Width + "×" + r.Height), r);
             });
         }
 
@@ -1165,7 +1358,7 @@ namespace SnapMeasure
                 if (r.Width < 2 || r.Height < 2) return;
                 List<string> titles = new List<string>();
                 List<Rectangle> wins = Native.GetVisibleWindowRects(titles);
-                string t = ScreenCapture.TitleFor(r, wins, titles, Native.WindowTitle(Native.GetForegroundWindow()));
+                string t = ScreenCapture.TitleFor(r, wins, titles, Native.WindowTitle(ScreenCapture.TargetOrForeground));
                 Deliver(ScreenCapture.Grab(r), Named(t, "Last region " + r.Width + "×" + r.Height), r);
             });
         }
@@ -1489,7 +1682,7 @@ namespace SnapMeasure
         {
             ni = new NotifyIcon();
             ni.Icon = AppIcon.Get();
-            ni.Text = "SnapMeasure – Print Screen to capture";
+            ni.Text = Lang.T("SnapMeasure – Print Screen to capture");
             ni.Visible = true;
 
             ContextMenuStrip menu = new ContextMenuStrip();
@@ -1540,12 +1733,16 @@ namespace SnapMeasure
             Item(menu, "About SnapMeasure && shortcuts…", "", ShowAbout, false).Image = Icons.Cmd("help", 16);
             Item(menu, "Exit", "", ExitApp, false).Image = Icons.Cmd("exit", 16);
             ni.ContextMenuStrip = menu;
-            App.Notify = m => { try { ni.ShowBalloonTip(3000, "SnapMeasure", m, ToolTipIcon.Info); } catch { } };
+            Lang.Apply(menu.Items);
+            App.Notify = m => { try { ni.ShowBalloonTip(3000, "SnapMeasure", Lang.T(m), ToolTipIcon.Info); } catch { } };
             ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.CaptureRegion(); };
 
             hk = new HotkeyWindow();
             hk.Pressed += id => { Action a; if (actions.TryGetValue(id, out a)) a(); };
             RegisterKeys();
+            // compile the editor in the background of start-up, unless a capture or window is already open
+            App.Later(3000, () => { if (Application.OpenForms.Count == 0) App.WarmUp(); });
+            App.Later(5000, ShellPreview.Refresh);      // .snapm thumbnails in File Explorer follow the exe if it was moved
             // a key box in Settings needs the keys itself; another SnapMeasure window may change them in the settings file
             Hotkeys.Pause = p => { if (p) hk.UnregisterAll(); else RegisterKeys(); };
             keyWatch = new System.Windows.Forms.Timer();
@@ -1555,11 +1752,11 @@ namespace SnapMeasure
 
             string first = Hotkeys.Text(Hotkeys.Get(0, 0)), alt = Hotkeys.Text(Hotkeys.Get(0, 1));
             string msg = failedKeys.Count == 0
-                ? "Press " + (first.Length > 0 ? first : alt) + " to capture. Right-click this icon for more."
-                : "Ready. These keys are taken by another app (e.g. Windows Snipping Tool or Greenshot): " + string.Join(", ", failedKeys.ToArray()) +
-                  ".\nPick other keys in Settings → General.";
+                ? string.Format(Lang.T("Press {0} to capture. Right-click this icon for more."), first.Length > 0 ? first : alt)
+                : string.Format(Lang.T("Ready. These keys are taken by another app (e.g. Windows Snipping Tool or Greenshot): {0}."), string.Join(", ", failedKeys.ToArray())) +
+                  "\n" + Lang.T("Pick other keys in Settings → General.");
             if (!App.QuietStart || failedKeys.Count > 0)
-                ni.ShowBalloonTip(5000, "SnapMeasure is running", msg, failedKeys.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
+                ni.ShowBalloonTip(5000, Lang.T("SnapMeasure is running"), msg, failedKeys.Count == 0 ? ToolTipIcon.Info : ToolTipIcon.Warning);
         }
 
         ToolStripMenuItem[] keyItems;
@@ -1664,40 +1861,85 @@ namespace SnapMeasure
     {
         public static string Shortcuts(string failed)
         {
+            // one shortcut per line, keys in a column of their own: the box is narrow and must not wrap a line
+            // in the middle (that broke the columns); grouped like the editor's tool column
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("CAPTURE   (your keys – change them in Settings → General)");
+            Action<string, string> row = (key, what) => sb.AppendLine("  " + key.PadRight(KeyCol) + what);
+            sb.AppendLine("Capture – your keys, set in Settings → General");
             for (int i = 0; i < Hotkeys.Ids.Length; i++)
             {
                 string a = Hotkeys.Text(Hotkeys.Get(i, 0)), b = Hotkeys.Text(Hotkeys.Get(i, 1));
                 string keys = a.Length > 0 && b.Length > 0 ? a + " / " + b : (a + b);
-                sb.AppendLine("  " + (keys.Length > 0 ? keys : "(no key)").PadRight(28) + Hotkeys.Labels[i] + (i == 4 ? "  (Esc or Stop = finish)" : ""));
+                row(keys.Length > 0 ? keys : "(no key)", Hotkeys.Labels[i]);
             }
+            row("Esc", "finish a scrolling capture");
             if (!string.IsNullOrEmpty(failed)) sb.AppendLine("  Not available (used by another app): " + failed);
             sb.AppendLine();
-            sb.AppendLine("MEASURE & QUANTIFY");
-            sb.AppendLine("  D Dimension   M Area   X Cut-out (opening in an area, hollow in a polygon)   W Path length");
-            sb.AppendLine("  Q Perimeter   G Angle   K Calibrate scale   N / Shift+N count markers");
-            sb.AppendLine("  Double-click a measurement or marker = label it · panel → Copy measurements (Excel)");
+            sb.AppendLine("Measure");
+            row("K", "calibrate the scale");
+            row("D", "dimension");
+            row("W  /  Q", "path length  /  perimeter");
+            row("M", "area");
+            row("X", "cut-out: an opening, or a hollow in a polygon");
+            row("G", "angle (Shift = 45° steps)");
+            row("Shift+R", "radius / diameter / arc length");
+            row("I", "coordinates");
+            row("Double-click", "label a measurement or marker");
             sb.AppendLine();
-            sb.AppendLine("MARK UP");
-            sb.AppendLine("  P Polygon   H Highlight   Shift+H Highlighter pen   Y Text markup (underline / strike / highlight)");
-            sb.AppendLine("  R Rectangle   E Ellipse   U Revision cloud   L Line   A Arrow   F Freehand");
-            sb.AppendLine("  T Text   S Speech bubble   Z Stamp   O Note (not printed)");
-            sb.AppendLine("  Right-click a line / arrow / dimension = start & end heads");
-            sb.AppendLine("  Shift+T Copy text from an area (OCR)   B Pixelate   C Crop (Delete = remove)");
+            sb.AppendLine("Count");
+            row("N  /  Shift+N", "number markers  /  letter markers");
             sb.AppendLine();
-            sb.AppendLine("  Ctrl+A select all   Ctrl+C/X/V copy, cut, paste shapes   Ctrl+D duplicate");
-            sb.AppendLine("  Ctrl+] / Ctrl+[ forward / backward   (+Shift = front / back)   Ctrl+R rulers");
+            sb.AppendLine("Draw");
+            row("A  /  L", "arrow  /  line");
+            row("Shift+P", "polyline");
+            row("Shift+L", "arc");
+            row("F", "freehand");
+            row("R  /  E", "rectangle  /  ellipse");
+            row("P", "polygon");
+            row("U", "revision cloud");
             sb.AppendLine();
-            sb.AppendLine("  Home = fit & centre   Shift = 15° / square   Alt = no snapping");
-            sb.AppendLine("  Ctrl+wheel = zoom   Space+drag or middle mouse = pan");
-            sb.AppendLine("  Alt+1..9 line colour   Alt+Shift+1..9 fill colour   Alt+L / Alt+F pickers");
-            sb.AppendLine("  Ctrl+S save picture (+ .snapm)   Ctrl+Shift+S save as   Ctrl+P pin   F4 scale panel");
-            sb.AppendLine("  Ctrl+L keep inside (lock)   In a pin: R / Shift+R rotate, H mirror, V flip, C crop");
+            sb.AppendLine("Highlight");
+            row("H", "focus: highlight, spotlight, gray, magnify");
+            row("B", "pixelate");
+            row("Shift+H", "highlighter pen");
+            sb.AppendLine();
+            sb.AppendLine("Text");
+            row("T", "text");
+            row("S", "speech bubble");
+            row("Z", "stamp");
+            row("O", "note (not printed)");
+            row("Shift+T", "copy text from an area (OCR)");
+            sb.AppendLine();
+            sb.AppendLine("Edit");
+            row("C", "crop (Delete = remove the crop)");
+            row("Ctrl+A", "select all");
+            row("Ctrl+C / X / V", "copy, cut, paste shapes");
+            row("Ctrl+D", "duplicate");
+            row("Ctrl+] / Ctrl+[", "forward / backward (+Shift = front / back)");
+            row("Ctrl+Shift+M", "match properties");
+            row("Alt+1 … 9", "line colour (Alt+Shift = fill colour)");
+            row("Alt+L / Alt+F", "line / fill colour picker");
+            sb.AppendLine();
+            sb.AppendLine("View and save");
+            row("Home", "fit and centre");
+            row("Ctrl+wheel", "zoom");
+            row("Space+drag", "pan (or the middle mouse button)");
+            row("Shift", "15° steps, squares and circles");
+            row("Alt", "no snapping");
+            row("Ctrl+R", "rulers");
+            row("F4", "scale panel");
+            row("Ctrl+L", "keep inside the picture (lock)");
+            row("Ctrl+S", "save the picture (and the .snapm)");
+            row("Ctrl+Shift+S", "save as");
+            row("Ctrl+P", "pin to the screen");
+            row("R / H / V / C", "in a pin: rotate, mirror, flip, crop");
             sb.AppendLine();
             sb.AppendLine("Settings file: " + Settings.FilePath);
             return sb.ToString();
         }
+
+        /// <summary>Width of the keys column (characters): the longest capture keys, "Shift+PrtSc / Ctrl+Shift+4".</summary>
+        const int KeyCol = 28;
     }
 
     /// <summary>Portable settings: SnapMeasure.ini next to the exe (falls back to %APPDATA% if that folder is read-only).</summary>
@@ -2128,7 +2370,18 @@ namespace SnapMeasure
             f.AutoScaleMode = AutoScaleMode.None;
             f.Font = Native.UiFont("Segoe UI", 9f, k);
             f.ClientSize = new Size((int)(w * k), (int)(h * k));
+            f.Load += (s, e) => Lang.Apply(f, null);       // translated once all its boxes and buttons are in
             return f;
+        }
+
+        /// <summary>A tick box with a long text: a fixed box the text wraps in (an auto-sized tick box never wraps,
+        /// it runs past the edge of the tab), the tick next to the first line.</summary>
+        static void WrapBox(CheckBox c, Rectangle bounds)
+        {
+            c.AutoSize = false;
+            c.CheckAlign = ContentAlignment.TopLeft;
+            c.TextAlign = ContentAlignment.TopLeft;
+            c.Bounds = bounds;
         }
 
         /// <summary>
@@ -2227,13 +2480,13 @@ namespace SnapMeasure
         {
             float k = K(owner);
             Func<float, int> S = v => (int)Math.Round(v * k);
-            using (Form f = Base("SnapMeasure settings", k, 560, 470))
+            using (Form f = Base("SnapMeasure settings", k, 560, 520))
             {
                 if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
                 f.Icon = AppIcon.Get();
                 f.ShowIcon = true;
                 TabControl tabs = new TabControl();
-                tabs.SetBounds(S(8), S(8), S(544), S(408));
+                tabs.SetBounds(S(8), S(8), S(544), S(458));
                 TabPage tGen = new TabPage("General"), tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tAbout = new TabPage("About");
                 tabs.TabPages.Add(tGen); tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tAbout);
                 f.Controls.Add(tabs);
@@ -2278,7 +2531,16 @@ namespace SnapMeasure
                     CheckBox cLock = new CheckBox(); cLock.Name = "lock"; cLock.AutoSize = true; cLock.Location = new Point(S(12), S(348));
                     cLock.Text = "Editor: start with \"Keep inside\" locked (Ctrl+L switches it in the editor)";
                     cLock.Checked = SnapMeasure.Settings.GetBool("LockInside", false);
-                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock });
+                    Label lLang = new Label(); lLang.Text = "Language"; lLang.AutoSize = true; lLang.Location = new Point(S(12), S(382));
+                    ComboBox lang = new ComboBox(); lang.Name = "lang"; lang.DropDownStyle = ComboBoxStyle.DropDownList;
+                    lang.Font = new Font("Malgun Gothic", f.Font.Size, GraphicsUnit.Pixel);     // shows 한국어 in English mode too
+                    lang.Items.AddRange(Lang.Names);
+                    lang.SelectedIndex = Math.Max(0, Array.IndexOf(Lang.Codes, Lang.Code));
+                    lang.SetBounds(S(230), S(378), S(140), S(26));
+                    Label lLangN = new Label(); lLangN.Text = "(new windows; restart for the tray menu)"; lLangN.AutoSize = true;
+                    lLangN.ForeColor = Color.FromArgb(90, 90, 90); lLangN.Location = new Point(S(378), S(382));
+                    lLangN.MaximumSize = new Size(S(150), 0);
+                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock, lLang, lang, lLangN });
                 }
 
                 // ---------- Capture ----------
@@ -2309,8 +2571,8 @@ namespace SnapMeasure
                     nd.SetBounds(S(12), S(284), S(80), S(26));
                     Label ld = new Label(); ld.Text = "milliseconds to wait before capturing (lets menus close)"; ld.AutoSize = true; ld.Location = new Point(S(98), S(287));
                     Label sep2 = new Label(); sep2.BorderStyle = BorderStyle.Fixed3D; sep2.SetBounds(S(12), S(320), S(510), 2);
-                    CheckBox cMatch = new CheckBox(); cMatch.Name = "match"; cMatch.Text = "Editor: match the capture size (open the window just big enough for the picture at 100 %)";
-                    cMatch.AutoSize = true; cMatch.MaximumSize = new Size(S(510), 0); cMatch.Location = new Point(S(12), S(332));
+                    CheckBox cMatch = new CheckBox(); cMatch.Name = "match"; cMatch.Text = "Editor: match the capture size (open the window just big enough for the picture at 100 %)";
+                    WrapBox(cMatch, new Rectangle(S(12), S(332), S(510), S(40)));
                     cMatch.Checked = SnapMeasure.Settings.GetBool("MatchCaptureSize", false);
                     foreach (Control c in new Control[] { cClip, sep, cCur, cSnd, cNot, cMag, nd, ld, sep2, cMatch }) tCap.Controls.Add(c);
                 }
@@ -2358,6 +2620,14 @@ namespace SnapMeasure
                 proj.AutoSize = true; proj.Location = new Point(S(14), S(186)); proj.Checked = Output.SaveProject;
                 CheckBox copy = new CheckBox(); copy.Text = "Copy the file path to the clipboard after saving";
                 copy.AutoSize = true; copy.Location = new Point(S(14), S(212)); copy.Checked = Output.CopyPath;
+                CheckBox explorer = new CheckBox(); explorer.Text = "Show .snapm projects with their picture in File Explorer (thumbnails and preview pane)";
+                explorer.AutoSize = true; explorer.MaximumSize = new Size(S(510), 0); explorer.Location = new Point(S(14), S(238));
+                explorer.Checked = ShellPreview.Supported && ShellPreview.IsOn; explorer.Enabled = ShellPreview.Supported;
+                if (!ShellPreview.Supported) explorer.Text += " – not in the Store version yet";
+                bool paneWas = ShellPreview.Supported && ShellPreview.PaneIsOn;
+                CheckBox pane = new CheckBox(); pane.Text = "Also in the preview pane (Alt+P), and for projects from other PCs – Windows asks for administrator approval once";
+                WrapBox(pane, new Rectangle(S(34), S(262), S(490), S(40)));
+                pane.Checked = paneWas; pane.Enabled = ShellPreview.Supported;
 
                 Action update = () =>
                 {
@@ -2371,7 +2641,7 @@ namespace SnapMeasure
                 proj.CheckedChanged += (s, e) => update();
                 update();
 
-                foreach (Control c in new Control[] { folder, browse, pattern, help, example, fmt, q, ql, proj, copy }) tOut.Controls.Add(c);
+                foreach (Control c in new Control[] { folder, browse, pattern, help, example, fmt, q, ql, proj, copy, explorer, pane }) tOut.Controls.Add(c);
 
                 // ---------- About ----------
                 {
@@ -2391,12 +2661,12 @@ namespace SnapMeasure
                     LinkLabel iss = new LinkLabel(); iss.Text = "Report a problem or ask for a feature"; iss.AutoSize = true; iss.Location = new Point(S(220), S(106));
                     iss.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.IssuesUrl);
                     Label us = new Label(); us.AutoSize = true; us.ForeColor = Color.FromArgb(90, 90, 90); us.Location = new Point(S(84), S(126));
-                    upd.LinkClicked += (s, e) => { us.Text = "Checking GitHub…"; UpdateCheck.Start(f, m => us.Text = m); };
+                    upd.LinkClicked += (s, e) => { us.Text = Lang.T("Checking GitHub…"); UpdateCheck.Start(f, m => us.Text = m); };
                     if (AppInfo.IsStoreApp)
                     {
                         // the Microsoft Store keeps this copy up to date
                         upd.Visible = false;
-                        us.Text = "Installed from the Microsoft Store – updates arrive through the Store.";
+                        us.Text = Lang.T("Installed from the Microsoft Store – updates arrive through the Store.");
                         iss.Location = upd.Location;
                     }
                     TextBox keys = new TextBox(); keys.Multiline = true; keys.ReadOnly = true; keys.ScrollBars = ScrollBars.Vertical;
@@ -2428,6 +2698,8 @@ namespace SnapMeasure
                     SnapMeasure.Settings.Set("IconSize", (iconSize.SelectedIndex == 0 ? 16 : iconSize.SelectedIndex == 2 ? 24 : 20).ToString(CultureInfo.InvariantCulture));
                     CheckBox lockBox = tGen.Controls["lock"] as CheckBox;
                     if (lockBox != null) SnapMeasure.Settings.Set("LockInside", lockBox.Checked ? "1" : "0");
+                    ComboBox langBox = tGen.Controls["lang"] as ComboBox;
+                    if (langBox != null && langBox.SelectedIndex >= 0) SnapMeasure.Settings.Set("Language", Lang.Codes[langBox.SelectedIndex]);
 
                     string dir = folder.Text.Trim();
                     bool okDir = false;
@@ -2440,6 +2712,17 @@ namespace SnapMeasure
                     SnapMeasure.Settings.Set("JpegQuality", q.Value.ToString(CultureInfo.InvariantCulture));
                     SnapMeasure.Settings.Set("SaveProjectToo", proj.Checked ? "1" : "0");
                     SnapMeasure.Settings.Set("CopyPathOnSave", copy.Checked ? "1" : "0");
+                    if (ShellPreview.Supported && explorer.Checked != ShellPreview.IsOn)
+                    {
+                        SnapMeasure.Settings.Set("ExplorerPreview", explorer.Checked ? "1" : "0");
+                        string note = ShellPreview.Set(explorer.Checked);
+                        if (note != null) MessageBox.Show(f, note, "Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    if (ShellPreview.Supported && pane.Checked != paneWas)
+                    {
+                        string note = ShellPreview.SetPane(f, pane.Checked);
+                        if (note != null) MessageBox.Show(f, note, "Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
                     for (int i = 0; i < 4; i++)
                     {
                         RadioButton r = tCap.Controls["after" + i] as RadioButton;
@@ -2628,7 +2911,7 @@ namespace SnapMeasure
                 {
                     double r;
                     if (!double.TryParse(ratio.Text.Replace("1:", "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out r) || r <= 0 || r > 1e6)
-                    { result.Text = "Type the scale, e.g. 50 for 1:50"; return false; }
+                    { result.Text = Lang.T("Type the scale, e.g. 50 for 1:50"); return false; }
                     double mmPerPx;
                     if (rPdf.Checked && pdfMmPerPx.HasValue) mmPerPx = pdfMmPerPx.Value;
                     else if (rDpi.Checked) mmPerPx = 25.4 / (double)dpi.Value;
@@ -2728,7 +3011,42 @@ namespace SnapMeasure
 
     internal static class Icons
     {
-        /// <summary>Tool icons drawn as vectors at the exact pixel size requested (no stretching).</summary>
+        // one colour per group of tools, so the colour of an icon says which kind of tool it is:
+        // measure = drafting blue, count = violet, draw = red, highlight = amber, text = green, the rest ink
+        public static readonly Color MeasureCol = Color.FromArgb(0, 105, 190), CountCol = Color.FromArgb(118, 62, 192),
+            DrawCol = Color.FromArgb(208, 46, 46), HighlightCol = Color.FromArgb(208, 132, 0), TextCol = Color.FromArgb(18, 128, 96),
+            ToolInk = Color.FromArgb(52, 56, 64);
+
+        /// <summary>The colour of the tool's group (see the headings in the editor's tool column).</summary>
+        public static Color Group(Tool t)
+        {
+            switch (t)
+            {
+                case Tool.Calibrate: case Tool.Dimension: case Tool.Perimeter: case Tool.Area: case Tool.Cutout:
+                case Tool.Angle: case Tool.Radius: case Tool.Coord:
+                    return MeasureCol;
+                case Tool.Counter: case Tool.Letter:
+                    return CountCol;
+                case Tool.Arrow: case Tool.Line: case Tool.PolyDraw: case Tool.Polyline: case Tool.Arc: case Tool.Freehand:
+                case Tool.Rect: case Tool.Ellipse: case Tool.Polygon: case Tool.Cloud:
+                    return DrawCol;
+                case Tool.Highlight: case Tool.Marker: case Tool.Pixelate:
+                    return HighlightCol;
+                case Tool.Text: case Tool.Bubble: case Tool.Stamp: case Tool.Note: case Tool.Markup:
+                    return TextCol;
+                default:
+                    return ToolInk;
+            }
+        }
+
+        /// <summary>c lightened towards white (0 = c, 1 = white): fills that stay the group's colour.</summary>
+        static Color Light(Color c, float f)
+        {
+            return Color.FromArgb((int)(c.R + (255 - c.R) * f), (int)(c.G + (255 - c.G) * f), (int)(c.B + (255 - c.B) * f));
+        }
+
+        /// <summary>Tool icons drawn as vectors at the exact pixel size requested (no stretching): the group's colour
+        /// for the shape the tool makes, ink for the rest.</summary>
         public static Bitmap Make(Tool t, int size)
         {
             Bitmap b = new Bitmap(size, size, PixelFormat.Format32bppArgb);
@@ -2737,7 +3055,8 @@ namespace SnapMeasure
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
                 g.ScaleTransform(size / 32f, size / 32f);
-                Color ink = Color.FromArgb(45, 45, 48), red = Color.FromArgb(220, 40, 40), blue = Color.FromArgb(0, 110, 210), amber = Color.FromArgb(240, 170, 0);
+                Color ink = ToolInk, acc = Group(t);
+                Color red = acc, blue = acc, amber = acc;
                 using (Pen p = new Pen(ink, 2.2f))
                 using (Pen pr = new Pen(red, 2.4f))
                 using (Pen pb = new Pen(blue, 2f))
@@ -2783,12 +3102,15 @@ namespace SnapMeasure
                                 using (SolidBrush nb = new SolidBrush(Color.FromArgb(250, 190, 0))) g.FillPolygon(nb, nib);
                                 break;
                             }
-                        case Tool.Text: using (Font mkFont = new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("T", mkFont, bi, new RectangleF(0, 0, 32, 32), sf); break;
+                        case Tool.Text:
+                            using (SolidBrush ab = new SolidBrush(acc))
+                            using (Font mkFont = new Font("Segoe UI", 22, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("T", mkFont, ab, new RectangleF(0, 0, 32, 32), sf);
+                            break;
                         case Tool.Polygon:
                             {
                                 PointF[] a = { new PointF(4, 13), new PointF(13, 4), new PointF(28, 9), new PointF(24, 20), new PointF(28, 27), new PointF(9, 28) };
-                                using (SolidBrush f = new SolidBrush(Color.FromArgb(130, 255, 215, 0))) g.FillPolygon(f, a);
-                                using (Pen pp = new Pen(amber, 2f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
+                                using (SolidBrush f = new SolidBrush(Light(acc, 0.8f))) g.FillPolygon(f, a);
+                                using (Pen pp = new Pen(acc, 2f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
                                 foreach (PointF q in a) g.FillRectangle(bi, q.X - 1.5f, q.Y - 1.5f, 3, 3);
                                 break;
                             }
@@ -2820,7 +3142,7 @@ namespace SnapMeasure
                         case Tool.Area:
                             {
                                 PointF[] a = { new PointF(4, 8), new PointF(22, 4), new PointF(28, 18), new PointF(17, 28), new PointF(5, 24) };
-                                using (SolidBrush f = new SolidBrush(Color.FromArgb(70, 0, 110, 210))) g.FillPolygon(f, a);
+                                using (SolidBrush f = new SolidBrush(Light(acc, 0.75f))) g.FillPolygon(f, a);
                                 g.DrawPolygon(pb, a);
                                 using (SolidBrush bb = new SolidBrush(blue))
                                     using (Font mkFont = new Font("Segoe UI", 10.5f, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("m²", mkFont, bb, new RectangleF(0, 2, 32, 30), sf);
@@ -2832,8 +3154,8 @@ namespace SnapMeasure
                                 g.TranslateTransform(16, 16);
                                 g.RotateTransform(-35);
                                 RectangleF r = new RectangleF(-14, -5, 28, 10);
-                                using (SolidBrush f = new SolidBrush(Color.FromArgb(255, 225, 120))) g.FillRectangle(f, r);
-                                using (Pen pp = new Pen(ink, 1.4f))
+                                using (SolidBrush f = new SolidBrush(Light(acc, 0.72f))) g.FillRectangle(f, r);
+                                using (Pen pp = new Pen(acc, 1.4f))
                                 {
                                     g.DrawRectangle(pp, r.X, r.Y, r.Width, r.Height);
                                     for (int i = 0; i < 6; i++) { float x = -11 + i * 4.5f; g.DrawLine(pp, x, -5, x, i % 2 == 0 ? 0 : -2); }
@@ -2846,8 +3168,11 @@ namespace SnapMeasure
                             using (Font mkFont = new Font("Segoe UI", 15, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("1", mkFont, Brushes.White, new RectangleF(5, 5, 22, 23), sf);
                             break;
                         case Tool.Letter:
-                            using (SolidBrush rb = new SolidBrush(blue)) g.FillEllipse(rb, 5, 5, 22, 22);
-                            using (Font mkFont = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("A", mkFont, Brushes.White, new RectangleF(5, 5, 22, 23), sf);
+                            // the letter marker: the same violet, as a ring, so it is told apart from the number marker
+                            g.FillEllipse(Brushes.White, 5, 5, 22, 22);
+                            using (Pen rp = new Pen(acc, 2.2f)) g.DrawEllipse(rp, 6, 6, 20, 20);
+                            using (SolidBrush ab = new SolidBrush(acc))
+                            using (Font mkFont = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("A", mkFont, ab, new RectangleF(5, 5, 22, 23), sf);
                             break;
                         case Tool.Angle:
                             using (Pen pp = new Pen(blue, 2.2f))
@@ -2855,7 +3180,7 @@ namespace SnapMeasure
                                 pp.StartCap = pp.EndCap = LineCap.Round; pp.LineJoin = LineJoin.Round;
                                 g.DrawLines(pp, new PointF[] { new PointF(27, 6), new PointF(5, 26), new PointF(28, 26) });
                             }
-                            using (Pen pp = new Pen(red, 1.8f)) g.DrawArc(pp, -6, 15, 22, 22, -42, 42);
+                            using (Pen pp = new Pen(ink, 1.6f)) g.DrawArc(pp, -6, 15, 22, 22, -42, 42);
                             break;
                         case Tool.Pixelate:
                             for (int y = 0; y < 4; y++)
@@ -2886,7 +3211,7 @@ namespace SnapMeasure
                             break;
                         case Tool.Radius:
                             {
-                                using (Pen pp = new Pen(Color.FromArgb(0, 130, 140), 2.2f)) { pp.StartCap = pp.EndCap = LineCap.Round; g.DrawArc(pp, 3, 3, 26, 26, 180, 180); }
+                                using (Pen pp = new Pen(acc, 2.2f)) { pp.StartCap = pp.EndCap = LineCap.Round; g.DrawArc(pp, 3, 3, 26, 26, 180, 180); }
                                 using (Pen pp = new Pen(ink, 1.4f))
                                 {
                                     g.DrawLine(pp, 13, 16, 19, 16); g.DrawLine(pp, 16, 13, 16, 19);   // centre mark
@@ -2900,7 +3225,7 @@ namespace SnapMeasure
                             using (GraphicsPath gp = Renderer.BubblePath(new RectangleF(3, 4, 26, 17), new PointF(9, 29)))
                             {
                                 g.FillPath(Brushes.White, gp);
-                                using (Pen pp = new Pen(ink, 1.8f)) { pp.LineJoin = LineJoin.Round; g.DrawPath(pp, gp); }
+                                using (Pen pp = new Pen(acc, 2f)) { pp.LineJoin = LineJoin.Round; g.DrawPath(pp, gp); }
                             }
                             using (Pen pp = new Pen(ink, 1.6f)) { g.DrawLine(pp, 8, 10, 24, 10); g.DrawLine(pp, 8, 15, 19, 15); }
                             break;
@@ -2918,12 +3243,12 @@ namespace SnapMeasure
                                     g.FillPolygon(bb, new PointF[] { new PointF(29, 26), new PointF(24, 23), new PointF(24, 29) });
                                     g.FillPolygon(bb, new PointF[] { new PointF(6, 3), new PointF(3, 8), new PointF(9, 8) });
                                 }
-                                using (Pen xp = new Pen(red, 2.2f)) { g.DrawLine(xp, 15, 10, 21, 16); g.DrawLine(xp, 15, 16, 21, 10); }
+                                using (Pen xp = new Pen(ink, 2f)) { g.DrawLine(xp, 15, 10, 21, 16); g.DrawLine(xp, 15, 16, 21, 10); }
                                 break;
                             }
                         case Tool.Polyline:
                             {
-                                Color purple = Color.FromArgb(130, 60, 200);
+                                Color purple = acc;
                                 PointF[] a = { new PointF(4, 24), new PointF(12, 10), new PointF(20, 20), new PointF(28, 6) };
                                 using (Pen pp = new Pen(purple, 2.4f)) { pp.LineJoin = LineJoin.Round; pp.StartCap = pp.EndCap = LineCap.Round; g.DrawLines(pp, a); }
                                 using (SolidBrush pb2 = new SolidBrush(purple)) foreach (PointF q in a) g.FillEllipse(pb2, q.X - 2.6f, q.Y - 2.6f, 5.2f, 5.2f);
@@ -2931,7 +3256,7 @@ namespace SnapMeasure
                             }
                         case Tool.Perimeter:
                             {
-                                Color green = Color.FromArgb(30, 140, 60);
+                                Color green = acc;
                                 PointF[] a = { new PointF(5, 9), new PointF(24, 5), new PointF(28, 22), new PointF(9, 27) };
                                 using (Pen pp = new Pen(green, 2.4f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
                                 using (SolidBrush gb = new SolidBrush(green))
@@ -2940,10 +3265,10 @@ namespace SnapMeasure
                             }
                         case Tool.Cutout:
                             {
-                                using (SolidBrush f = new SolidBrush(Color.FromArgb(70, 0, 110, 210))) g.FillRectangle(f, 3, 4, 26, 24);
+                                using (SolidBrush f = new SolidBrush(Light(acc, 0.75f))) g.FillRectangle(f, 3, 4, 26, 24);
                                 g.DrawRectangle(pb, 3, 4, 26, 24);
                                 g.FillRectangle(Brushes.White, 11, 11, 11, 10);
-                                using (Pen dp = new Pen(red, 1.8f)) { dp.DashStyle = DashStyle.Dash; g.DrawRectangle(dp, 11, 11, 11, 10); }
+                                using (Pen dp = new Pen(ink, 1.6f)) { dp.DashStyle = DashStyle.Dash; g.DrawRectangle(dp, 11, 11, 11, 10); }
                                 break;
                             }
                         case Tool.Cloud:
@@ -2952,7 +3277,7 @@ namespace SnapMeasure
                             break;
                         case Tool.Stamp:
                             {
-                                Color sg = Color.FromArgb(30, 140, 60);
+                                Color sg = acc;
                                 using (GraphicsPath gp = Renderer.RoundRect(new RectangleF(2, 8, 28, 16), 3))
                                 using (Pen pp = new Pen(sg, 2f)) g.DrawPath(pp, gp);
                                 using (SolidBrush sb = new SolidBrush(sg))
@@ -2962,9 +3287,9 @@ namespace SnapMeasure
                         case Tool.Note:
                             {
                                 PointF[] body = { new PointF(5, 4), new PointF(27, 4), new PointF(27, 20), new PointF(20, 28), new PointF(5, 28) };
-                                using (SolidBrush yb = new SolidBrush(Color.FromArgb(255, 214, 64))) g.FillPolygon(yb, body);
-                                using (Pen pp = new Pen(Color.FromArgb(150, 110, 0), 1.6f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, body); g.DrawLines(pp, new PointF[] { new PointF(27, 20), new PointF(20, 20), new PointF(20, 28) }); }
-                                using (Pen pp = new Pen(Color.FromArgb(150, 110, 0), 1.4f)) { g.DrawLine(pp, 9, 11, 23, 11); g.DrawLine(pp, 9, 16, 21, 16); }
+                                using (SolidBrush yb = new SolidBrush(Light(acc, 0.8f))) g.FillPolygon(yb, body);
+                                using (Pen pp = new Pen(acc, 1.6f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, body); g.DrawLines(pp, new PointF[] { new PointF(27, 20), new PointF(20, 20), new PointF(20, 28) }); }
+                                using (Pen pp = new Pen(ink, 1.4f)) { g.DrawLine(pp, 9, 11, 23, 11); g.DrawLine(pp, 9, 16, 21, 16); }
                                 break;
                             }
                         case Tool.Markup:
@@ -2972,7 +3297,7 @@ namespace SnapMeasure
                             using (Pen up = new Pen(red, 2.4f)) g.DrawLine(up, 5, 25, 27, 25);
                             break;
                         case Tool.Ocr:
-                            using (Pen cp = new Pen(blue, 2.2f))
+                            using (Pen cp = new Pen(ink, 2f))
                             {
                                 g.DrawLines(cp, new PointF[] { new PointF(3, 10), new PointF(3, 3), new PointF(10, 3) });
                                 g.DrawLines(cp, new PointF[] { new PointF(22, 3), new PointF(29, 3), new PointF(29, 10) });

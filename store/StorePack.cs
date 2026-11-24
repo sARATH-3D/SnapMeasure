@@ -65,23 +65,48 @@ static class StorePack
                 string manifestPath = Path.Combine(work, "AppxManifest.xml");
                 File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
 
-                // tiles and icons, drawn from the 256 px app icon
+                // tiles and icons: drawn sharp at every size from the app's own vector logo (SnapMeasure.AppIcon.Render),
+                // or scaled from the 256 px png if that can't be loaded
                 List<KeyValuePair<string, string>> files = new List<KeyValuePair<string, string>>();
-                using (Bitmap src = new Bitmap(icon))
+                Func<int, Bitmap> logo = LogoRenderer(exe, icon);
+                string makepri = FindMakePri();
+                string assets = Path.Combine(work, "Assets");
+                if (makepri != null)
                 {
-                    // one file per logo (no resources.pri, so scale variants would never be picked)
-                    Square(src, 44, 0, Path.Combine(work, @"Assets\Square44x44Logo.png"));
-                    Square(src, 150, 20, Path.Combine(work, @"Assets\Square150x150Logo.png"));
-                    Wide(src, 310, 150, Path.Combine(work, @"Assets\Wide310x150Logo.png"));
-                    Square(src, 50, 0, Path.Combine(work, @"Assets\StoreLogo.png"));
+                    // the full set Windows expects: taskbar / Start / Explorer icons at their exact pixel size, without the
+                    // coloured plate (altform-unplated), and tiles at each display scale. resources.pri tells Windows
+                    // which file is which; without it only the plain names below would ever be used.
+                    foreach (int t in new[] { 16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 256 })
+                    {
+                        Square(logo, t, 0, Path.Combine(assets, "Square44x44Logo.targetsize-" + t + ".png"));
+                        Square(logo, t, 0, Path.Combine(assets, "Square44x44Logo.targetsize-" + t + "_altform-unplated.png"));
+                        Square(logo, t, 0, Path.Combine(assets, "Square44x44Logo.targetsize-" + t + "_altform-lightunplated.png"));
+                    }
+                    foreach (int sc in new[] { 100, 125, 150, 200, 400 })
+                    {
+                        Square(logo, 44 * sc / 100, 0, Path.Combine(assets, "Square44x44Logo.scale-" + sc + ".png"));
+                        Square(logo, 150 * sc / 100, 20 * sc / 100, Path.Combine(assets, "Square150x150Logo.scale-" + sc + ".png"));
+                        Wide(logo, 310 * sc / 100, 150 * sc / 100, Path.Combine(assets, "Wide310x150Logo.scale-" + sc + ".png"));
+                        Square(logo, 50 * sc / 100, 0, Path.Combine(assets, "StoreLogo.scale-" + sc + ".png"));
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("  (makepri.exe not found: one file per logo, no resources.pri - Start and taskbar icons get the plate)");
+                    Square(logo, 44, 0, Path.Combine(assets, "Square44x44Logo.png"));
+                    Square(logo, 150, 20, Path.Combine(assets, "Square150x150Logo.png"));
+                    Wide(logo, 310, 150, Path.Combine(assets, "Wide310x150Logo.png"));
+                    Square(logo, 50, 0, Path.Combine(assets, "StoreLogo.png"));
                 }
                 File.Copy(exe, Path.Combine(work, "SnapMeasure.exe"));
                 File.Copy(license, Path.Combine(work, "LICENSE.txt"));
+                if (makepri != null) MakePri(makepri, work, manifestPath);
                 foreach (string f in Directory.GetFiles(work, "*", SearchOption.AllDirectories))
                 {
                     string rel = f.Substring(work.Length + 1);
-                    if (rel == "AppxManifest.xml") continue;
-                    string type = rel.EndsWith(".png") ? "image/png" : rel.EndsWith(".exe") ? "application/x-msdownload" : "text/plain";
+                    if (rel == "AppxManifest.xml" || rel == "priconfig.xml") continue;
+                    string type = rel.EndsWith(".png") ? "image/png" : rel.EndsWith(".exe") ? "application/x-msdownload" :
+                                  rel.EndsWith(".pri") ? "application/octet-stream" : "text/plain";
                     files.Add(new KeyValuePair<string, string>(rel, type));
                 }
 
@@ -125,35 +150,106 @@ static class StorePack
         }
     }
 
+    /// <summary>Draws the logo at any pixel size: the app's own vector drawing when the exe can be loaded, else the png scaled.</summary>
+    static Func<int, Bitmap> LogoRenderer(string exe, string png)
+    {
+        try
+        {
+            System.Reflection.Assembly asm = System.Reflection.Assembly.LoadFrom(Path.GetFullPath(exe));
+            Type t = asm.GetType("SnapMeasure.AppIcon", true);
+            System.Reflection.MethodInfo m = t.GetMethod("Render", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            using (Bitmap test = (Bitmap)m.Invoke(null, new object[] { 32 })) { }
+            return size => (Bitmap)m.Invoke(null, new object[] { size });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("  (vector logo not available, scaling " + png + ": " + ex.Message + ")");
+            return size =>
+            {
+                Bitmap b = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+                using (Bitmap src = new Bitmap(png))
+                using (Graphics g = Graphics.FromImage(b))
+                {
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.DrawImage(src, new Rectangle(0, 0, size, size));
+                }
+                return b;
+            };
+        }
+    }
+
+    /// <summary>makepri.exe from the Windows SDK: the MAKEPRI variable, an installed Windows Kit, or the
+    /// Microsoft.Windows.SDK.BuildTools NuGet package. Null when there is none.</summary>
+    static string FindMakePri()
+    {
+        string env = Environment.GetEnvironmentVariable("MAKEPRI");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
+        List<string> found = new List<string>();
+        string[] roots = {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Windows Kits\10\bin"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".nuget\packages\microsoft.windows.sdk.buildtools"),
+            Path.Combine(Path.GetDirectoryName(Path.GetFullPath(Environment.GetCommandLineArgs()[0])), "tools") };
+        foreach (string r in roots)
+            if (Directory.Exists(r))
+                try
+                {
+                    foreach (string f in Directory.GetFiles(r, "makepri.exe", SearchOption.AllDirectories))
+                        if (f.IndexOf(@"\x64\", StringComparison.OrdinalIgnoreCase) >= 0) found.Add(f);
+                }
+                catch (Exception) { }
+        if (found.Count == 0) return null;
+        found.Sort(StringComparer.OrdinalIgnoreCase);      // newest SDK version last
+        return found[found.Count - 1];
+    }
+
+    static void MakePri(string makepri, string work, string manifest)
+    {
+        string cfg = Path.Combine(work, "priconfig.xml");
+        Run(makepri, "createconfig /cf \"" + cfg + "\" /dq en-US /pv 10.0.0 /o");
+        Run(makepri, "new /pr \"" + work + "\" /cf \"" + cfg + "\" /mn \"" + manifest + "\" /of \"" + Path.Combine(work, "resources.pri") + "\" /o");
+        File.Delete(cfg);
+        Console.WriteLine("  resources.pri made with " + makepri);
+    }
+
+    static void Run(string exe, string args)
+    {
+        System.Diagnostics.ProcessStartInfo si = new System.Diagnostics.ProcessStartInfo(exe, args);
+        si.UseShellExecute = false; si.RedirectStandardOutput = true; si.RedirectStandardError = true; si.CreateNoWindow = true;
+        using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(si))
+        {
+            string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            if (p.ExitCode != 0) throw new Exception("makepri failed (" + p.ExitCode + "):\n" + output);
+        }
+    }
+
     /// <summary>The icon on a transparent square, with a margin (tiles look better with some space round the icon).</summary>
-    static void Square(Bitmap src, int size, int margin, string path)
+    static void Square(Func<int, Bitmap> logo, int size, int margin, string path)
     {
         using (Bitmap b = new Bitmap(size, size, PixelFormat.Format32bppArgb))
+        using (Bitmap src = logo(size - 2 * margin))
         {
             using (Graphics g = Graphics.FromImage(b))
             {
                 g.Clear(Color.Transparent);
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.SmoothingMode = SmoothingMode.HighQuality;
-                g.DrawImage(src, new Rectangle(margin, margin, size - 2 * margin, size - 2 * margin));
+                g.DrawImageUnscaled(src, margin, margin);
             }
             b.Save(path, ImageFormat.Png);
         }
     }
 
     /// <summary>Wide tile: the icon in the middle, its height 70 % of the tile.</summary>
-    static void Wide(Bitmap src, int w, int h, string path)
+    static void Wide(Func<int, Bitmap> logo, int w, int h, string path)
     {
+        int s = (int)(h * 0.7f);
         using (Bitmap b = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+        using (Bitmap src = logo(s))
         {
             using (Graphics g = Graphics.FromImage(b))
             {
                 g.Clear(Color.Transparent);
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                int s = (int)(h * 0.7f);
-                g.DrawImage(src, new Rectangle((w - s) / 2, (h - s) / 2, s, s));
+                g.DrawImageUnscaled(src, (w - s) / 2, (h - s) / 2);
             }
             b.Save(path, ImageFormat.Png);
         }

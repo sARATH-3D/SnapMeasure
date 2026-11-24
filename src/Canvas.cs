@@ -146,14 +146,16 @@ namespace SnapMeasure
             d[Tool.Area] = St(ShapeKind.Area, blue, 2, blue, 22, 15);
             d[Tool.Angle] = St(ShapeKind.Angle, blue, 2, Color.White, 0, 15);
             d[Tool.Radius] = St(ShapeKind.Radius, Color.FromArgb(0, 130, 140), 1.8f, Color.White, 0, 15);
+            d[Tool.Radius].Mode = 2;      // new radius measurements show the diameter (first entry of Show)
             d[Tool.Arc] = St(ShapeKind.Arc, red, 3, Color.Yellow, 0, 16);
-            d[Tool.Counter] = St(ShapeKind.Counter, Color.White, 2.5f, red, 100, 18);
-            Shape letter = St(ShapeKind.Counter, Color.White, 2.5f, blue, 100, 18);
+            // markers look like their buttons: numbers white on a violet disc, letters violet in a violet ring
+            d[Tool.Counter] = St(ShapeKind.Counter, Color.White, 2.5f, Icons.CountCol, 100, 18);
+            Shape letter = St(ShapeKind.Counter, Icons.CountCol, 2.5f, Color.White, 100, 18);
             letter.Mode = 1;
             d[Tool.Letter] = letter;
             d[Tool.Pixelate] = St(ShapeKind.Pixelate, Color.Gray, 3, Color.Gray, 0, 16);
             d[Tool.Highlight] = St(ShapeKind.Highlight, red, 2, Color.Yellow, 45, 16);
-            d[Tool.Highlight].Mode = (int)HighlightMode.Spotlight;     // Focus: the yellow marker is now the highlighter pen
+            d[Tool.Highlight].Mode = (int)HighlightMode.Marker;        // Focus starts as the see-through highlight box
             d[Tool.Highlight].Strength = 2;                              // magnify ×2, pixelate 8 px (Strength slider)
             d[Tool.Pixelate].Strength = 3;
             Shape bub = St(ShapeKind.Bubble, Color.FromArgb(40, 40, 40), 2, Color.White, 100, 16);
@@ -214,8 +216,8 @@ namespace SnapMeasure
                 marquee = false;
                 Tool old = tool;
                 tool = value;
-                // the highlight tool always starts as a rectangle; a shape picked on the style bar lasts while the tool is in use
-                if (value == Tool.Highlight && old != Tool.Highlight) Styles[Tool.Highlight].Form = (int)HighlightForm.Rectangle;
+                // the Focus tool always starts as a rectangular highlight box; a shape or mode picked on the style bar lasts while the tool is in use
+                if (value == Tool.Highlight && old != Tool.Highlight) ResetFocusStyle();
                 // a new drawing tool: let go of the last shape, so the style bar shows the tool's own style
                 // (the cut-out keeps its area selected, and crop / text recognition don't draw shapes)
                 if (value != old && value != Tool.Select && value != Tool.Cutout && value != Tool.Crop && value != Tool.Ocr && Sel.Count > 0)
@@ -228,6 +230,15 @@ namespace SnapMeasure
                 if (CropRect.HasValue && ((old == Tool.Crop) != (value == Tool.Crop))) Fit();   // show the whole image while cropping
                 Invalidate();
             }
+        }
+
+        /// <summary>Focus tool defaults: rectangle, highlight box (the colours the user picked stay).</summary>
+        void ResetFocusStyle()
+        {
+            Shape f = Styles[Tool.Highlight];
+            f.Form = (int)HighlightForm.Rectangle;
+            f.Mode = (int)HighlightMode.Marker;
+            if (f.FillOpacity < 20) f.FillOpacity = 45;
         }
 
         Shape NewShape(Tool t, PointF p)
@@ -337,6 +348,27 @@ namespace SnapMeasure
             if (dir > 0) { foreach (float s in steps) if (s > Zoom + 0.001f) { z = s; break; } }
             else { for (int i = steps.Length - 1; i >= 0; i--) if (steps[i] < Zoom - 0.001f) { z = steps[i]; break; } }
             ZoomCenter(z);
+        }
+
+        /// <summary>Shift while placing point n of a shape: 15° directions, but the angle tool works in 45° steps
+        /// (the vertex in 45° directions from the first arm's end, the last arm 45°, 90°, 135° … from the first).</summary>
+        PointF ShiftSnap(Shape c, int n, PointF sp)
+        {
+            if (c.Kind == ShapeKind.Angle)
+                return n >= 3 ? SnapArm(c.Pts[1], c.Pts[0], sp, 45) : Geo.SnapAngle(c.Pts[0], sp, 45);
+            return Geo.SnapAngle(c.Pts[n - 2], sp, 15);
+        }
+
+        /// <summary>p moved round the vertex so the angle between (vertex→other) and (vertex→p) is a multiple of 'step' degrees; its distance stays.</summary>
+        internal static PointF SnapArm(PointF vertex, PointF other, PointF p, double step)
+        {
+            double d = Geo.Dist(vertex, p);
+            if (d < 1e-6 || Geo.Dist(vertex, other) < 1e-6) return p;
+            double a0 = Math.Atan2(other.Y - vertex.Y, other.X - vertex.X) * 180.0 / Math.PI;
+            double a = Math.Atan2(p.Y - vertex.Y, p.X - vertex.X) * 180.0 / Math.PI;
+            double rel = Math.Round((a - a0) / step) * step;
+            double r = (a0 + rel) * Math.PI / 180.0;
+            return new PointF((float)(vertex.X + d * Math.Cos(r)), (float)(vertex.Y + d * Math.Sin(r)));
         }
 
         /// <summary>Fit the visible image (or crop) in the window and centre it (Home key).</summary>
@@ -932,8 +964,10 @@ namespace SnapMeasure
                 case HKind.LabelSize: return Cursors.SizeNWSE;
                 case HKind.Box:
                     {
-                        PointF c = ShapeOps.Center(s);
-                        double ang = Math.Atan2(h.Pos.Y - c.Y, h.Pos.X - c.X) * 180.0 / Math.PI;
+                        // from which handle it is (0 = top-left, clockwise), not from the centre: on a wide box such as a
+                        // stamp the corners lie only ~20° off the middle line and would get a side-to-side arrow
+                        double ang = h.Index * 45.0 - 135.0 + (s.Rotatable ? s.Angle : 0f);
+                        ang %= 180.0;
                         if (ang < 0) ang += 180.0;                    // a stretch goes both ways: 0–180° is enough
                         if (ang < 22.5 || ang >= 157.5) return Cursors.SizeWE;
                         if (ang < 67.5) return Cursors.SizeNWSE;      // down-right / up-left
@@ -1564,7 +1598,20 @@ namespace SnapMeasure
                     }
                 case Tool.Counter:
                 case Tool.Letter:
-                    AddShape(NewShape(tool, ip));
+                    {
+                        AddShape(NewShape(tool, ip));
+                        bool letters = tool == Tool.Letter;
+                        int count = Measure.Count(Shapes, letters);
+                        if (!letters && Scale.MarkerReverse && count > Scale.MarkerStart)
+                        {
+                            // a countdown never goes below 1: raise the start so every number stays unique
+                            Scale.MarkerStart = count;
+                            NotifyDocChanged();
+                            if (Message != null) Message("Countdown reached 1 – the start number was raised to " + count);
+                        }
+                        else if (letters && Scale.LetterReverse && count == Math.Max(1, Scale.LetterStart) + 1 && Message != null)
+                            Message("Letters ran past A – starting again at Z");
+                    }
                     break;
                 case Tool.Note:
                     {
@@ -1608,7 +1655,7 @@ namespace SnapMeasure
                         {
                             int n = creating.Pts.Count;
                             PointF p = sp;
-                            if (shift && !snapPt.HasValue && n >= 2) p = Geo.SnapAngle(creating.Pts[n - 2], sp, 15);
+                            if (shift && !snapPt.HasValue && n >= 2) p = ShiftSnap(creating, n, sp);
                             creating.Pts[n - 1] = p;
                             if (n >= 3)
                             {
@@ -1788,7 +1835,7 @@ namespace SnapMeasure
                     case Tool.Polyline:
                     case Tool.Perimeter:
                     case Tool.Cutout:
-                        creating.Pts[n - 1] = (shift && !snapPt.HasValue && n >= 2) ? Geo.SnapAngle(creating.Pts[n - 2], sp, 15) : sp;
+                        creating.Pts[n - 1] = (shift && !snapPt.HasValue && n >= 2) ? ShiftSnap(creating, n, sp) : sp;
                         break;
                     case Tool.Text:
                         if (creating.Pts.Count >= 2) creating.Pts[1] = ip;
@@ -1831,6 +1878,14 @@ namespace SnapMeasure
                 if (shift && !snapPt.HasValue && h.Kind == HKind.Point && h.Index < 2 &&
                     (Selected.Kind == ShapeKind.Line || Selected.Kind == ShapeKind.Arrow || Selected.Kind == ShapeKind.Dimension))
                     p = Geo.SnapAngle(Selected.Pts[1 - h.Index], p, 15);
+                // angle: an arm end snaps the angle to 45° steps from the other arm; the vertex snaps its first arm to 45° directions
+                if (shift && !snapPt.HasValue && h.Kind == HKind.Point && Selected.Kind == ShapeKind.Angle && Selected.Pts.Count >= 3)
+                {
+                    List<PointF> q = Selected.Pts;
+                    if (h.Index == 0) p = SnapArm(q[1], q[2], p, 45);
+                    else if (h.Index == 2) p = SnapArm(q[1], q[0], p, 45);
+                    else if (h.Index == 1) p = Geo.SnapAngle(q[0], p, 45);
+                }
                 ShapeOps.DragHandle(Selected, dragOrig, h, p, shift);
                 changedDuringDrag = true;
                 Invalidate();
@@ -2217,12 +2272,18 @@ namespace SnapMeasure
                 case Keys.G: CurrentTool = Tool.Angle; break;
                 case Keys.K: CurrentTool = Tool.Calibrate; break;
                 case Keys.N: CurrentTool = e.Shift ? Tool.Letter : Tool.Counter; break;
-                case Keys.B: Styles[Tool.Highlight].Mode = (int)HighlightMode.Pixelate; CurrentTool = Tool.Highlight; break;   // pixelate = a highlight mode
+                case Keys.B:
+                    // pixelate = a Focus mode: pick the tool (rectangle), then switch it to pixelate
+                    CurrentTool = Tool.Highlight;
+                    Styles[Tool.Highlight].Mode = (int)HighlightMode.Pixelate;
+                    if (ToolChanged != null) ToolChanged(this, EventArgs.Empty);
+                    break;
                 case Keys.C: CurrentTool = Tool.Crop; break;
                 case Keys.H:
-                    // H = Focus (back to spotlight after B / pixelate), Shift+H = highlighter pen
-                    if (!e.Shift && Styles[Tool.Highlight].Mode == (int)HighlightMode.Pixelate) Styles[Tool.Highlight].Mode = (int)HighlightMode.Spotlight;
-                    CurrentTool = e.Shift ? Tool.Marker : Tool.Highlight;
+                    // H = Focus, always back to a rectangular highlight box; Shift+H = highlighter pen
+                    if (e.Shift) { CurrentTool = Tool.Marker; break; }
+                    if (CurrentTool == Tool.Highlight) { ResetFocusStyle(); if (ToolChanged != null) ToolChanged(this, EventArgs.Empty); }
+                    else CurrentTool = Tool.Highlight;
                     break;
                 case Keys.S: CurrentTool = Tool.Bubble; break;
                 default: return;
@@ -3065,7 +3126,7 @@ namespace SnapMeasure
                     break;
                 case Tool.Angle:
                     if (p.Count == 2) t = "Arm " + Scale.Len(Geo.Dist(p[0], p[1])) + "\nClick the vertex, then the end of the second arm";
-                    else if (p.Count >= 3) t = "∠ " + ScaleInfo.AngleText(Geo.AngleAt(p[0], p[1], p[2])) + "\nClick to finish · Shift = 15° steps";
+                    else if (p.Count >= 3) t = "∠ " + Scale.Angle(Geo.AngleAt(p[0], p[1], p[2])) + "\nClick to finish · Shift = 45° steps";
                     break;
                 case Tool.Rect:
                 case Tool.Ellipse:

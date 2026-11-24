@@ -199,7 +199,7 @@ namespace SnapMeasure
             get
             {
                 return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Text || Kind == ShapeKind.Image || Kind == ShapeKind.Stamp ||
-                       (Kind == ShapeKind.Cloud && Mode == 0);
+                       (Kind == ShapeKind.Cloud && Mode == 0) || Kind == ShapeKind.Highlight;
             }
         }
         public bool HasHeads
@@ -240,28 +240,66 @@ namespace SnapMeasure
         public int MarkerStart = 1;   // first number of the number-marker series
         public int LetterStart = 1;   // first letter of the letter-marker series (1 = A)
         public string NumberLabel = "", LetterLabel = "";   // what each marker series counts, e.g. "Blind panel"
+        public int Rounding;          // 0 = nearest, 1 = always up (ceiling), 2 = always down (floor), at 'Decimals'
+        public bool LetterReverse, MarkerReverse;   // marker series counting down (Z, Y, X … / 10, 9, 8 …)
 
         public ScaleInfo Clone() { return (ScaleInfo)MemberwiseClone(); }
         public bool Calibrated { get { return !(Unit == "px" && Math.Abs(Upp - 1.0) < 1e-12); } }
 
-        public string Len(double px) { return (px * Upp).ToString("N" + Decimals, CultureInfo.CurrentCulture) + " " + Unit; }
-        public string Num(double px) { return (px * Upp).ToString("N" + Decimals, CultureInfo.CurrentCulture); }
+        /// <summary>A real value rounded the chosen way at 'Decimals' (up / down); nearest is left to the number format.</summary>
+        public double Rnd(double v) { return RoundTo(v, Decimals, Rounding); }
+
+        public static double RoundTo(double v, int decimals, int mode)
+        {
+            if (mode == 0 || double.IsNaN(v) || double.IsInfinity(v)) return v;
+            double f = Math.Pow(10, Math.Max(0, Math.Min(10, decimals)));
+            double x = v * f;
+            // floating-point noise: 2.30 kept as 2.3000000001 must not round up to 2.31 (nor 2.2999999 down to 2.29)
+            double c = Math.Round(x);
+            if (Math.Abs(x - c) < 1e-7 * Math.Max(1.0, Math.Abs(x))) x = c;
+            x = mode == 1 ? Math.Ceiling(x) : Math.Floor(x);
+            double r = x / f;
+            return r == 0 ? 0 : r;     // no "-0.00"
+        }
+
+        public string Fmt(double real) { return Rnd(real).ToString("N" + Decimals, CultureInfo.CurrentCulture); }
+        public string Len(double px) { return Fmt(px * Upp) + " " + Unit; }
+        public string Num(double px) { return Fmt(px * Upp); }
 
         /// <summary>Coordinates of p from the origin o, Y up (like CAD).</summary>
         public string Coord(PointF p, PointF o) { return "X " + Num(p.X - o.X) + "   Y " + Num(o.Y - p.Y) + (Unit == "px" ? " px" : " " + Unit); }
-        public string Area(double px2) { return (px2 * Upp * Upp).ToString("N" + Decimals, CultureInfo.CurrentCulture) + " " + Unit + "²"; }
+        public string Area(double px2) { return Fmt(px2 * Upp * Upp) + " " + Unit + "²"; }
         public string Describe()
         {
             if (!Calibrated) return "Scale: not set (pixels)";
-            return "Scale: 1 px = " + Upp.ToString("G6", CultureInfo.CurrentCulture) + " " + Unit;
+            return "Scale: 1 px = " + PixelSize();
+        }
+
+        /// <summary>One pixel's size, readable: in the next smaller unit when tiny (0.00996667 m → 9.97 mm),
+        /// three significant digits (the exact value stays in the panel's box).</summary>
+        public string PixelSize()
+        {
+            double v = Upp;
+            string u = Unit;
+            if (u == "m" && v < 0.1) { v *= 1000; u = "mm"; }
+            else if (u == "cm" && v < 1) { v *= 10; u = "mm"; }
+            else if (u == "ft" && v < 0.1) { v *= 12; u = "in"; }
+            CultureInfo cc = CultureInfo.CurrentCulture;
+            string n = v >= 1000 ? v.ToString("N0", cc) : v >= 0.001 ? v.ToString("G3", cc) : v.ToString("G2", cc);
+            return n + " " + u;
         }
 
         public string MarkerLabel(int index, bool letters)
         {
             if (letters)
             {
-                return LetterName(Math.Max(1, LetterStart) - 1 + index);     // … Y, Z, AA, AB … AZ, BA … like spreadsheet columns
+                int first = Math.Max(1, LetterStart);
+                if (!LetterReverse) return LetterName(first - 1 + index);     // … Y, Z, AA, AB … AZ, BA … like spreadsheet columns
+                int n = first - index;                                        // counting down: Z, Y, X … A, then round again from Z
+                if (n < 1) n = ((n - 1) % 26 + 26) % 26 + 1;
+                return LetterName(n - 1);
             }
+            if (MarkerReverse) return Math.Max(1, MarkerStart - index).ToString(CultureInfo.InvariantCulture);   // 10, 9, 8 … 1
             return (MarkerStart + index).ToString(CultureInfo.InvariantCulture);
         }
 
@@ -287,6 +325,9 @@ namespace SnapMeasure
 
 
         public static string AngleText(double deg) { return deg.ToString("N1", CultureInfo.CurrentCulture) + "°"; }
+
+        /// <summary>An angle shown with the panel's Decimals and Round (ceil / floor) settings, like the lengths.</summary>
+        public string Angle(double deg) { return Fmt(deg) + "°"; }
 
         public static readonly string[] Units = { "mm", "cm", "m", "in", "ft", "px" };
     }
@@ -616,11 +657,18 @@ namespace SnapMeasure
                             r.Display = sc.Len(rad);
                             r.Perimeter = Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]) * u;     // the arc's length
                             r.Extra = "Ø " + sc.Len(2 * rad) + " · arc " + sc.Len((float)Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]));
-                            if (s.Mode == 2)
+                            if (s.Mode == 2 || s.Mode == 3)
                             {
-                                // diameter only
+                                // the label shows the diameter: list the diameter
                                 r.Type = "Diameter"; r.Value = 2 * rad * u; r.Display = sc.Len(2 * rad);
                                 r.Extra = "R " + sc.Len(rad) + " · arc " + sc.Len((float)Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]));
+                            }
+                            else if (s.Mode == 6)
+                            {
+                                // the label shows only the arc length: list the arc length
+                                double arc = Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]);
+                                r.Type = "Arc length"; r.Value = arc * u; r.Display = sc.Len((float)arc);
+                                r.Extra = "R " + sc.Len(rad) + " · Ø " + sc.Len(2 * rad);
                             }
                             break;
                         }
@@ -628,7 +676,7 @@ namespace SnapMeasure
                         if (s.Pts.Count < 3) continue;
                         r.Type = "Angle"; r.Unit = "°";
                         r.Value = Geo.AngleAt(s.Pts[0], s.Pts[1], s.Pts[2]);
-                        r.Display = ScaleInfo.AngleText(r.Value);
+                        r.Display = sc.Angle(r.Value);
                         break;
                     case ShapeKind.Area:
                         {
@@ -703,8 +751,8 @@ namespace SnapMeasure
             sb.AppendLine("Name\tType\tValue\tUnit\tPerimeter\tGross\tCut-outs\tLabel\tX\tY");
             foreach (MeasureRow r in Rows(shapes, sc, true))
             {
-                string val = r.Type == "Note" || r.Type == "Point" ? "" : (r.Type == "Count" ? r.Value.ToString("F0", cc) : r.Type == "Angle" ? r.Value.ToString("F1", cc) : r.Value.ToString(fmt, cc));
-                Func<double?, string> o = v => v.HasValue ? v.Value.ToString(fmt, cc) : "";
+                string val = r.Type == "Note" || r.Type == "Point" ? "" : (r.Type == "Count" ? r.Value.ToString("F0", cc) : sc.Rnd(r.Value).ToString(fmt, cc));
+                Func<double?, string> o = v => v.HasValue ? sc.Rnd(v.Value).ToString(fmt, cc) : "";
                 string label = (r.Label ?? "").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
                 sb.AppendLine(r.Name + "\t" + r.Type + "\t" + val + "\t" + r.Unit + "\t" + o(r.Perimeter) + "\t" + o(r.Gross) + "\t" + o(r.Cutouts) + "\t" + label +
                               "\t" + o(r.X) + "\t" + o(r.Y));
@@ -715,6 +763,23 @@ namespace SnapMeasure
 
     public static class Renderer
     {
+        /// <summary>The radius label. Mode: 0 = radius + diameter (files before 1.3.2), 1 = radius, 2 = diameter,
+        /// 3 = diameter + arc length, 4 = radius + arc length, 5 = none, 6 = arc length.</summary>
+        public static string RadiusText(int mode, ScaleInfo sc, float rad, double arcPx)
+        {
+            string r = "R = " + sc.Len(rad), d = "Ø = " + sc.Len(2 * rad), a = "Arc = " + sc.Len(arcPx);
+            switch (mode)
+            {
+                case 0: return r + "\n" + d;
+                case 1: return r;
+                case 3: return d + "\n" + a;
+                case 4: return r + "\n" + a;
+                case 5: return "";
+                case 6: return a;
+                default: return d;
+            }
+        }
+
         static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
         static Graphics mg;
         static Bitmap grayFor, grayCache;
@@ -742,27 +807,66 @@ namespace SnapMeasure
             return grayCache;
         }
 
+        /// <summary>
+        /// The part r of img in solid blocks of 'block' pixels, each the exact average of the pixels under it (the
+        /// blocks start at r's corner). Counted pixel by pixel: shrinking the picture with smoothing let GDI+ blend the
+        /// edge blocks with transparency, and text under the outer row and column of blocks stayed readable.
+        /// Opaque pictures give fully opaque blocks.
+        /// </summary>
+        internal static Bitmap Blocks(Bitmap img, Rectangle r, int block)
+        {
+            block = Math.Max(1, block);
+            int w = r.Width, h = r.Height;
+            Bitmap res = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            BitmapData sd = img.LockBits(r, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData dd = res.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int[] row = new int[w];
+                int bw = (w + block - 1) / block;
+                long[] sa = new long[bw], sr = new long[bw], sg = new long[bw], sb = new long[bw];
+                int[] outRow = new int[w];
+                for (int by = 0; by < h; by += block)
+                {
+                    int rows = Math.Min(block, h - by);
+                    Array.Clear(sa, 0, bw); Array.Clear(sr, 0, bw); Array.Clear(sg, 0, bw); Array.Clear(sb, 0, bw);
+                    for (int y = by; y < by + rows; y++)
+                    {
+                        System.Runtime.InteropServices.Marshal.Copy(sd.Scan0 + y * sd.Stride, row, 0, w);
+                        for (int x = 0; x < w; x++)
+                        {
+                            int p = row[x], a = (p >> 24) & 255, i = x / block;
+                            // colours weighted by their alpha: a see-through pixel adds little colour
+                            sa[i] += a; sr[i] += ((p >> 16) & 255) * a; sg[i] += ((p >> 8) & 255) * a; sb[i] += (p & 255) * a;
+                        }
+                    }
+                    for (int i = 0; i < bw; i++)
+                    {
+                        int cols = Math.Min(block, w - i * block);
+                        long n = (long)cols * rows;
+                        int a = (int)(sa[i] / n);
+                        int cr = sa[i] > 0 ? (int)(sr[i] / sa[i]) : 0, cg = sa[i] > 0 ? (int)(sg[i] / sa[i]) : 0, cb = sa[i] > 0 ? (int)(sb[i] / sa[i]) : 0;
+                        int px = (a << 24) | (cr << 16) | (cg << 8) | cb;
+                        for (int x = i * block; x < i * block + cols; x++) outRow[x] = px;
+                    }
+                    for (int y = by; y < by + rows; y++)
+                        System.Runtime.InteropServices.Marshal.Copy(outRow, 0, dd.Scan0 + y * dd.Stride, w);
+                }
+            }
+            finally
+            {
+                img.UnlockBits(sd);
+                res.UnlockBits(dd);
+            }
+            return res;
+        }
+
         /// <summary>A pixelated copy of the whole picture (blocks of 'block' pixels), kept while nothing changes.</summary>
         static Bitmap PixelatedOf(Bitmap img, int block)
         {
             if (pixFor != img || pixBlock != block || pixCache == null)
             {
-                int sw = Math.Max(1, (img.Width + block - 1) / block), sh = Math.Max(1, (img.Height + block - 1) / block);
-                Bitmap big = new Bitmap(img.Width, img.Height, PixelFormat.Format32bppArgb);
-                using (Bitmap small = new Bitmap(sw, sh, PixelFormat.Format32bppArgb))
-                {
-                    using (Graphics g2 = Graphics.FromImage(small))
-                    {
-                        g2.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                        g2.DrawImage(img, new Rectangle(0, 0, sw, sh), new Rectangle(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
-                    }
-                    using (Graphics g3 = Graphics.FromImage(big))
-                    {
-                        g3.InterpolationMode = InterpolationMode.NearestNeighbor;
-                        g3.PixelOffsetMode = PixelOffsetMode.Half;
-                        g3.DrawImage(small, new Rectangle(0, 0, sw * block, sh * block), new Rectangle(0, 0, sw, sh), GraphicsUnit.Pixel);
-                    }
-                }
+                Bitmap big = Blocks(img, new Rectangle(0, 0, img.Width, img.Height), block);
                 Bitmap old = pixCache;
                 pixCache = big; pixFor = img; pixBlock = block;
                 if (old != null) old.Dispose();
@@ -982,7 +1086,8 @@ namespace SnapMeasure
         {
             if (s.Pts.Count == 0) return;
             GraphicsState st = null;
-            if (s.Rotatable && s.Angle != 0f)
+            // a focus shape turns only its outline (HighlightPath): the picture seen through it stays upright
+            if (s.Rotatable && s.Angle != 0f && s.Kind != ShapeKind.Highlight)
             {
                 PointF c = ShapeOps.Center(s);
                 st = g.Save();
@@ -1313,7 +1418,7 @@ namespace SnapMeasure
                     {
                         if (s.Pts.Count < 2) return;
                         RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
-                        using (GraphicsPath hp = HighlightPath(r, s.Form))
+                        using (GraphicsPath hp = HighlightPath(s))
                         {
                             if (s.Mode == (int)HighlightMode.Marker)
                             {
@@ -1323,12 +1428,13 @@ namespace SnapMeasure
                             {
                                 float factor = s.MagnifyFactor;
                                 PointF c = Geo.Center(r);
-                                RectangleF src = new RectangleF(c.X - r.Width / factor / 2f, c.Y - r.Height / factor / 2f, r.Width / factor, r.Height / factor);
+                                RectangleF dst = s.Angle != 0f ? hp.GetBounds() : r;     // turned: the whole turned outline gets the enlarged picture
+                                RectangleF src = new RectangleF(c.X - dst.Width / factor / 2f, c.Y - dst.Height / factor / 2f, dst.Width / factor, dst.Height / factor);
                                 GraphicsState st = g.Save();
                                 g.SetClip(hp, CombineMode.Intersect);
                                 g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                                 g.PixelOffsetMode = PixelOffsetMode.Half;
-                                g.DrawImage(img, r, src, GraphicsUnit.Pixel);
+                                g.DrawImage(img, dst, src, GraphicsUnit.Pixel);
                                 g.Restore(st);
                                 if (stroke) using (Pen p = new Pen(sCol, w)) g.DrawPath(p, hp);
                             }
@@ -1336,7 +1442,15 @@ namespace SnapMeasure
                             {
                                 GraphicsState st = g.Save();
                                 g.SetClip(hp, CombineMode.Intersect);
-                                DrawPixelate(g, s, img);
+                                if (s.Angle != 0f && img != null)
+                                {
+                                    // turned: the box's own pixelation would miss the corners of the turned outline
+                                    RectangleF all = new RectangleF(0, 0, img.Width, img.Height);
+                                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                                    g.DrawImage(PixelatedOf(img, s.PixelBlock), all, all, GraphicsUnit.Pixel);
+                                }
+                                else DrawPixelate(g, s, img);
                                 g.Restore(st);
                             }
                             else if (s.Mode == (int)HighlightMode.GrayscaleInside && img != null)
@@ -1375,7 +1489,7 @@ namespace SnapMeasure
                         break;
                     }
                 case ShapeKind.Angle:
-                    DrawAngle(g, s, sCol, w, name);
+                    DrawAngle(g, s, sCol, w, name, sc);
                     break;
                 case ShapeKind.Arc:
                     {
@@ -1403,9 +1517,9 @@ namespace SnapMeasure
                             g.DrawLine(cp, o, s.Pts[1]);
                         }
                         foreach (PointF q in s.Pts) using (SolidBrush b = new SolidBrush(sCol)) g.FillEllipse(b, q.X - w * 1.3f, q.Y - w * 1.3f, w * 2.6f, w * 2.6f);
+                        if (s.Mode == 5) { s.LabelRect = RectangleF.Empty; break; }     // Show → None: no label, still listed
                         string t = (string.IsNullOrEmpty(name) ? "" : name + (string.IsNullOrEmpty(s.Text) ? "" : "  " + s.Text) + "\n") +
-                                   // Mode: 0 = radius and diameter, 1 = radius only, 2 = diameter only
-                                   (s.Mode == 2 ? "" : "R = " + sc.Len(rad)) + (s.Mode == 0 ? "\n" : "") + (s.Mode == 1 ? "" : "Ø = " + sc.Len(2 * rad));
+                                   RadiusText(s.Mode, sc, rad, Geo.ArcLength(s.Pts[0], s.Pts[1], s.Pts[2]));
                         PointF mid = Geo.Mid(o, s.Pts[1]);
                         PointF lc = new PointF(mid.X + s.LabelOffset.X, mid.Y + s.LabelOffset.Y);
                         if (Geo.Dist(mid, lc) > s.FontSize * 1.5f)
@@ -1589,6 +1703,20 @@ namespace SnapMeasure
             if (line.Count >= 2) gp.AddLines(line.ToArray());
             if (closed) gp.CloseFigure();
             return gp;
+        }
+
+        /// <summary>A focus shape's outline in picture coordinates, turned by its angle.</summary>
+        public static GraphicsPath HighlightPath(Shape s)
+        {
+            RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+            GraphicsPath p = HighlightPath(r, s.Form);
+            if (s.Angle != 0f)
+                using (Matrix m = new Matrix())
+                {
+                    m.RotateAt(s.Angle, Geo.Center(r));
+                    p.Transform(m);
+                }
+            return p;
         }
 
         /// <summary>Outline of a highlight area in the chosen form.</summary>
@@ -1782,7 +1910,7 @@ namespace SnapMeasure
                 }
         }
 
-        static void DrawAngle(Graphics g, Shape s, Color col, float w, string name)
+        static void DrawAngle(Graphics g, Shape s, Color col, float w, string name, ScaleInfo sc)
         {
             if (s.Pts.Count < 2) return;
             PointF p1 = s.Pts[0], v = s.Pts[1];
@@ -1805,7 +1933,7 @@ namespace SnapMeasure
                     if (Math.Abs(sweep) > 0.05) g.DrawArc(ap, v.X - r, v.Y - r, 2 * r, 2 * r, (float)a1, (float)sweep);
                 double mid = (a1 + sweep / 2.0) * Math.PI / 180.0;
                 double deg = Geo.AngleAt(p1, v, p2);
-                string t = ScaleInfo.AngleText(deg);
+                string t = sc != null ? sc.Angle(deg) : ScaleInfo.AngleText(deg);
                 Font f = GetFont(s.FontSize, false);
                 SizeF sz = g.MeasureString(t, f);
                 float dist = r + 6f + Math.Max(sz.Width, sz.Height) * 0.55f;
@@ -1874,7 +2002,7 @@ namespace SnapMeasure
                 int block = pixOut[0].PixelBlock;
                 using (Region rg = new Region(all))
                 {
-                    foreach (Shape s in pixOut) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
+                    foreach (Shape s in pixOut) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
                     GraphicsState st = g.Save();
                     g.SetClip(rg, CombineMode.Intersect);
                     g.InterpolationMode = InterpolationMode.NearestNeighbor;
@@ -1887,7 +2015,7 @@ namespace SnapMeasure
             {
                 using (Region rg = new Region(all))
                 {
-                    foreach (Shape s in gray) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
+                    foreach (Shape s in gray) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
                     GraphicsState st = g.Save();
                     g.SetClip(rg, CombineMode.Intersect);
                     g.PixelOffsetMode = PixelOffsetMode.Half;
@@ -1900,7 +2028,7 @@ namespace SnapMeasure
                 using (Region rg = new Region(all))
                 using (SolidBrush b = new SolidBrush(Color.FromArgb((int)(Math.Max(10, spotOp) * 2.55), 0, 0, 0)))
                 {
-                    foreach (Shape s in spot) using (GraphicsPath hp = HighlightPath(Geo.Rect(s.Pts[0], s.Pts[1]), s.Form)) rg.Exclude(hp);
+                    foreach (Shape s in spot) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
                     g.FillRegion(b, rg);
                 }
             }
@@ -2016,22 +2144,7 @@ namespace SnapMeasure
             string key = r.ToString() + "|" + block + "|" + img.GetHashCode();
             if (s.Cache == null || s.CacheKey != key)
             {
-                int sw = Math.Max(1, (r.Width + block - 1) / block), sh = Math.Max(1, (r.Height + block - 1) / block);
-                Bitmap big = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
-                using (Bitmap smallB = new Bitmap(sw, sh, PixelFormat.Format32bppArgb))
-                {
-                    using (Graphics g2 = Graphics.FromImage(smallB))
-                    {
-                        g2.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                        g2.DrawImage(img, new Rectangle(0, 0, sw, sh), r, GraphicsUnit.Pixel);
-                    }
-                    using (Graphics g3 = Graphics.FromImage(big))
-                    {
-                        g3.InterpolationMode = InterpolationMode.NearestNeighbor;
-                        g3.PixelOffsetMode = PixelOffsetMode.Half;
-                        g3.DrawImage(smallB, new Rectangle(0, 0, sw * block, sh * block), new Rectangle(0, 0, sw, sh), GraphicsUnit.Pixel);
-                    }
-                }
+                Bitmap big = Blocks(img, r, block);
                 if (s.Cache != null) s.Cache.Dispose();
                 s.Cache = big;
                 s.CacheKey = key;
@@ -2198,6 +2311,16 @@ namespace SnapMeasure
                     h.Add(new Handle(s.Pts[0], HKind.Point, 0));
                     break;
                 case ShapeKind.Counter:
+                    {
+                        // number / letter marker: drag a corner to make the disc (and its text) bigger or smaller
+                        float r = Math.Max(8f, s.FontSize * 0.9f);
+                        PointF c = s.Pts[0];
+                        h.Add(new Handle(new PointF(c.X - r, c.Y - r), HKind.Box, 0));
+                        h.Add(new Handle(new PointF(c.X + r, c.Y - r), HKind.Box, 2));
+                        h.Add(new Handle(new PointF(c.X + r, c.Y + r), HKind.Box, 4));
+                        h.Add(new Handle(new PointF(c.X - r, c.Y + r), HKind.Box, 6));
+                        break;
+                    }
                 case ShapeKind.Note:
                     break;
                 default: // box shapes
@@ -2285,6 +2408,15 @@ namespace SnapMeasure
                     }
                 case HKind.Box:
                     {
+                        if (s.Kind == ShapeKind.Counter)
+                        {
+                            // marker: the corner's distance from the centre sets the disc's size (it stays round)
+                            PointF c = orig.Pts[0];
+                            float half = Math.Max(Math.Abs(p.X - c.X), Math.Abs(p.Y - c.Y));
+                            s.FontSize = Math.Max(6f, Math.Min(300f, half / 0.9f));
+                            s.Cache = null;
+                            break;
+                        }
                         if (s.Kind == ShapeKind.Text)
                         {
                             // text box: corners and sides resize the box; the text wraps inside and keeps its size.
@@ -2314,8 +2446,8 @@ namespace SnapMeasure
                         if (i == 2 || i == 3 || i == 4) rt = lp.X;
                         if (i == 0 || i == 1 || i == 2) t = lp.Y;
                         if (i == 4 || i == 5 || i == 6) bt = lp.Y;
-                        // pictures keep their proportions on corners unless Shift is held; other boxes the other way round
-                        bool keep = orig.Kind == ShapeKind.Image ? !shift : shift;
+                        // a corner stretches width and height freely; Shift keeps the proportions (uniform scale) – pictures too
+                        bool keep = shift;
                         if (keep && (i % 2 == 0) && r.Width > 0 && r.Height > 0)
                         {
                             // keep proportions on corners
@@ -2934,6 +3066,7 @@ namespace SnapMeasure
         {
             // written next to it first and swapped in: a failed save never spoils the old file
             Output.WriteSafely(path, p => WriteProject(p, img, shapes, sc, ex));
+            ShellPreview.WarmThumbnail(path);           // File Explorer shows it with its picture straight away
         }
 
         static void WriteProject(string path, Bitmap img, List<Shape> shapes, ScaleInfo sc, ProjectExtras ex)
@@ -2951,10 +3084,21 @@ namespace SnapMeasure
                 w.WriteAttributeString("letterStart", sc.LetterStart.ToString(Inv));
                 w.WriteAttributeString("numberLabel", sc.NumberLabel ?? "");
                 w.WriteAttributeString("letterLabel", sc.LetterLabel ?? "");
+                if (sc.Rounding != 0) w.WriteAttributeString("rounding", sc.Rounding.ToString(Inv));
+                if (sc.LetterReverse) w.WriteAttributeString("letterReverse", "1");
+                if (sc.MarkerReverse) w.WriteAttributeString("markerReverse", "1");
                 if (ex.Crop.HasValue)
                 {
                     Rectangle r = ex.Crop.Value;
                     w.WriteAttributeString("crop", r.X + "," + r.Y + "," + r.Width + "," + r.Height);
+                }
+                // a small picture with the markups, first in the file: File Explorer's thumbnail and preview pane read only this
+                byte[] preview = PreviewImage(img, shapes, sc, ex.Crop);
+                if (preview != null)
+                {
+                    w.WriteStartElement("preview");
+                    w.WriteString(Convert.ToBase64String(preview));
+                    w.WriteEndElement();
                 }
                 w.WriteStartElement("image");
                 using (MemoryStream ms = new MemoryStream())
@@ -2968,6 +3112,73 @@ namespace SnapMeasure
                 foreach (float x in ex.VGuides) { w.WriteStartElement("guide"); w.WriteAttributeString("axis", "v"); w.WriteAttributeString("v", F(x)); w.WriteEndElement(); }
                 w.WriteEndElement();
             }
+        }
+
+        /// <summary>Longest side of the preview stored in a project (Explorer's largest thumbnails are 256 px; the
+        /// preview pane is often wider).</summary>
+        public const int PreviewSize = 640;
+
+        /// <summary>The finished picture (markups drawn, crop applied) scaled to fit PreviewSize, as JPEG (quality 80):
+        /// a scaled-down screenshot as PNG made small projects 4× bigger and saving 2× slower. Null if it fails.</summary>
+        static byte[] PreviewImage(Bitmap img, List<Shape> shapes, ScaleInfo sc, Rectangle? crop)
+        {
+            try
+            {
+                // drawn straight at the small size (one pass, no full-size copy): saving stays quick on 4K pictures
+                Rectangle cr = crop.HasValue ? crop.Value : new Rectangle(0, 0, img.Width, img.Height);
+                {
+                    float f = Math.Min(1f, (float)PreviewSize / Math.Max(cr.Width, cr.Height));
+                    int w = Math.Max(1, (int)Math.Round(cr.Width * f)), h = Math.Max(1, (int)Math.Round(cr.Height * f));
+                    using (Bitmap small = new Bitmap(w, h, PixelFormat.Format24bppRgb))
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        using (Graphics g = Graphics.FromImage(small))
+                        {
+                            g.Clear(Color.White);
+                            g.ScaleTransform(f, f);
+                            g.TranslateTransform(-cr.X, -cr.Y);
+                            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                            g.DrawImage(img, new Rectangle(0, 0, img.Width, img.Height), new Rectangle(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
+                            g.PixelOffsetMode = PixelOffsetMode.Default;
+                            g.SmoothingMode = SmoothingMode.AntiAlias;
+                            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                            Renderer.DrawAll(g, shapes, img, sc, null, true);
+                        }
+                        ImageCodecInfo jpg = Array.Find(ImageCodecInfo.GetImageEncoders(), c => c.FormatID == ImageFormat.Jpeg.Guid);
+                        using (EncoderParameters ep = new EncoderParameters(1))
+                        {
+                            ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 80L);
+                            small.Save(ms, jpg, ep);
+                        }
+                        return ms.ToArray();
+                    }
+                }
+            }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>For File Explorer: the stored preview of a project, read from the start of the file without
+        /// loading the rest. Older projects have none: then the clean picture is used.</summary>
+        public static Bitmap ReadPreview(Stream s)
+        {
+            XmlReaderSettings set = new XmlReaderSettings();
+            set.DtdProcessing = DtdProcessing.Prohibit;
+            set.XmlResolver = null;
+            set.IgnoreWhitespace = true;
+            using (XmlReader r = XmlReader.Create(s, set))
+            {
+                if (!r.ReadToFollowing("snapmeasure")) return null;
+                r.Read();
+                while (!r.EOF)
+                {
+                    if (r.NodeType != XmlNodeType.Element) { r.Read(); continue; }
+                    if (r.Name == "preview" || r.Name == "image")
+                        return DecodeImage(r.ReadElementContentAsString());
+                    r.Skip();
+                }
+            }
+            return null;
         }
 
         public static Bitmap Load(string path, List<Shape> shapes, ScaleInfo sc)
@@ -2992,6 +3203,9 @@ namespace SnapMeasure
             sc.LetterStart = PI(root.GetAttribute("letterStart"), 1);
             sc.NumberLabel = Trunc(root.GetAttribute("numberLabel"), 500);
             sc.LetterLabel = Trunc(root.GetAttribute("letterLabel"), 500);
+            sc.Rounding = Math.Max(0, Math.Min(2, PI(root.GetAttribute("rounding"), 0)));
+            sc.LetterReverse = root.GetAttribute("letterReverse") == "1";
+            sc.MarkerReverse = root.GetAttribute("markerReverse") == "1";
             bool oldLetters = root.GetAttribute("markerLetters") == "1";     // v2: one series, either numbers or letters
             if (oldLetters) { sc.LetterStart = Math.Max(1, sc.MarkerStart); sc.MarkerStart = 1; }
             string[] cp = root.GetAttribute("crop").Split(',');
