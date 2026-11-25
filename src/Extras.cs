@@ -231,6 +231,8 @@ namespace SnapMeasure
             catch (Exception) { }
         }
         public const int MaxHeight = 30000;
+        /// <summary>Steps in a row without movement before the page counts as finished (each retry waits longer; about 5 s at the real end).</summary>
+        const int MaxStill = 4;
 
 
         /// <summary>
@@ -258,11 +260,30 @@ namespace SnapMeasure
                         n[bin]++;
                     }
                     for (int i = 0; i < Bins; i++) if (n[i] > 0) p[i] /= n[i];
-                    rows[y] = p;
+                    rows[y] = HighPass(p);
                 }
             }
             finally { b.UnlockBits(d); }
             return rows;
+        }
+
+        /// <summary>
+        /// Each strip minus the average of its neighbours (about ±8 strips). Keeps text and edges, drops slow shading:
+        /// see-through windows (Notepad's Mica, say) tint their background by the wallpaper and by focus, the tint
+        /// stays on the screen while the content scrolls, and it changes from one frame to the next.
+        /// </summary>
+        static float[] HighPass(float[] p)
+        {
+            int n = p.Length, k = 8;
+            float[] sum = new float[n + 1];
+            for (int i = 0; i < n; i++) sum[i + 1] = sum[i] + p[i];
+            float[] r = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                int a = Math.Max(0, i - k), b = Math.Min(n, i + k + 1);
+                r[i] = p[i] - (sum[b] - sum[a]) / (b - a);
+            }
+            return r;
         }
 
         static float RowDiff(float[] a, float[] b)
@@ -270,6 +291,52 @@ namespace SnapMeasure
             float s = 0;
             for (int i = 0; i < a.Length; i++) s += Math.Abs(a[i] - b[i]);
             return s / a.Length;
+        }
+
+        /// <summary>
+        /// Like RowDiff, but only over the strips listed in 'use' (null = all), and blind to the whole row being a
+        /// little brighter or darker: see-through windows (Notepad's Mica, say) tint their background by the
+        /// wallpaper and by focus, and that tint stays on the screen while the content scrolls.
+        /// </summary>
+        static float RowDiff(float[] a, float[] b, int[] use)
+        {
+            int n = use != null ? use.Length : a.Length;
+            float m = 0;
+            if (use != null) foreach (int i in use) m += a[i] - b[i];
+            else for (int i = 0; i < a.Length; i++) m += a[i] - b[i];
+            m /= n;
+            float s = 0;
+            if (use != null) foreach (int i in use) s += Math.Abs(a[i] - b[i] - m);
+            else for (int i = 0; i < a.Length; i++) s += Math.Abs(a[i] - b[i] - m);
+            return s / n;
+        }
+
+        /// <summary>
+        /// The strips that have something in them in either frame. A strip that is one flat colour from top to bottom
+        /// (a margin, a see-through window edge showing the wallpaper) says nothing about scrolling, yet its colour may
+        /// change between frames (Windows tints see-through edges by focus), which would spoil the match. Null = use all.
+        /// </summary>
+        static int[] ContentStrips(float[][] prev, float[][] cur)
+        {
+            int h = Math.Min(prev.Length, cur.Length);
+            if (h < 4) return null;
+            int bins = prev[0].Length;
+            List<int> use = new List<int>();
+            for (int i = 0; i < bins; i++)
+            {
+                if (Spread(prev, i, h) > 2f || Spread(cur, i, h) > 2f) use.Add(i);
+            }
+            return use.Count >= Math.Max(4, bins / 20) ? use.ToArray() : null;
+        }
+
+        /// <summary>Range of one strip's brightness down the frame, ignoring the most extreme 1 % at each end.</summary>
+        static float Spread(float[][] rows, int bin, int h)
+        {
+            float[] v = new float[h];
+            for (int y = 0; y < h; y++) v[y] = rows[y][bin];
+            Array.Sort(v);
+            int cut = h / 100;
+            return v[h - 1 - cut] - v[cut];
         }
 
         /// <summary>
@@ -306,7 +373,8 @@ namespace SnapMeasure
             footer = 0;
             while (footer < h / 3 && RowStill(prev[h - 1 - footer], cur[h - 1 - footer])) footer++;
             if (header + footer >= h - 2) return 0;
-            // rows that carry content (not plain background) decide the match
+            // strips (columns) that carry content decide the match, not plain margins
+            int[] use = ContentStrips(prev, cur);
             int best = -1;
             double bestErr = double.MaxValue;
             for (int d = 1; d < h - header - footer; d++)
@@ -316,19 +384,19 @@ namespace SnapMeasure
                 double err = 0;
                 int cnt = 0;
                 int step = n > 400 ? 2 : 1;
-                for (int i = header; i < h - footer - d; i += step) { err += RowDiff(cur[i], prev[i + d]); cnt++; }
+                for (int i = header; i < h - footer - d; i += step) { err += RowDiff(cur[i], prev[i + d], use); cnt++; }
                 err /= Math.Max(1, cnt);
                 if (err < bestErr) { bestErr = err; best = d; }
             }
             // also check that the match is clearly better than no movement at all
             double still = 0;
             int c2 = 0;
-            for (int i = header; i < h - footer; i += 2) { still += RowDiff(cur[i], prev[i]); c2++; }
+            for (int i = header; i < h - footer; i += 2) { still += RowDiff(cur[i], prev[i], use); c2++; }
             still /= Math.Max(1, c2);
             bestD = best; bestE = bestErr; stillE = still;
             if (still < 0.2) return 0;                                // nothing moved (end of the page)
             // a near-perfect match is always good; otherwise it must clearly beat "nothing moved"
-            return bestErr < 0.8 || (bestErr < 3.0 && bestErr < still * 0.5) ? best : -1;
+            return bestErr < 0.8 || (bestErr < 3.0 && bestErr < still * 0.6) ? best : -1;
         }
 
         /// <summary>Stitches frames (all the same size). Used by the capture and by the self-test.</summary>
@@ -490,13 +558,16 @@ namespace SnapMeasure
                         home = Cursor.Position;          // carry on from where the pointer came back
                         if (Wait(250, bar)) break;
                     }
-                    // newer apps only route the wheel to what's under a mouse that has moved, so nudge it first
-                    SetCursorPos(home.X + (step % 2 == 0 ? 2 : -2), home.Y + 1);
-                    if (Wait(30, bar)) break;
+                    // newer apps only route the wheel to what's under a mouse that has moved, so nudge it first;
+                    // after a step that did not move, nudge further and give the app longer: some (Notepad, say)
+                    // now and then skip a wheel step or are slow to redraw, which is not the end of the page
+                    int nudge = still == 0 ? 6 : 12 * still;            // physical pixels: 6 is 2–3 units even at 200 %
+                    SetCursorPos(home.X + (step % 2 == 0 ? nudge : -nudge), home.Y + 1);
+                    if (Wait(still == 0 ? 30 : 120, bar)) break;
                     SetCursorPos(home.X, home.Y);
-                    if (Wait(30, bar)) break;
+                    if (Wait(still == 0 ? 30 : 120, bar)) break;
                     mouse_event(MOUSEEVENTF_WHEEL, 0, 0, -120 * 3, UIntPtr.Zero);
-                    if (Wait(600, bar)) break;           // smooth scrolling has to come to rest
+                    if (Wait(600 + 400 * still, bar)) break;           // smooth scrolling has to come to rest
                     Bitmap f = ScreenCapture.Grab(r);
                     float[][] hsh = RowHashes(f);
                     int hd, ft;
@@ -507,7 +578,7 @@ namespace SnapMeasure
                         f.Save(Path.Combine(dbg, "frame" + step.ToString("D2") + ".png"), ImageFormat.Png);
                         File.AppendAllText(Path.Combine(dbg, "log.txt"), step + ": shift " + d + " header " + hd + " footer " + ft + "  " + LastDiag + Environment.NewLine);
                     }
-                    if (d == 0) { f.Dispose(); if (++still >= 2) break; continue; }    // bottom reached
+                    if (d == 0) { f.Dispose(); if (++still >= MaxStill) break; continue; }    // bottom reached
                     if (d < 0) { f.Dispose(); break; }                                    // can't line up: stop here
                     still = 0;
                     frames.Add(f);

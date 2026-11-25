@@ -130,6 +130,31 @@ namespace SnapMeasure
             return Math.Max(20, dpi * f);
         }
 
+        /// <summary>How much larger than asked Windows renders this page (1 = exactly as asked).</summary>
+        static double RenderFactor(Windows.Data.Pdf.PdfPage p, double w, double h)
+        {
+            try
+            {
+                const uint probe = 200;
+                Windows.Data.Pdf.PdfPageRenderOptions o = new Windows.Data.Pdf.PdfPageRenderOptions();
+                o.DestinationWidth = probe;
+                o.DestinationHeight = (uint)Math.Max(1, Math.Round(probe * h / Math.Max(1.0, w)));
+                byte[] png;
+                using (InMemoryRandomAccessStream ms = new InMemoryRandomAccessStream())
+                {
+                    WinRt.Wait(p.RenderToStreamAsync(ms, o));
+                    png = WinRt.ReadAll(ms);
+                }
+                using (MemoryStream s = new MemoryStream(png))
+                using (Image im = Image.FromStream(s, false, false))
+                {
+                    double k = im.Width / (double)probe;
+                    return Math.Abs(k - 1) > 0.05 && k > 0.125 && k < 8 ? k : 1.0;
+                }
+            }
+            catch (Exception) { return 1.0; }
+        }
+
         /// <summary>Renders page 'index' (0-based). Returns the picture and the page size in mm.</summary>
         public static Bitmap Render(string path, int index, ref double dpi, out SizeF pageMm)
         {
@@ -144,9 +169,12 @@ namespace SnapMeasure
                     double w = p.Size.Width, h = p.Size.Height;          // 1/96 inch (DIPs), not PDF points
                     mm = new SizeF((float)(w / 96.0 * 25.4), (float)(h / 96.0 * 25.4));
                     useDpi = SafeDpi(w, h, useDpi);
+                    // On scaled displays Windows may enlarge the rendered picture beyond the size asked for
+                    // (seen: 1.8–2×). A tiny test render tells by how much, so the real render can ask for less.
+                    double k = RenderFactor(p, w, h);
                     Windows.Data.Pdf.PdfPageRenderOptions o = new Windows.Data.Pdf.PdfPageRenderOptions();
-                    o.DestinationWidth = (uint)Math.Max(1, Math.Round(w / 96.0 * useDpi));
-                    o.DestinationHeight = (uint)Math.Max(1, Math.Round(h / 96.0 * useDpi));
+                    o.DestinationWidth = (uint)Math.Max(1, Math.Round(w / 96.0 * useDpi / k));
+                    o.DestinationHeight = (uint)Math.Max(1, Math.Round(h / 96.0 * useDpi / k));
                     using (InMemoryRandomAccessStream ms = new InMemoryRandomAccessStream())
                     {
                         WinRt.Wait(p.RenderToStreamAsync(ms, o));
@@ -154,12 +182,13 @@ namespace SnapMeasure
                     }
                 }
             });
-            dpi = useDpi;
             pageMm = mm;
             using (MemoryStream s = new MemoryStream(png))
             using (Image im = Image.FromStream(s, false, true))
             {
                 ProjectFile.CheckImageSize(im.Width, im.Height);
+                // the resolution actually delivered, so measurements stay right whatever Windows did
+                dpi = mm.Width > 0 ? im.Width * 25.4 / mm.Width : useDpi;
                 // flatten onto white: PDF pages may come out transparent
                 Bitmap b = new Bitmap(im.Width, im.Height, PixelFormat.Format32bppArgb);
                 using (Graphics g = Graphics.FromImage(b))

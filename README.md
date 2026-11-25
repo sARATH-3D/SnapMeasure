@@ -1,6 +1,6 @@
 <img src="docs/icon.png" alt="SnapMeasure icon: a capture frame with an amber measuring arrow" width="96" align="right">
 
-# SnapMeasure 1.4.0
+# SnapMeasure 1.4.1
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
@@ -23,6 +23,15 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Free and light:** no subscription, no account, no ads, no telemetry. One ~520 KB exe that runs without installing,
   or the signed Microsoft Store version that updates itself. Paid takeoff software is great for full projects; SnapMeasure is
   for the quick check, the markup for a colleague, and the takeoff from a screenshot.
+
+**See it in 40 seconds:** [the trailer](docs/SnapMeasure-trailer.mp4) · **New to SnapMeasure?** Read the [Quick user guide](docs/USER-GUIDE.md).
+
+**What's new in 1.4.1:**
+* **PDF pages at the right size:** a PDF page now opens at exactly the sharpness you pick (it could come out larger or smaller on some
+  PCs), so *Drawing scale → PDF page (exact)* is right every time.
+* **Scrolling capture no longer stops early** in apps whose window tint changes while they scroll (for example Notepad on Windows 11):
+  it looks at the text itself, not the background shade, and waits a little longer before it decides the page has ended.
+* Quick user guide and a short trailer video (see above).
 
 **What's new in 1.4.0:**
 * **Dark mode:** Settings → General → Appearance: Automatic (follows Windows), Light or Dark.

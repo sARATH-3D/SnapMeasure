@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.1.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -853,6 +853,16 @@ namespace SnapMeasure
                             if (st.GetPixel(x, y).ToArgb() != page.GetPixel(x, y).ToArgb()) { same = false; break; }
                     check("Scrolling capture stitch", st.Width + "x" + st.Height + "|" + same, "320x1180|True");
                 }
+                // the same frames under a see-through window's shading (Notepad's Mica): a soft tint that stays on
+                // the screen and changes strength from frame to frame must not stop the capture
+                int[] tint = { 30, 90, 10, 70 };
+                for (int i = 0; i < frames.Count; i++)
+                    using (Graphics g = Graphics.FromImage(frames[i]))
+                    using (System.Drawing.Drawing2D.LinearGradientBrush lb = new System.Drawing.Drawing2D.LinearGradientBrush(
+                        new Rectangle(0, 0, 320, 400), Color.FromArgb(tint[i], 120, 70, 40), Color.FromArgb(tint[i] / 3, 120, 70, 40), 30f))
+                        g.FillRectangle(lb, 0, 30, 320, 370);
+                using (Bitmap st = ScrollCapture.Stitch(frames))
+                    check("Scrolling capture under a changing tint", st.Width + "x" + st.Height, "320x1180");
                 foreach (Bitmap fr in frames) fr.Dispose();
             }
 
@@ -867,7 +877,14 @@ namespace SnapMeasure
                     double dpi = 72;
                     SizeF mm;
                     using (Bitmap pg = PdfImport.Render(pdfPath, 0, ref dpi, out mm))
-                        res = info.Pages + "|" + pg.Width + "x" + pg.Height + "|" + mm.Width.ToString("F1", inv) + "x" + mm.Height.ToString("F1", inv);
+                    {
+                        // on scaled displays Windows renders larger than asked; Render compensates, which may be
+                        // a pixel off after rounding, so check the size loosely and the reported resolution exactly
+                        bool sizeOk = Math.Abs(pg.Width - 675) <= 2 && Math.Abs(pg.Height - 450) <= 2;
+                        bool dpiOk = Math.Abs(pg.Width * 25.4 / dpi - mm.Width) < 0.05;
+                        res = info.Pages + "|" + (sizeOk ? "675x450" : pg.Width + "x" + pg.Height) + "|" + mm.Width.ToString("F1", inv) + "x" + mm.Height.ToString("F1", inv)
+                            + (dpiOk ? "" : "|dpi " + dpi.ToString("F2", inv));
+                    }
                 }
                 catch (Exception ex) { res = ex.GetType().Name + ": " + ex.Message; }
                 check("PDF page import", res, "1|675x450|238.1x158.8");

@@ -59,7 +59,9 @@ Also included: text recognition (OCR) to copy text from any picture, pinned pict
 No account, no telemetry, no ads. Your pictures stay on your PC.
 
 ## What's new in this version
-Radius / diameter tool, area tool with open or closed outline, keep-inside lock, zoom to area, match properties, arc, polyline and highlighter pen tools, Focus strength slider, rotatable clouds, pin rotate and mirror, Add-ons menu for the on-screen ruler and protractor, and safer saving.
+**1.4.1 (English):** PDF pages now always open at the sharpness you pick, so the PDF page scale is exact on every PC. Scrolling capture no longer stops early in apps whose background shade changes while they scroll (such as Notepad on Windows 11). New quick user guide and trailer video.
+
+**1.4.1 (한국어):** PDF 페이지가 선택한 해상도 그대로 열려 어느 PC에서나 PDF 축척이 정확합니다. 스크롤하는 동안 배경 색조가 바뀌는 앱(Windows 11 메모장 등)에서 스크롤 캡처가 일찍 멈추던 문제를 고쳤습니다. 빠른 사용자 가이드와 소개 영상이 추가되었습니다.
 
 ## Keywords (up to 7)
 screenshot; measure; quantity takeoff; markup; PDF; OCR; ruler
