@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -30,7 +30,9 @@ namespace SnapMeasure
         ToolStripButton bUndo, bRedo;
         ToolStripLabel lZoomBar;
         StatusStrip status;
-        ToolStripStatusLabel lPos, lZoom, lScale, lHint;
+        ToolStripStatusLabel lPos, lZoom, lScale, lHint, lNote, lNoteX, lCount;
+        System.Windows.Forms.Timer noteTimer;
+        bool noteShowing;
         readonly Dictionary<Tool, ToolStripButton> toolButtons = new Dictionary<Tool, ToolStripButton>();
         Label lStyleFor, lSO, lFO;
         Button bStroke, bFill;
@@ -60,6 +62,7 @@ namespace SnapMeasure
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
         CheckBox cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR;
+        ComboBox cFontName, cAlign;      // text bar (like Greenshot): font, B, I, U, one alignment list
         ToolStripButton bRulers;
         ToolStripButton bPanel;
         readonly ToolTip tip = new ToolTip();
@@ -166,6 +169,7 @@ namespace SnapMeasure
             cv.Scale.Decimals = Settings.GetInt("Decimals", 2);
             cv.Scale.Rounding = 0;          // Ceil / Floor always start unticked (a project keeps its own)
             cv.ShowRulers = Settings.GetBool("ShowRulers", true);
+            StylePrefs.Apply(cv);           // Settings → Styles → Remember my styles
             cv.AskText = (t, init) => Dialogs.Ask(this, t, init, false);
             cv.AskNote = (t, init) => Dialogs.Ask(this, t, init, true);
             cv.AskCalibration = px => Dialogs.Calibrate(this, px, cv.Scale);
@@ -200,7 +204,7 @@ namespace SnapMeasure
             cv.ViewChanged += (s, e) => { UpdateZoom(); if (bRulers != null) bRulers.Checked = cv.ShowRulers; if (!rescaling && cv.Size == viewSize) viewWhole = WholeVisible(); viewSize = cv.Size; };
             cv.CursorMoved = UpdatePos;
 
-            Shown += (s, e) => { cv.Fit(); cv.Focus(); };
+            Shown += (s, e) => { cv.Fit(); cv.Focus(); StartNoteTimer(); };
             // a widened panel never takes more than half the window
             Resize += (s, e) =>
             {
@@ -233,6 +237,7 @@ namespace SnapMeasure
             UpdateUndo();
             ResumeLayout(false);
             Lang.Apply(this, tip);       // other languages: the finished window, all at once
+            Theme.Apply(this);           // dark mode: recolour the finished window
             Step("filled");
             Shown +=(s, e) => { Step("shown"); BeginInvoke((Action)(() => { Step("painted"); OpenTiming = openSteps.ToString(); })); };
         }
@@ -344,6 +349,15 @@ namespace SnapMeasure
             }
         }
 
+        /// <summary>Settings changed the tool icon size: rebuild the bars at the same scale.</summary>
+        internal void RebuildBars()
+        {
+            if (rescaling || moving || IsDisposed) return;
+            rescaling = true;
+            try { ApplyScale(k, WindowState == FormWindowState.Normal ? Bounds : (Rectangle?)null); }
+            finally { rescaling = false; }
+        }
+
         void ApplyScale(float nk, Rectangle? newBounds)
         {
             float ratio = nk / k;
@@ -395,6 +409,7 @@ namespace SnapMeasure
                 Controls.Add(bar);
                 Controls.Add(status);
                 LoadStyle();               // shows the rows for the current tool: needs the bars on the window
+                Theme.Apply(this);         // the rebuilt bars: dark mode
             }
             finally
             {
@@ -474,6 +489,8 @@ namespace SnapMeasure
             bar.Items.Add(new ToolStripSeparator());
             ToolStripSplitButton bSave = Split("Save", "Save the picture (and an editable .snapm) to your save folder (Ctrl+S) · ▾ = Save as", "save", (s, e) => QuickSave());
             MenuItem(bSave, "Save as…   (Ctrl+Shift+S)", "saveas", (s, e) => SaveAs());
+            MenuItem(bSave, "Open in Paint", "paint", (s, e) => OpenInPaint());
+            MenuItem(bSave, "Print…", "print", (s, e) => PrintPicture());
             ToolStripSplitButton bCopy = Split("Copy", "Copy the marked-up picture (Ctrl+C with nothing selected) · ▾ = copy text or measurements", "copy", (s, e) => CopyImage());
             MenuItem(bCopy, "Copy picture", "copy", (s, e) => CopyImage());
             MenuItem(bCopy, "Copy text from the picture (OCR)", "ocr", (s, e) => CopyText(null));
@@ -497,16 +514,17 @@ namespace SnapMeasure
             MenuItem(img, "Border", "border", (s, e) => cv.ImageOp("border"));
             MenuItem(img, "Drop shadow", "shadow", (s, e) => cv.ImageOp("shadow"));
             MenuItem(img, "Torn edge", "torn", (s, e) => cv.ImageOp("torn"));
+            MenuItem(img, "Extend canvas…   (Ctrl+Plus / Ctrl+Minus = 10 px)", "extend", (s, e) => ExtendCanvas());
             img.DropDownItems.Add(new ToolStripSeparator());
             MenuItem(img, "Grayscale", "gray", (s, e) => cv.ImageOp("gray"));
             MenuItem(img, "Invert colours", "invert", (s, e) => cv.ImageOp("invert"));
             bar.Items.Add(img);
             bar.Items.Add(new ToolStripSeparator());
 
-            IconOnly(AddBtn(bar, "Zoom out", "Zoom out (Ctrl+−, or Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(-1)), "zoomout");
+            IconOnly(AddBtn(bar, "Zoom out", "Zoom out (Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(-1)), "zoomout");
             lZoomBar = new ToolStripLabel("100%");
             bar.Items.Add(lZoomBar);
-            IconOnly(AddBtn(bar, "Zoom in", "Zoom in (Ctrl++, or Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(1)), "zoomin");
+            IconOnly(AddBtn(bar, "Zoom in", "Zoom in (Ctrl+mouse wheel)", (s, e) => cv.ZoomStep(1)), "zoomin");
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
             IconOnly(AddBtn(bar, "Zoom to area", "Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)", (s, e) => { cv.StartZoomBox(); cv.Focus(); }), "zoomarea");
             IconOnly(AddBtn(bar, "Actual pixels", "Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)", (s, e) => { cv.ZoomCenter(1f); cv.Focus(); }), "actual");
@@ -924,17 +942,6 @@ namespace SnapMeasure
             return t;
         }
 
-        Panel SliderRow(string label, TrackBar t, Label pct)
-        {
-            Panel host = new Panel();
-            host.Size = new Size(S(140), S(26));
-            t.Location = new Point(0, 0);
-            pct.Location = new Point(S(100), S(2));
-            host.Controls.Add(t);
-            host.Controls.Add(pct);
-            return Row(label, host);
-        }
-
         CheckBox ToggleBase(string tip)
         {
             CheckBox c = new CheckBox();
@@ -986,7 +993,7 @@ namespace SnapMeasure
                 bool inList = (e.State & DrawItemState.ComboBoxEdit) == 0;
                 int y = e.Bounds.Y + (e.Bounds.Height - S(18)) / 2;
                 // wide line picture so the end style is easy to see
-                using (Bitmap wide = Icons.HeadPreviewWide(e.Index, !start, S(40), S(18)))
+                using (Bitmap wide = Icons.HeadPreviewWide(Icons.HeadMenu[e.Index], !start, S(40), S(18)))
                     e.Graphics.DrawImage(wide, e.Bounds.X + S(3), y);
                 if (inList)
                     using (SolidBrush b = new SolidBrush(e.ForeColor))
@@ -1015,7 +1022,8 @@ namespace SnapMeasure
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 int x0 = e.Bounds.X + S(4), x1 = e.Bounds.X + S(inList ? 60 : 58), y = e.Bounds.Y + e.Bounds.Height / 2;
                 Shape tmp = new Shape(); tmp.Dash = e.Index;
-                Color col = (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : Color.FromArgb(40, 40, 45);                if (e.Index == (int)LineStyle.Cloud)
+                Color col = (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : (Theme.Dark ? Theme.Ink : Color.FromArgb(40, 40, 45));
+                if (e.Index == (int)LineStyle.Cloud)
                     using (System.Drawing.Drawing2D.GraphicsPath gp = Renderer.CloudPolyPath(new PointF[] { new PointF(x0, y + S(3)), new PointF(x1, y + S(3)) }, false, 0.5f * k))
                     using (Pen p = new Pen(col, Math.Max(1f, k))) g.DrawPath(p, gp);
                 else
@@ -1088,6 +1096,80 @@ namespace SnapMeasure
             LoadStyle();
         }
 
+        /// <summary>The font list of the text bar. Only the font in use is in the list until it is opened (filling it
+        /// with every installed font takes time a new editor shouldn't spend).</summary>
+        ComboBox FontCombo()
+        {
+            ComboBox c = Combo(132, Renderer.DefaultFont);
+            c.SelectedIndex = 0;
+            c.MaxDropDownItems = 20;
+            c.DropDownWidth = S(200);
+            bool filled = false;
+            c.DropDown += (s, e) =>
+            {
+                if (filled) return;
+                filled = true;
+                string cur = c.SelectedItem as string;
+                bool was = loading; loading = true;
+                try
+                {
+                    c.BeginUpdate();
+                    c.Items.Clear();
+                    List<string> names = new List<string>();
+                    foreach (FontFamily ff in FontFamily.Families) if (ff.IsStyleAvailable(FontStyle.Regular)) names.Add(ff.Name);
+                    names.Sort(StringComparer.OrdinalIgnoreCase);
+                    c.Items.AddRange(names.ToArray());
+                    int i = cur == null ? -1 : c.Items.IndexOf(cur);
+                    c.SelectedIndex = i >= 0 ? i : Math.Max(0, c.Items.IndexOf(Renderer.DefaultFont));
+                }
+                catch (Exception) { }
+                finally { c.EndUpdate(); loading = was; }
+            };
+            c.SelectedIndexChanged += (s, e) =>
+            {
+                string name = c.SelectedItem as string;
+                if (loading || string.IsNullOrEmpty(name)) return;
+                string v = name == Renderer.DefaultFont ? null : name;
+                ApplyStyle(x => { if (x.HasTextStyle) { x.FontName = v; x.Cache = null; } });
+            };
+            tip.SetToolTip(c, Lang.T("Font"));
+            return c;
+        }
+
+        /// <summary>Shows a font in the font list (adds it when the list isn't filled yet).</summary>
+        void ShowFontName(string name)
+        {
+            if (cFontName == null) return;
+            int i = cFontName.Items.IndexOf(name);
+            if (i < 0) i = cFontName.Items.Add(name);
+            cFontName.SelectedIndex = i;
+        }
+
+        ComboBox AlignCombo()
+        {
+            ComboBox c = Combo(96, "Left", "Centre", "Right");
+            LazyItemHeight(c, S(20));
+            c.DrawItem += (s, e) =>
+            {
+                e.DrawBackground();
+                if (e.Index < 0) return;
+                using (Image im = Icons.Cmd(e.Index == 0 ? "alignl" : e.Index == 1 ? "alignc" : "alignr", S(16)))
+                    e.Graphics.DrawImage(im, e.Bounds.X + S(3), e.Bounds.Y + (e.Bounds.Height - im.Height) / 2);
+                Color fc = (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : c.ForeColor;
+                TextRenderer.DrawText(e.Graphics, Lang.T((string)c.Items[e.Index]), c.Font, new Rectangle(e.Bounds.X + S(23), e.Bounds.Y, e.Bounds.Width - S(23), e.Bounds.Height), fc,
+                                      TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            };
+            c.SelectedIndexChanged += (s, e) =>
+            {
+                int a = c.SelectedIndex;
+                if (loading || a < 0) return;
+                ApplyStyle(x => x.Align = a);
+                LoadStyle();
+            };
+            tip.SetToolTip(c, Lang.T("Text alignment"));
+            return c;
+        }
+
         ComboBox Combo(int width, params string[] items)
         {
             ComboBox c = new ComboBox();
@@ -1129,7 +1211,7 @@ namespace SnapMeasure
                 Label l = new Label();
                 l.Text = label;
                 l.AutoSize = true;
-                l.ForeColor = Color.FromArgb(80, 80, 80);
+                l.ForeColor = Theme.Dark ? Theme.Label : Color.FromArgb(80, 80, 80);      // dark mode: white, like the other text on the bar
                 l.Margin = new Padding(0, S(6), S(3), 0);
                 p.Controls.Add(l);
             }
@@ -1189,8 +1271,8 @@ namespace SnapMeasure
             tip.SetToolTip(tFO, Lang.T("Fill opacity (for pictures: picture opacity)"));
 
             // Focus modes: list index = HighlightMode (0 = Highlight, the see-through box; the default)
-            cHlMode = Combo(110, "Highlight", "Spotlight", "Grayscale", "Magnify", "Pixelate");
-            tip.SetToolTip(cHlMode, Lang.T("Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate · Cut-out tool (X) cuts holes in a focus"));
+            cHlMode = Combo(110, "Highlight", "Spotlight", "Grayscale", "Magnify", "Pixelate", "Blur");    // list position: see HlListToMode
+            tip.SetToolTip(cHlMode, Lang.T("Highlight = see-through box in the fill colour · Spotlight, Grayscale, Magnify, Pixelate, Blur · Cut-out tool (X) cuts holes in a focus"));
             // strength: magnify ×1.5 … ×6, pixelate 4 … 40 px blocks
             tStr = new TrackBar();
             tStr.Minimum = 1; tStr.Maximum = 10; tStr.TickStyle = TickStyle.None; tStr.AutoSize = false;
@@ -1208,7 +1290,7 @@ namespace SnapMeasure
             EventHandler focusChanged = (s, e) =>
             {
                 if (loading || cHlMode.SelectedIndex < 0) return;
-                int b = cHlMode.SelectedIndex;
+                int b = HlListToMode(cHlMode.SelectedIndex);
                 bool inside = cWhere.SelectedIndex != 1;
                 ApplyStyle(x =>
                 {
@@ -1233,8 +1315,8 @@ namespace SnapMeasure
             tip.SetToolTip(nFont, Lang.T("Text size"));
             cHeadS = HeadCombo(true);
             cHeadE = HeadCombo(false);
-            cHeadS.SelectedIndexChanged += (s, e) => { int h = cHeadS.SelectedIndex; if (h >= 0) ApplyStyle(x => { if (x.HasHeads) x.HeadStart = h; }); };
-            cHeadE.SelectedIndexChanged += (s, e) => { int h = cHeadE.SelectedIndex; if (h >= 0) ApplyStyle(x => { if (x.HasHeads) x.HeadEnd = h; }); };
+            cHeadS.SelectedIndexChanged += (s, e) => { int h = cHeadS.SelectedIndex; if (h >= 0) { int st = Icons.HeadMenu[h]; ApplyStyle(x => { if (x.HasHeads) x.HeadStart = st; }); } };
+            cHeadE.SelectedIndexChanged += (s, e) => { int h = cHeadE.SelectedIndex; if (h >= 0) { int st = Icons.HeadMenu[h]; ApplyStyle(x => { if (x.HasHeads) x.HeadEnd = st; }); } };
             tip.SetToolTip(cHeadS, Lang.T("Line end at the start point (also on the right-click menu)"));
             tip.SetToolTip(cHeadE, Lang.T("Line end at the end point (also on the right-click menu)"));
             cStamp = Combo(130, Stamps.Names);
@@ -1314,6 +1396,7 @@ namespace SnapMeasure
                 sw.Size = new Size(S(16), S(16));
                 sw.Margin = new Padding(0, 0, S(2), 0);
                 sw.BackColor = Palette[i];
+                Theme.Keep(sw);
                 sw.BorderStyle = BorderStyle.FixedSingle;
                 sw.Cursor = Cursors.Hand;
                 sw.MouseUp += (s, e) => SetPaletteColor(e.Button != MouseButtons.Right, idx);
@@ -1324,6 +1407,7 @@ namespace SnapMeasure
             // last: the screen colour picker (pick any colour on any screen). It shows the last colour picked, with a pipette on it
             Panel more = new Panel();
             more.Size = new Size(S(16), S(16));
+            Theme.Keep(more);
             more.Margin = new Padding(S(3), 0, 0, 0);
             more.BorderStyle = BorderStyle.FixedSingle;
             more.Cursor = Cursors.Hand;
@@ -1336,12 +1420,16 @@ namespace SnapMeasure
             gLine = Grp("Line", bStroke, tSO, lSO, nWidth);
             gFill = Grp("Fill", bFill, tFO, lFO);
             gFont = Grp("Text", nFont);
-            rowTextStyle = Grp("", cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR);
+            // text bar, simplified like Greenshot: font, Bold, Italic, Underline and one alignment list
+            // (strike-out is on the text's right-click menu; the old align buttons stay off the bar)
+            cFontName = FontCombo();
+            cAlign = AlignCombo();
+            rowTextStyle = Grp("", cFontName, cBold, cItalic, cUnder, cAlign);
             gHeads = Grp("Start", cHeadS);
             Label lEnd = new Label();
             lEnd.Text = Lang.T("End");
             lEnd.AutoSize = true;
-            lEnd.ForeColor = Color.FromArgb(80, 80, 80);
+            lEnd.ForeColor = Theme.Dark ? Theme.Label : Color.FromArgb(80, 80, 80);
             lEnd.Margin = new Padding(S(4), S(6), S(3), 0);
             gHeads.Controls.Add(lEnd);
             cHeadE.Margin = new Padding(0, S(2), S(3), 0);
@@ -1548,8 +1636,9 @@ namespace SnapMeasure
             Panel outer = new Panel();
             outer.Dock = DockStyle.Right;
             outer.Width = S(Math.Max(PanelMin, Math.Min(1600, Settings.GetInt("PanelWidth", PanelMin))));
-            outer.BackColor = SystemColors.Control;
-            outer.Padding = new Padding(0, S(2), S(6), S(6));
+            // dark mode: the bars' colour, so top bar, rulers and panel make one frame round the darker drawing area
+            outer.BackColor = Theme.Dark ? Theme.Elevated : SystemColors.Control;
+            outer.Padding = new Padding(0, 0, S(6), S(6));        // top flush with the ruler
             outer.Visible = Settings.GetBool("ShowPanel", true);
             props = outer;
 
@@ -1567,7 +1656,8 @@ namespace SnapMeasure
             grip.Dock = DockStyle.Left;
             grip.Width = S(6);
             grip.Cursor = Cursors.SizeWE;
-            grip.Paint += (s, e) => { using (Pen p = new Pen(SystemColors.ControlDark)) e.Graphics.DrawLine(p, S(2), 0, S(2), grip.Height); };
+            // the same soft line as the ruler's edge, so ruler and panel meet in one clean corner
+            grip.Paint += (s, e) => { using (Pen p = new Pen(Theme.Dark ? Theme.Border : Color.FromArgb(170, 170, 170))) e.Graphics.DrawLine(p, S(2), 0, S(2), grip.Height); };
             tip.SetToolTip(grip, Lang.T("Drag to make the panel wider or narrower · double-click = normal width"));
             int dragX = 0, dragW = 0;
             bool dragging = false;
@@ -1789,23 +1879,29 @@ namespace SnapMeasure
         {
             if (mode == (int)HighlightMode.GrayscaleInside) return (int)HighlightMode.Grayscale;
             if (mode == (int)HighlightMode.PixelateOutside) return (int)HighlightMode.Pixelate;
+            if (mode == (int)HighlightMode.BlurOutside) return (int)HighlightMode.Blur;
             return mode;
         }
 
-        bool strMagnify;
+        bool strMagnify, strBlur;
 
         /// <summary>The value next to the Strength slider: ×2.5 for magnify, 12 px for pixelate.</summary>
         void ShowStrength()
         {
             int v = tStr.Value;
-            lStr.Text = strMagnify ? "×" + (1 + v * 0.5).ToString("0.0", CultureInfo.InvariantCulture) : Math.Max(3, v * 4) + " px";
+            lStr.Text = strMagnify ? "×" + (1 + v * 0.5).ToString("0.0", CultureInfo.InvariantCulture) : strBlur ? (v * 3) + " px" : Math.Max(3, v * 4) + " px";
         }
+
+        /// <summary>Focus list position → mode: the first five are the modes 0–4 themselves, the sixth is Blur.</summary>
+        static int HlListToMode(int i) { return i == 5 ? (int)HighlightMode.Blur : i; }
+        static int HlModeToList(int b) { return b == (int)HighlightMode.Blur ? 5 : Math.Max(0, Math.Min((int)HighlightMode.Pixelate, b)); }
 
         /// <summary>Focus: the stored mode for a list mode and a side.</summary>
         static int FocusMode(int baseMode, bool inside)
         {
             if (baseMode == (int)HighlightMode.Grayscale) return inside ? (int)HighlightMode.GrayscaleInside : (int)HighlightMode.Grayscale;
             if (baseMode == (int)HighlightMode.Pixelate) return inside ? (int)HighlightMode.Pixelate : (int)HighlightMode.PixelateOutside;
+            if (baseMode == (int)HighlightMode.Blur) return inside ? (int)HighlightMode.Blur : (int)HighlightMode.BlurOutside;
             return baseMode;
         }
 
@@ -1879,16 +1975,103 @@ namespace SnapMeasure
             status.Items.Add(new ToolStripSeparator());
             status.Items.Add(lScale);
             status.Items.Add(new ToolStripSeparator());
+            // the once-per-100 thank-you line (hidden until it is due): a link, and a small x that ends it for good
+            lNote = new ToolStripStatusLabel("");
+            lNote.IsLink = true;
+            lNote.LinkBehavior = LinkBehavior.HoverUnderline;
+            if (Theme.Dark) lNote.LinkColor = lNote.ActiveLinkColor = lNote.VisitedLinkColor = Theme.Link;
+            lNote.Visible = false;
+            lNote.ToolTipText = "Optional. Nothing in SnapMeasure is locked.";
+            lNote.Click += (s, e) => { Usage.NoteClose(); HideNote(); App.OpenSupport(); };
+            lNoteX = new ToolStripStatusLabel("✕");
+            lNoteX.ForeColor = SystemColors.GrayText;
+            lNoteX.Visible = false;
+            lNoteX.ToolTipText = "Don't show this again";
+            lNoteX.Click += (s, e) => { Usage.NoteClose(); HideNote(); };
+            status.Items.Add(lNote);
+            status.Items.Add(lNoteX);
             status.Items.Add(lHint);
+            lCount = new ToolStripStatusLabel(Usage.CountText);
+            lCount.ForeColor = SystemColors.GrayText;
+            lCount.ToolTipText = Lang.T("Captures on this PC. Never sent anywhere.");
+            lCount.Visible = Usage.ShowCount;
             Version v = typeof(EditorForm).Assembly.GetName().Version;
-            ToolStripStatusLabel lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor + (v.Build > 0 ? "." + v.Build : ""));
+            ToolStripStatusLabel lVersion = new ToolStripStatusLabel("SnapMeasure v" + v.Major + "." + v.Minor + "." + v.Build);
             lVersion.ForeColor = Color.FromArgb(0, 102, 204);
             lVersion.IsLink = true;
             lVersion.LinkBehavior = LinkBehavior.HoverUnderline;
+            if (Theme.Dark) lVersion.LinkColor = lVersion.ActiveLinkColor = lVersion.VisitedLinkColor = Theme.Link;
             lVersion.ToolTipText = "About SnapMeasure – " + AppInfo.RepoUrl;
             lVersion.Click += (s, e) => App.ShowAbout(this);
             status.Items.Add(new ToolStripSeparator());
+            status.Items.Add(lCount);
+            status.Items.Add(new ToolStripSeparator());
             status.Items.Add(lVersion);
+            if (noteShowing) ShowNote();            // the bar was rebuilt (monitor change) while the note was up
+        }
+
+        // ---------------- the once-per-100 thank-you line ----------------
+        /// <summary>The capture that reached 100, 200 … also showed a tray message; the next editor opened shows the line in
+        /// its status bar too: 2 seconds after it opens, for 20 seconds (or until ✕). No window, no sound, no focus change.</summary>
+        void StartNoteTimer()
+        {
+            if (!App.NoteForEditor) return;
+            App.NoteForEditor = false;
+            noteTimer = new System.Windows.Forms.Timer();
+            noteTimer.Interval = 2000;
+            bool up = false;                       // false = waiting to show, true = showing (waiting to hide)
+            noteTimer.Tick += (s, e) =>
+            {
+                noteTimer.Stop();
+                if (IsDisposed) return;
+                if (up) { HideNote(); return; }
+                bool busy = cv.CreatingPoints > 0 || cv.IsEditingText || Control.MouseButtons != MouseButtons.None;
+                if (busy) { noteTimer.Interval = 3000; noteTimer.Start(); return; }     // not while drawing: in a moment
+                noteShowing = true;
+                ShowNote();
+                up = true;
+                noteTimer.Interval = 20000;
+                noteTimer.Start();
+            };
+            noteTimer.Start();
+        }
+        void ShowNote()
+        {
+            if (lNote == null) return;
+            lNote.Text = "☕ " + Usage.CountText + " – " + Lang.T("thanks for using SnapMeasure. Optional: buy me a coffee");
+            lNote.Visible = lNoteX.Visible = true;
+            lHint.Visible = false;
+        }
+
+        /// <summary>Self-test: any drop-down on the top bar that lists the same text twice ("" = none).</summary>
+        internal string DuplicateMenuItems()
+        {
+            string found = "";
+            foreach (ToolStripItem i in bar.Items)
+            {
+                ToolStripDropDownItem dd = i as ToolStripDropDownItem;
+                if (dd == null) continue;
+                HashSet<string> seen = new HashSet<string>();
+                foreach (ToolStripItem c in dd.DropDownItems)
+                    if (!(c is ToolStripSeparator) && !seen.Add(c.Text)) found += dd.Text + ": " + c.Text + "; ";
+            }
+            return found;
+        }
+
+        /// <summary>Self-test: show the thank-you line now (as at capture 100), for a snapshot.</summary>
+        internal void DemoNote()
+        {
+            if (lCount != null) lCount.Text = Usage.CountText;
+            noteShowing = true;
+            ShowNote();
+        }
+
+        void HideNote()
+        {
+            noteShowing = false;
+            if (lNote == null) return;
+            lNote.Visible = lNoteX.Visible = false;
+            lHint.Visible = true;
         }
 
         // ---------------- state sync ----------------
@@ -2035,7 +2218,7 @@ namespace SnapMeasure
                 case ShapeKind.Coord: return "Coordinate point";
                 case ShapeKind.Origin: return "Origin 0,0";
                 case ShapeKind.Highlight:
-                    return s.Mode == (int)HighlightMode.Pixelate || s.Mode == (int)HighlightMode.PixelateOutside ? "Pixelate" : s.Mode == 0 ? "Highlight" : "Focus";
+                    return s.Mode == (int)HighlightMode.Pixelate || s.Mode == (int)HighlightMode.PixelateOutside ? "Pixelate" : s.Mode == (int)HighlightMode.Blur || s.Mode == (int)HighlightMode.BlurOutside ? "Blur" : s.Mode == 0 ? "Highlight" : "Focus";
                 case ShapeKind.Freehand: return s.IsMarkerPen ? "Highlighter pen" : "Freehand";
                 case ShapeKind.Polygon: return s.IsOpenPath ? "Polyline (open polygon)" : "Polygon";
                 case ShapeKind.Radius: return "Radius / diameter";
@@ -2052,6 +2235,9 @@ namespace SnapMeasure
             if (s == null)
             {
                 lStyleFor.Text = Lang.T(cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's or polygon's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape");
+                bFill.Visible = true;
+                Label fillLabel0 = gFill.Controls.Count > 0 ? gFill.Controls[0] as Label : null;
+                if (fillLabel0 != null) fillLabel0.Text = Lang.T("Fill");
                 rowHl.Visible = rowStrength.Visible = rowMarkStart.Visible = rowTextStyle.Visible = gHeads.Visible = rowStamp.Visible = rowMarkup.Visible = false;
                 gDash.Visible = rowForm.Visible = rowCallout.Visible = rowClosed.Visible = rowFrame.Visible = rowShow.Visible = false;
             }
@@ -2067,13 +2253,18 @@ namespace SnapMeasure
                 // the groups after them do not jump sideways when another tool or shape is picked
                 gFill.Visible = gLine.Visible = gShadow.Visible = kd != ShapeKind.Note;
                 if (lineOnly) gFill.Enabled = false;
+                // a picture has no fill colour: its slider is the picture's opacity
+                bool pic = kd == ShapeKind.Image;
+                bFill.Visible = !pic;
+                Label fillLabel = gFill.Controls.Count > 0 ? gFill.Controls[0] as Label : null;
+                if (fillLabel != null) fillLabel.Text = Lang.T(pic ? "Opacity" : "Fill");
                 gFont.Visible = s.HasTextStyle || kd == ShapeKind.Counter || kd == ShapeKind.Dimension || kd == ShapeKind.Area || kd == ShapeKind.Angle || kd == ShapeKind.Radius ||
                                 kd == ShapeKind.Polyline || kd == ShapeKind.Perimeter || kd == ShapeKind.Note;
                 gHeads.Visible = s.HasHeads;
                 if (s.HasHeads)
                 {
-                    cHeadS.SelectedIndex = Math.Max(0, Math.Min(9, s.HeadStart));
-                    cHeadE.SelectedIndex = Math.Max(0, Math.Min(9, s.HeadEnd));
+                    cHeadS.SelectedIndex = Icons.HeadIndex(s.HeadStart);      // -1 = an older end that is no longer in the list
+                    cHeadE.SelectedIndex = Icons.HeadIndex(s.HeadEnd);
                 }
                 rowStamp.Visible = kd == ShapeKind.Stamp;
                 if (rowStamp.Visible) cStamp.SelectedIndex = Math.Max(0, Math.Min(Stamps.Names.Length - 1, s.Mode));
@@ -2118,16 +2309,16 @@ namespace SnapMeasure
                 if (rowHl.Visible)
                 {
                     int b = FocusBase(s.Mode);
-                    cHlMode.SelectedIndex = Math.Max(0, Math.Min((int)HighlightMode.Pixelate, b));
+                    cHlMode.SelectedIndex = HlModeToList(b);
                     // Inside / Outside stays in place for every mode (so nothing on the bar moves); it only matters for grayscale and pixelate
                     cWhere.Visible = true;
-                    cWhere.Enabled = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate;
-                    cWhere.SelectedIndex = s.Mode == (int)HighlightMode.Grayscale || s.Mode == (int)HighlightMode.PixelateOutside ? 1 : 0;
+                    cWhere.Enabled = b == (int)HighlightMode.Grayscale || b == (int)HighlightMode.Pixelate || b == (int)HighlightMode.Blur;
+                    cWhere.SelectedIndex = s.Mode == (int)HighlightMode.Grayscale || s.Mode == (int)HighlightMode.PixelateOutside || s.Mode == (int)HighlightMode.BlurOutside ? 1 : 0;
                 }
                 bool magnify = kd == ShapeKind.Highlight && s.Mode == (int)HighlightMode.Magnify;
                 rowStrength.Visible = magnify || kd == ShapeKind.Pixelate ||
-                                      (kd == ShapeKind.Highlight && FocusBase(s.Mode) == (int)HighlightMode.Pixelate);
-                if (rowStrength.Visible) { strMagnify = magnify; tStr.Value = s.ShownStrength(magnify); ShowStrength(); }
+                                      (kd == ShapeKind.Highlight && (FocusBase(s.Mode) == (int)HighlightMode.Pixelate || FocusBase(s.Mode) == (int)HighlightMode.Blur));
+                if (rowStrength.Visible) { strMagnify = magnify; strBlur = kd == ShapeKind.Highlight && FocusBase(s.Mode) == (int)HighlightMode.Blur; tStr.Value = strBlur && s.Strength <= 0 ? 3 : s.ShownStrength(magnify); ShowStrength(); }
                 // pixelate has no fill (the pixelate tool no outline either): grey them out but keep their place,
                 // so Shape, Mode and Strength stay put when the mode changes. A pixelate focus keeps its border.
                 if (rowStrength.Visible && !magnify) { gFill.Enabled = false; if (kd == ShapeKind.Pixelate) gLine.Enabled = false; }
@@ -2138,6 +2329,8 @@ namespace SnapMeasure
                 cUnder.Checked = s.Underline;
                 cStrike.Checked = s.Strikeout;
                 cAlignL.Checked = s.Align == 0; cAlignC.Checked = s.Align == 1; cAlignR.Checked = s.Align == 2;
+                cAlign.SelectedIndex = Math.Max(0, Math.Min(2, s.Align));
+                ShowFontName(s.HasTextStyle ? s.FontFamilyName : Renderer.DefaultFont);
             }
             LoadMarker();
             loading = false;
@@ -2146,6 +2339,7 @@ namespace SnapMeasure
 
         static void SetColorButton(Button b, Color c)
         {
+            Theme.Keep(b);                    // the colour the user picked: never recoloured by dark mode
             b.BackColor = c;
             b.FlatAppearance.MouseOverBackColor = c;
             b.FlatAppearance.BorderColor = Color.FromArgb(120, 120, 120);
@@ -2570,6 +2764,51 @@ namespace SnapMeasure
             }
         }
 
+        void OpenInPaint()
+        {
+            cv.EndTextEdit(true);
+            try { using (Bitmap b = cv.Flatten(Color.White)) App.OpenInPaint(b); }
+            catch (Exception ex) { MessageBox.Show(this, Lang.T("Could not open Paint:") + " " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        void PrintPicture()
+        {
+            cv.EndTextEdit(true);
+            try { using (Bitmap b = cv.Flatten(Color.White)) App.PrintPicture(this, b, Text); }
+            catch (Exception ex) { MessageBox.Show(this, Lang.T("Could not print:") + " " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        /// <summary>Ctrl+Plus / Ctrl+Minus: 10 px more or less on every side; new room takes the colour last chosen in Extend canvas.</summary>
+        void StepCanvas(bool grow)
+        {
+            cv.EndTextEdit(true);
+            if (cv.Image == null) return;
+            try
+            {
+                if (grow)
+                {
+                    int ci = Settings.GetInt("ExtendColour", 0);
+                    Color back = ci == 2 ? Color.Transparent : ci == 3 ? Color.Black : Color.White;
+                    if (ci == 1) { try { back = cv.Image.GetPixel(0, 0); } catch (Exception) { } }
+                    cv.ExtendCanvas(10, 10, 10, 10, back);
+                }
+                else if (!cv.ShrinkCanvas(10)) { Flash(Lang.T("The picture can't get any smaller.")); return; }
+                Flash(cv.Image.Width + " × " + cv.Image.Height + " px");
+            }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+        /// <summary>Adjust → Extend canvas: room around the picture (for notes or arrows outside it).</summary>
+        void ExtendCanvas()
+        {
+            cv.EndTextEdit(true);
+            if (cv.Image == null) return;
+            Color edge;
+            try { edge = cv.Image.GetPixel(0, 0); } catch (Exception) { edge = Color.White; }
+            int l, t, r, b; Color back;
+            if (!Dialogs.ExtendCanvas(this, edge, out l, out t, out r, out b, out back)) return;
+            try { cv.ExtendCanvas(l, t, r, b, back); }
+            catch (Exception ex) { MessageBox.Show(this, ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
         void CopyImage()
         {
             cv.EndTextEdit(true);
@@ -2736,9 +2975,9 @@ namespace SnapMeasure
                 case Keys.Control | Keys.D0: cv.Fit(); return true;
                 case Keys.Control | Keys.D1: cv.ZoomCenter(1f); return true;
                 case Keys.Control | Keys.Oemplus:
-                case Keys.Control | Keys.Add: cv.ZoomStep(1); return true;
+                case Keys.Control | Keys.Add: StepCanvas(true); return true;           // 1.4: 10 px more round the picture (zoom: Ctrl+wheel)
                 case Keys.Control | Keys.OemMinus:
-                case Keys.Control | Keys.Subtract: cv.ZoomStep(-1); return true;
+                case Keys.Control | Keys.Subtract: StepCanvas(false); return true;     // 10 px less
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
@@ -2749,11 +2988,11 @@ namespace SnapMeasure
             try { cv.EndTextEdit(true); cv.EndMatch(); } catch (Exception ex) { CloseLog(ex); }
             if (dirty && cv.Shapes.Count > 0 && e.CloseReason == CloseReason.UserClosing)
             {
-                // plain words on the buttons: "Cancel" used to be read as "close without saving"
-                int r = Dialogs.Choose(this, "Close SnapMeasure editor", "You have annotations that are not saved yet.",
-                                       "Save…", "Close without saving", "Keep editing");
+                // short and plain, like Windows' own "save changes?" box; "Don't save" says what it does
+                int r = Dialogs.Choose(this, "SnapMeasure", "Save your drawing before closing?", "Save…", "Don't save", "Cancel");
                 if (r == 2 || r < 0 || (r == 0 && !SaveAs())) { e.Cancel = true; return; }
             }
+            if (StylePrefs.On) StylePrefs.Save(cv);       // the styles used here become the ones new editors start with
             // the choice is made: nothing may keep the window open any more
             closeConfirmed = true;
             e.Cancel = false;

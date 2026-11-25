@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -36,28 +36,6 @@ namespace SnapMeasure
         [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetIconInfo(IntPtr h, out ICONINFO ii);
         [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr h, int w, int hh, int step, IntPtr brush, int flags);
         [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
-
-        static void DrawCursor(Graphics g, Rectangle r)
-        {
-            try
-            {
-                CURSORINFO ci = new CURSORINFO();
-                ci.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(CURSORINFO));
-                if (!GetCursorInfo(ref ci) || ci.flags == 0 || ci.hCursor == IntPtr.Zero) return;
-                ICONINFO ii;
-                int hx = 0, hy = 0;
-                if (GetIconInfo(ci.hCursor, out ii))
-                {
-                    hx = ii.xHotspot; hy = ii.yHotspot;
-                    if (ii.hbmMask != IntPtr.Zero) DeleteObject(ii.hbmMask);
-                    if (ii.hbmColor != IntPtr.Zero) DeleteObject(ii.hbmColor);
-                }
-                IntPtr hdc = g.GetHdc();
-                try { DrawIconEx(hdc, ci.pt.X - hx - r.X, ci.pt.Y - hy - r.Y, ci.hCursor, 0, 0, 0, IntPtr.Zero, 3); }   // DI_NORMAL
-                finally { g.ReleaseHdc(hdc); }
-            }
-            catch (Exception) { }
-        }
 
         public static Bitmap Grab(Rectangle r)
         {

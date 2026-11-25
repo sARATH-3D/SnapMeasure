@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.3.3.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.3.3.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.0.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -39,6 +39,7 @@ namespace SnapMeasure
                 try { MessageBox.Show("SnapMeasure hit an unexpected problem and has to close:\n\n" + (ex != null ? ex.Message : "unknown error") + "\n\nDetails: " + ErrorLog.FilePath, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
             };
             if (args.Length == 2 && args[0] == "--write-icon") { AppIcon.WriteIco(args[1]); return; }
+            AppDomain.CurrentDomain.ProcessExit += (s, e) => Lang.WriteDump();    // SNAPMEASURE_LANG_DUMP: list the texts with no translation
             // Settings → Output → preview pane: the part that needs administrator rights (registers for the machine)
             if (args.Length >= 2 && args[0] == ShellPreview.ElevatedArg) { Environment.ExitCode = ShellPreview.MachineRegister(args); return; }
 
@@ -64,6 +65,7 @@ namespace SnapMeasure
                 finally { ErrorLog.Showing = false; }
             };
             Settings.Load();
+            Theme.Init();
             try { StartJitProfile(); } catch { }
 
             // started at sign-in ("Start with Windows"): stay quiet in the tray
@@ -544,6 +546,99 @@ namespace SnapMeasure
             Shape hp = Mk(cv, Tool.Highlight, 600, 380, 760, 500); hp.Mode = (int)HighlightMode.Pixelate; hp.Form = (int)HighlightForm.Ellipse;
             Shape ht = Mk(cv, Tool.Highlight, 780, 380, 880, 500); ht.Form = (int)HighlightForm.Triangle; ht.Mode = (int)HighlightMode.Marker;
             Shape tx = Mk(cv, Tool.Text, 330, 260, 470, 260); tx.Text = "A long note that has to wrap inside the box"; tx.Frame = true; tx.Width = 2;
+            check("Text frame takes line styles and cloud", tx.HasOutlineStyle + "|" + tx.CanBeCloud, "True|True");
+            {
+                // a cut-out's corners are handles: dragging one reshapes the cut-out (and the net area follows)
+                Shape ar = rc.Clone(); ar.Kind = ShapeKind.Area; ar.Dash = 0; ar.Angle = 0;
+                ar.Pts = new List<PointF> { new PointF(0, 0), new PointF(100, 0), new PointF(100, 100), new PointF(0, 100) };
+                ar.Holes = new List<List<PointF>> { new List<PointF> { new PointF(20, 20), new PointF(40, 20), new PointF(40, 40), new PointF(20, 40) } };
+                List<Handle> hh = ShapeOps.Handles(ar, 20f).FindAll(x => x.Kind == HKind.HolePoint);
+                Shape ar2 = ar.Clone();
+                ShapeOps.DragHandle(ar2, ar, hh[2], new PointF(60, 60), false);
+                {
+                    // a pasted picture goes in at its real size; Reset picture brings the size back; opacity from the menu
+                    Tool wasTool = cv.CurrentTool;
+                    Bitmap pz = new Bitmap(50, 40);
+                    cv.InsertImage(pz, new PointF(200, 200));
+                    Shape pic = cv.Shapes[cv.Shapes.Count - 1];
+                    RectangleF r0 = Geo.Rect(pic.Pts[0], pic.Pts[1]);
+                    pic.Pts[1] = new PointF(pic.Pts[1].X + 30, pic.Pts[1].Y + 10); pic.Angle = 20;
+                    cv.ResetPicture(pic);
+                    RectangleF r1 = Geo.Rect(pic.Pts[0], pic.Pts[1]);
+                    cv.SetPictureOpacity(pic, 50);
+                    check("Pasted picture: real size, reset, opacity", r0.Width + "x" + r0.Height + "|" + r1.Width + "x" + r1.Height + "|" + pic.Angle + "|" + pic.FillOpacity, "50x40|50x40|0|50");
+                    cv.Shapes.Remove(pic);
+                    cv.CurrentTool = wasTool;
+                }
+                {
+                    // 1.4 blur: a hard black/white edge turns into a soft grey ramp
+                    using (Bitmap bw = new Bitmap(60, 20, PixelFormat.Format32bppArgb))
+                    {
+                        using (Graphics g = Graphics.FromImage(bw)) { g.Clear(Color.White); g.FillRectangle(Brushes.Black, 0, 0, 30, 20); }
+                        using (Bitmap bl = Renderer.Blurred(bw, 9))
+                        {
+                            int mid = bl.GetPixel(30, 10).R, far = bl.GetPixel(2, 10).R, farW = bl.GetPixel(57, 10).R;
+                            check("Blur softens an edge", (bl.Width == 60 && bl.Height == 20) + "|" + (mid > 60 && mid < 200) + "|" + (far < 40) + "|" + (farW > 215), "True|True|True|True");
+                        }
+                    }
+                }
+                {
+                    // 1.4 font family: kept in the project file; a missing family falls back to Segoe UI
+                    string pf = Path.Combine(dir, "selftest_font.snapm");
+                    Shape ft = new Shape(); ft.Kind = ShapeKind.Text; ft.Pts.Add(new PointF(10, 10)); ft.Pts.Add(new PointF(10, 10));
+                    ft.Text = "Font"; ft.FontSize = 22; ft.FontName = "Consolas";
+                    using (Bitmap fimg = new Bitmap(100, 60)) ProjectFile.Save(pf, fimg, new List<Shape> { ft }, new ScaleInfo());
+                    List<Shape> fb = new List<Shape>();
+                    using (Bitmap i4 = ProjectFile.Load(pf, fb, new ScaleInfo())) { }
+                    string fam;
+                    using (Font miss = Renderer.GetFont(12, FontStyle.Regular, "No Such Font 123")) fam = miss.FontFamily.Name;
+                    check("Font family saved, missing one falls back", fb[0].FontName + "|" + fb[0].FontSize.ToString(CultureInfo.InvariantCulture) + "|" + fam, "Consolas|22|Segoe UI");
+                }
+                {
+                    // 1.4 remember my styles: what one editor used, the next one starts with; Reset goes back to the defaults
+                    StylePrefs.TestPath = Path.Combine(dir, "selftest-styles.txt");
+                    try
+                    {
+                        using (Canvas a = new Canvas())
+                        {
+                            a.Styles[Tool.Arrow].Stroke = Color.FromArgb(0, 128, 0); a.Styles[Tool.Arrow].HeadStart = (int)HeadStyle.HalfClosed;
+                            a.Styles[Tool.Text].FontName = "Consolas"; a.Scale.MarkerReverse = true; a.Scale.MarkerStart = 12;
+                            StylePrefs.Save(a);
+                        }
+                        string got, after;
+                        using (Canvas b2 = new Canvas())
+                        {
+                            StylePrefs.Apply(b2);
+                            Shape sa = b2.Styles[Tool.Arrow];
+                            got = sa.Stroke.G + "|" + sa.HeadStart + "|" + b2.Styles[Tool.Text].FontName + "|" + b2.Scale.MarkerReverse + "|" + b2.Scale.MarkerStart + "|" + sa.Pts.Count;
+                        }
+                        StylePrefs.Reset();
+                        using (Canvas c3 = new Canvas()) { StylePrefs.Apply(c3); after = c3.Styles[Tool.Arrow].Stroke.R + "|" + c3.Styles[Tool.Arrow].HeadStart; }
+                        check("Remember my styles: save, apply, reset", got + "|" + after, "128|20|Consolas|True|12|0|230|10");
+                    }
+                    finally { StylePrefs.TestPath = null; }
+                }
+                {
+                    // 1.4 extend canvas: picture grows, the new edge takes the colour, drawings move with the picture
+                    using (Bitmap eimg = Canvas.BlankImage(100, 50, Color.White))
+                    using (Canvas ec = new Canvas())
+                    {
+                        ec.Image = Effects.To32(eimg);
+                        Shape er = new Shape(); er.Kind = ShapeKind.Rect; er.Pts.Add(new PointF(10, 10)); er.Pts.Add(new PointF(20, 20));
+                        ec.Shapes.Add(er);
+                        ec.ExtendCanvas(5, 10, 15, 20, Color.Red);
+                        Color ex0 = ec.Image.GetPixel(0, 0), ex1 = ec.Image.GetPixel(50, 35);
+                        check("Extend canvas", ec.Image.Width + "x" + ec.Image.Height + "|" + ex0.R + "," + ex0.G + "|" + ex1.R + "," + ex1.G + "|" + ec.Shapes[0].Pts[0].X + "," + ec.Shapes[0].Pts[0].Y,
+                              "120x80|255,0|255,255|15,20");
+                        // Ctrl+Minus: 10 px off each side, drawings follow; too small = refused, nothing changed
+                        bool shrunk = ec.ShrinkCanvas(10);
+                        bool tooSmall = ec.ShrinkCanvas(40);
+                        check("Shrink canvas", shrunk + "|" + ec.Image.Width + "x" + ec.Image.Height + "|" + ec.Shapes[0].Pts[0].X + "," + ec.Shapes[0].Pts[0].Y + "|" + tooSmall,
+                              "True|100x60|5,10|False");
+                    }
+                }
+                check("Cut-out corners can be dragged", hh.Count + "|" + Measure.NetArea(ar).ToString("F0", CultureInfo.InvariantCulture) + "|" + Measure.NetArea(ar2).ToString("F0", CultureInfo.InvariantCulture), "4|9600|9200");
+            }
             Shape fh = Mk(cv, Tool.Freehand, 20, 560, 60, 540, 100, 560, 140, 545); fh.HeadEnd = (int)HeadStyle.Filled;
             Shape po = Mk(cv, Tool.Perimeter, 600, 520, 700, 520, 700, 580);
             check("Perimeter open by default", po.IsOpenPath + "|" + Measure.Rows(cv.Shapes, sc, false).Find(r => r.Shape == po).Type, "True|Path length");
@@ -612,9 +707,26 @@ namespace SnapMeasure
             string bad = "";
             using (Bitmap b = new Bitmap(200, 40))
             using (Graphics g = Graphics.FromImage(b))
-                for (int st = 0; st <= 9; st++)
-                    try { Renderer.DrawHead(g, new PointF(100, 20), new PointF(1, 0), st, Color.Red, 3, 30, 16); } catch (Exception ex) { bad += st + ":" + ex.GetType().Name + " "; }
-            check("All 10 line ends draw", bad == "" ? "ok" : bad, "ok");
+                for (int st = 0; st <= 21; st++)
+                    try { Renderer.DrawHead(g, new PointF(100, 20), new PointF(1, 0), st, Color.Red, 3, 30, 16); Renderer.HeadBack(st, 3, 30, 16); } catch (Exception ex) { bad += st + ":" + ex.GetType().Name + " "; }
+            check("All 22 line ends draw", bad == "" ? "ok" : bad, "ok");
+            // AutoCAD's list: 16 entries, names and numbers match, new ends survive Save/Load, older ends still map
+            Shape ac = Mk(cv, Tool.Arrow, 20, 20, 300, 20);
+            ac.HeadStart = (int)HeadStyle.DatumTriangleFilled; ac.HeadEnd = (int)HeadStyle.Open30;
+            List<Shape> rtAc = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { ac }));
+            check("AutoCAD line ends: list + round-trip",
+                  Icons.HeadMenu.Length + "/" + Icons.HeadNames.Length + "/" + Icons.HeadIndex(10) + "/" + Icons.HeadIndex(8) + "/" + Icons.HeadName(8) + "/" + rtAc[0].HeadStart + "/" + rtAc[0].HeadEnd,
+                  "15/15/1/-1/Diamond/19/14");
+            using (Bitmap sl = new Bitmap(120, 30))
+            using (Graphics gs = Graphics.FromImage(sl))
+            {
+                gs.Clear(Color.White);
+                Renderer.DrawHead(gs, new PointF(100, 15), new PointF(1, 0), (int)HeadStyle.ClosedFilled, Color.Black, 1.5f, 33, 18);
+                // a slender head: long (about 30 px) and narrow (under 14 px) at the base
+                int baseX = 100 - 30, dark = 0;
+                for (int y = 0; y < 30; y++) if (sl.GetPixel(baseX + 2, y).GetBrightness() < 0.5f) dark++;
+                check("Closed filled is slender (3 : 1)", (dark >= 8 && dark <= 14).ToString(), "True");
+            }
 
             // path length, perimeter
             Shape pl = Mk(cv, Tool.Polyline, 100, 380, 400, 380, 400, 780);
@@ -1000,7 +1112,7 @@ namespace SnapMeasure
             {
                 Shape ln = Mk(cv, Tool.Line, 10, 10, 200, 10);
                 Shape ar = Mk(cv, Tool.Arrow, 10, 40, 200, 40);
-                check("Default heads: line none, arrow end", ln.Heads + "|" + ar.Heads, "0|1");
+                check("Default heads: line none, arrow = Closed filled at the start, none at the end", ln.Heads + "|" + ar.Heads + "|" + ar.HeadStart + "/" + ar.HeadEnd, "0|2|10/0");
                 ar.Heads = 3;
                 using (Bitmap pic = new Bitmap(40, 20)) { using (Graphics pg = Graphics.FromImage(pic)) pg.Clear(Color.Teal); cv.InsertImage((Bitmap)pic.Clone(), new PointF(450, 300)); }
                 Shape im = cv.Selected;
@@ -1016,6 +1128,52 @@ namespace SnapMeasure
                 List<Shape> back3 = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { ar, im }));
                 check("Heads + picture round-trip", back3.Count + "|" + back3[0].Heads + "|" + (back3[1].Img != null ? back3[1].Img.Width + "x" + back3[1].Img.Height : "none"), "2|3|40x20");
                 using (Bitmap flat = cv.Flatten(null)) flat.Save(Path.Combine(dir, "selftest_heads.png"), ImageFormat.Png);
+                // a sheet of every offered line end, drawn through the real renderer (for a look by eye)
+                using (Bitmap sheet = new Bitmap(720, 330))
+                using (Graphics sg = Graphics.FromImage(sheet))
+                using (Font sf = new Font("Segoe UI", 11f, GraphicsUnit.Pixel))
+                {
+                    sg.Clear(Color.White);
+                    sg.SmoothingMode = SmoothingMode.AntiAlias;
+                    for (int i = 0; i < Icons.HeadMenu.Length; i++)
+                    {
+                        int cx = 20 + (i % 3) * 235, cy = 28 + (i / 3) * 50;
+                        Shape hs = new Shape(); hs.Kind = ShapeKind.Line; hs.Stroke = Color.Black; hs.Width = 3; hs.StrokeOpacity = 100;
+                        hs.Pts.Add(new PointF(cx, cy)); hs.Pts.Add(new PointF(cx + 120, cy));
+                        hs.HeadStart = 0; hs.HeadEnd = Icons.HeadMenu[i];
+                        Renderer.Draw(sg, hs, null, null, "");
+                        sg.DrawString(Icons.HeadNames[i], sf, Brushes.Black, cx + 135, cy - 7);
+                    }
+                    // the half arrows on a thick line (the line must not poke out past the slant)
+                    int[] thick = { (int)HeadStyle.HalfClosed, (int)HeadStyle.HalfOpen, (int)HeadStyle.ClosedFilled };
+                    for (int i = 0; i < thick.Length; i++)
+                    {
+                        Shape hs = new Shape(); hs.Kind = ShapeKind.Line; hs.Stroke = Color.Black; hs.Width = 12; hs.StrokeOpacity = 100;
+                        hs.Pts.Add(new PointF(20 + i * 235, 290)); hs.Pts.Add(new PointF(200 + i * 235, 290));
+                        hs.HeadStart = 0; hs.HeadEnd = thick[i];
+                        Renderer.Draw(sg, hs, null, null, "");
+                    }
+                    sheet.Save(Path.Combine(dir, "selftest_lineends.png"), ImageFormat.Png);
+                }
+                // every paper type of New blank canvas, side by side
+                using (Bitmap psheet = new Bitmap(4 * 190 + 10, 3 * 130 + 10))
+                using (Graphics pg2 = Graphics.FromImage(psheet))
+                using (Font pf = new Font("Segoe UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel))
+                {
+                    pg2.Clear(Color.FromArgb(120, 120, 120));
+                    for (int i = 0; i < Papers.Names.Length; i++)
+                    {
+                        using (Bitmap pp = Canvas.BlankImage(180, 120, Papers.BackColor(Papers.Names[i])))
+                        {
+                            Papers.Decorate(pp, Papers.Names[i]);
+                            int px = 10 + (i % 4) * 190, py = 10 + (i / 4) * 130;
+                            pg2.DrawImage(pp, px - 5, py - 5);
+                            pg2.DrawString(Papers.Names[i], pf, Brushes.Red, px, py);
+                        }
+                    }
+                    psheet.Save(Path.Combine(dir, "selftest_papers.png"), ImageFormat.Png);
+                }
+                check("Paper types: 12, old choice kept", Papers.Names.Length + "|" + Papers.BackColor("Transparent").A + "|" + Papers.BackColor("Black").R, "12|0|0");
                 cv.Shapes.Remove(ln); cv.Shapes.Remove(ar); cv.Shapes.Remove(im); cv.Selected = null;
             }
 
@@ -1239,6 +1397,109 @@ namespace SnapMeasure
             }
             f.Hide();
             f.Dispose();
+
+            // ---- 1.4: what the 100th capture looks like, and the menu after a capture ----
+            try
+            {
+                Usage.DemoCount = 100;
+                using (Bitmap pic = Canvas.BlankImage(900, 500, Color.White))
+                using (EditorForm fn = new EditorForm(pic, "capture 100"))
+                {
+                    fn.Show();
+                    fn.TopMost = true; fn.Activate();
+                    fn.DemoNote();
+                    string dup = fn.DuplicateMenuItems();
+                    check("Top bar menus list each item once", dup == "" ? "ok" : dup, "ok");
+                    Application.DoEvents(); Thread.Sleep(400); Application.DoEvents();
+                    using (Bitmap sn = new Bitmap(fn.Width, fn.Height))
+                    using (Graphics sg = Graphics.FromImage(sn))
+                    {
+                        fn.DrawToBitmap(sn, new Rectangle(0, 0, fn.Width, fn.Height));       // not the screen: another window may be on top
+                        sn.Save(Path.Combine(dir, "selftest_100th_capture.png"), ImageFormat.Png);
+                    }
+                    fn.Hide();
+                }
+                Usage.DemoCount = 0;
+                Bitmap demo = Canvas.BlankImage(640, 360, Color.White);
+                ContextMenuStrip cm = App.ShowCaptureMenu(demo, "demo", null, Point.Empty);
+                Application.DoEvents(); Thread.Sleep(400); Application.DoEvents();
+                Rectangle mb = cm.Bounds;
+                using (Bitmap sn = new Bitmap(mb.Width, mb.Height))
+                using (Graphics sg = Graphics.FromImage(sn))
+                {
+                    sg.CopyFromScreen(mb.Left, mb.Top, 0, 0, mb.Size);
+                    sn.Save(Path.Combine(dir, "selftest_capture_menu.png"), ImageFormat.Png);
+                }
+                int shown = 0; foreach (string mk in App.MenuKeys) if (App.MenuHas(mk)) shown++;
+                bool other = (App.MenuHas("paint") || App.MenuHas("print")) && shown > (App.MenuHas("paint") ? 1 : 0) + (App.MenuHas("print") ? 1 : 0);
+                check("After-capture menu items", cm.Items.Count.ToString(), (shown + 2 + (other ? 1 : 0)).ToString());
+                cm.Close();                  // closed without a choice: keeps nothing
+                Application.DoEvents();
+            }
+            catch (Exception ex) { check("1.4 snapshots", ex.Message, "ok"); }
+            finally { Usage.DemoCount = 0; }
+
+            // ---- dark mode snapshots: the editor and the settings box, drawn dark whatever Windows is set to ----
+            try
+            {
+                Theme.ForceDark = true; Theme.Init();
+                using (Bitmap pic = Canvas.BlankImage(900, 600, Color.White))
+                using (EditorForm fd = new EditorForm(pic, "dark mode"))
+                {
+                    fd.Show();
+                    fd.TopMost = true; fd.Activate();
+                    fd.CanvasControl.CurrentTool = Tool.Arrow;
+                    Application.DoEvents(); Thread.Sleep(400); Application.DoEvents();
+                    using (Bitmap uid = new Bitmap(fd.Width, fd.Height))
+                    using (Graphics ug = Graphics.FromImage(uid))
+                    {
+                        ug.CopyFromScreen(fd.Left, fd.Top, 0, 0, fd.Size);        // what is really on the screen (DrawToBitmap ignores some native colours)
+                        uid.Save(Path.Combine(dir, "selftest_ui_dark.png"), ImageFormat.Png);
+                    }
+                    // nothing to style (Select tool): the switched-off Line / Fill / Shadow / Text must still be readable
+                    fd.CanvasControl.CurrentTool = Tool.Select;
+                    Application.DoEvents(); Thread.Sleep(300); Application.DoEvents();
+                    using (Bitmap uid = new Bitmap(fd.Width, fd.Height))
+                    using (Graphics ug = Graphics.FromImage(uid))
+                    {
+                        ug.CopyFromScreen(fd.Left, fd.Top, 0, 0, fd.Size);
+                        uid.Save(Path.Combine(dir, "selftest_ui_dark_off.png"), ImageFormat.Png);
+                    }
+                    fd.Hide();
+                }
+                System.Windows.Forms.Timer shot = new System.Windows.Forms.Timer();
+                shot.Interval = 700;
+                shot.Tick += (s2, e2) =>
+                {
+                    shot.Stop();
+                    foreach (Form of in Application.OpenForms)
+                        if (of.Text == "SnapMeasure settings")
+                        {
+                            for (int tab = 0; tab < 5; tab++)
+                            {
+                                TabControl tcs = null;
+                                foreach (Control ctl in of.Controls) if (ctl is TabControl) tcs = (TabControl)ctl;
+                                if (tcs == null) break;
+                                tcs.SelectedIndex = tab;
+                                of.TopMost = true; of.Activate();
+                                Application.DoEvents(); Thread.Sleep(300); Application.DoEvents();
+                                using (Bitmap sb = new Bitmap(of.Width, of.Height))
+                                using (Graphics sgx = Graphics.FromImage(sb))
+                                {
+                                    sgx.CopyFromScreen(of.Left, of.Top, 0, 0, of.Size);
+                                    sb.Save(Path.Combine(dir, "selftest_settings_dark_" + tab + ".png"), ImageFormat.Png);
+                                }
+                            }
+                            of.DialogResult = DialogResult.Cancel;
+                            break;
+                        }
+                };
+                shot.Start();
+                Dialogs.ShowSettings(null, 0);
+                shot.Dispose();
+            }
+            catch (Exception ex) { log.AppendLine("dark snapshot: " + ex.Message); }
+            finally { Theme.ForceDark = false; Theme.Init(); }
             File.WriteAllText(Path.Combine(dir, "selftest.txt"), log.ToString());
         }
     }
@@ -1288,6 +1549,9 @@ namespace SnapMeasure
             return t.Length > 120 ? t.Substring(0, 120) : t;
         }
 
+        /// <summary>Opens the optional "buy me a coffee" page.</summary>
+        public static void OpenSupport() { AppInfo.OpenUrl(AppInfo.SupportUrl); }
+
         /// <summary>Tray notification (set by the tray icon).</summary>
         public static Action<string> Notify;
         /// <summary>Started by Windows at sign-in: no welcome balloon.</summary>
@@ -1298,13 +1562,32 @@ namespace SnapMeasure
             if (Notify != null && Settings.GetBool("Notify", true)) Notify(msg);
         }
 
-        /// <summary>What happens after a capture (Settings → Capture): open the editor, copy, save, or copy + save.</summary>
+        /// <summary>After a capture: the choice menu (Settings → Capture), or the one fixed action chosen there.</summary>
         static void Deliver(Bitmap b, string title) { Deliver(b, title, Rectangle.Empty); }
 
-        /// <summary>'area' = where the capture was on screen, to place the mouse pointer (Settings → Capture the mouse pointer).</summary>
-        /// <summary>What a capture does when nothing is set yet: copy it to the clipboard (the tray icon, Ctrl+Shift+PrtSc and
-        /// the editor's New capture open the editor).</summary>
+        /// <summary>Without the menu: 0 = open the editor, 1 = copy, 2 = save, 3 = copy and save.</summary>
         public const int DefaultAfter = 1;
+
+        /// <summary>The choices the menu after a capture can offer, in menu order (Settings → Capture picks which).</summary>
+        public static readonly string[] MenuKeys = { "editor", "copy", "save", "saveas", "copysave", "paint", "print" };
+        public static readonly string[] MenuNames = { "Open in the SnapMeasure editor", "Copy to clipboard", "Save", "Save as…", "Copy and save", "Open in Paint", "Print…" };
+
+        /// <summary>Settings → Capture → "Show a menu after each capture" (on unless switched off).</summary>
+        public static bool CaptureMenuOn { get { return Settings.GetBool("CaptureMenu", true); } }
+
+        /// <summary>The menu's choices until Settings → Capture says otherwise.</summary>
+        public const string DefaultMenuItems = "editor,copy,saveas,copysave";
+
+        /// <summary>Whether this choice is in the menu.</summary>
+        public static bool MenuHas(string key)
+        {
+            string list = Settings.Get("CaptureMenuItems", null);
+            if (string.IsNullOrEmpty(list)) list = DefaultMenuItems;
+            return Array.IndexOf(list.Split(','), key) >= 0;
+        }
+
+        /// <summary>Set at capture 100, 200 …: the next editor that opens shows the thank-you line.</summary>
+        public static bool NoteForEditor;
 
         /// <summary>Set while the editor's New capture runs: that capture always opens in a new editor.</summary>
         static bool forceEditor;
@@ -1319,6 +1602,15 @@ namespace SnapMeasure
         static void Deliver(Bitmap b, string title, Rectangle area)
         {
             if (b == null) { ScreenCapture.ForgetCursor(); return; }
+            Usage.Bump();
+            if (Usage.NoteDue)
+            {
+                // capture 100, 200 …: one thank-you in the tray, and the next editor shows it in its status bar
+                Usage.NoteShown();
+                NoteForEditor = true;
+                if (Notify != null)
+                    Notify("☕ " + Usage.CountText + " – " + Lang.T("thank you for using SnapMeasure! Optional: buy me a coffee (tray menu → Support SnapMeasure)"));
+            }
             ScreenCapture.CursorShot cur = ScreenCapture.TakeCursor();
             Point curAt = Point.Empty;
             if (cur != null)
@@ -1326,41 +1618,188 @@ namespace SnapMeasure
                 curAt = new Point(cur.ScreenPos.X - area.X, cur.ScreenPos.Y - area.Y);
                 if (area.IsEmpty || !new Rectangle(0, 0, b.Width, b.Height).IntersectsWith(new Rectangle(curAt, cur.Image.Size))) { cur.Image.Dispose(); cur = null; }
             }
-            int afterMode = forceEditor ? 0 : Settings.GetInt("AfterCapture", DefaultAfter);
-            if (cur != null && afterMode != 0)
-            {
-                // no editor: the pointer goes into the picture itself
-                using (Graphics g = Graphics.FromImage(b)) g.DrawImage(cur.Image, curAt.X, curAt.Y, cur.Image.Width, cur.Image.Height);
-                cur.Image.Dispose(); cur = null;
-            }
             if (Settings.GetBool("CameraSound", false)) Shutter.Play();
-            int after = afterMode;
-            bool copy = after == 1 || after == 3 || (after == 0 && Settings.GetBool("CopyOnCapture", true));
-            if (copy) { try { Clipboard.SetImage(b); } catch { } }
-            if (after == 2 || after == 3)
-            {
-                try
-                {
-                    string dir = Settings.SaveFolder;
-                    Directory.CreateDirectory(dir);
-                    string ext = Output.Format;
-                    string name = Output.MakeName(Output.Pattern, DateTime.Now, title, Output.Pattern.Contains("${n") ? Output.NextNumber() : 0);
-                    string path = Output.UniqueBase(dir, name, ext, false) + "." + ext;
-                    Output.SaveBitmap(b, path);
-                    if (Output.CopyPath && after == 2) { try { Clipboard.SetText(path); } catch { } }
-                    Tell((after == 3 ? "Copied and saved: " : "Saved: ") + Path.GetFileName(path));
-                }
-                catch (Exception ex) { MessageBox.Show("Could not save the capture: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
-                b.Dispose();
-                return;
-            }
-            if (after == 1) { Tell("Capture copied to the clipboard (" + b.Width + " × " + b.Height + ")"); b.Dispose(); return; }
+            if (forceEditor) { OpenCaptureInEditor(b, title, cur, curAt); return; }
+            if (CaptureMenuOn && Array.Exists(MenuKeys, MenuHas)) { ShowCaptureMenu(b, title, cur, curAt); return; }
+            int mode = Settings.GetInt("AfterCapture", DefaultAfter);
+            string key = mode == 1 ? "copy" : mode == 2 ? "save" : mode == 3 ? "copysave" : "editor";
+            RunCaptureChoice(key, b, title, cur, curAt);
+        }
+
+        static void OpenCaptureInEditor(Bitmap b, string title, ScreenCapture.CursorShot cur, Point curAt)
+        {
+            if (Settings.GetBool("CopyOnCapture", true)) TrySetClipboardImage(b);
             EditorForm f = new EditorForm(b, title);
             if (cur != null) f.CanvasControl.AddPointerPicture(cur.Image, curAt);   // a picture on top: move it or press Delete
             f.Show();
             f.Activate();
         }
 
+        /// <summary>Does one of the after-capture choices. Everything but the editor puts the mouse pointer (if captured)
+        /// into the picture itself, and is done with the picture afterwards.</summary>
+        static void RunCaptureChoice(string key, Bitmap b, string title, ScreenCapture.CursorShot cur, Point curAt)
+        {
+            if (key == "editor") { OpenCaptureInEditor(b, title, cur, curAt); return; }
+            try
+            {
+                if (cur != null)
+                    using (Graphics g = Graphics.FromImage(b)) g.DrawImage(cur.Image, curAt.X, curAt.Y, cur.Image.Width, cur.Image.Height);
+                string path;
+                switch (key)
+                {
+                    case "copy":
+                        if (TrySetClipboardImage(b)) Tell(Lang.T("Capture copied to the clipboard") + " (" + b.Width + " × " + b.Height + ")");
+                        break;
+                    case "save":
+                        path = SaveCapture(b, title);
+                        if (path != null)
+                        {
+                            if (Output.CopyPath) TrySetClipboardText(path);
+                            Tell(Lang.T("Saved:") + " " + Path.GetFileName(path));
+                        }
+                        break;
+                    case "saveas":
+                        path = SaveCaptureAs(b, title);
+                        if (path != null) Tell(Lang.T("Saved:") + " " + Path.GetFileName(path));
+                        break;
+                    case "copysave":
+                        TrySetClipboardImage(b);
+                        path = SaveCapture(b, title);
+                        if (path != null) Tell(Lang.T("Copied and saved:") + " " + Path.GetFileName(path));
+                        break;
+                    case "paint": OpenInPaint(b); break;
+                    case "print": PrintPicture(null, b, title); break;
+                }
+            }
+            catch (Exception ex) { ErrorLog.Write("capture " + key, ex); MessageBox.Show(ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+            finally
+            {
+                b.Dispose();
+                if (cur != null) cur.Image.Dispose();
+            }
+        }
+
+        /// <summary>Saves a capture to the save folder with the file-name pattern; returns the path (null on failure, after saying so).</summary>
+        static string SaveCapture(Bitmap b, string title)
+        {
+            try
+            {
+                string dir = Settings.SaveFolder;
+                Directory.CreateDirectory(dir);
+                string ext = Output.Format;
+                string name = Output.MakeName(Output.Pattern, DateTime.Now, title, Output.Pattern.Contains("${n") ? Output.NextNumber() : 0);
+                string path = Output.UniqueBase(dir, name, ext, false) + "." + ext;
+                Output.SaveBitmap(b, path);
+                return path;
+            }
+            catch (Exception ex) { MessageBox.Show(Lang.T("Could not save the capture:") + " " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); return null; }
+        }
+
+        /// <summary>
+        /// The menu after a capture (1.4), like Greenshot's "select destination dynamically": the choices ticked in
+        /// Settings → Capture, next to the pointer. Esc or a click elsewhere closes it and keeps nothing.
+        /// </summary>
+        internal static ContextMenuStrip ShowCaptureMenu(Bitmap b, string title, ScreenCapture.CursorShot cur, Point curAt)
+        {
+            float k = Native.ScaleAt(Cursor.Position);
+            int ic = (int)Math.Round(16 * k);
+            ContextMenuStrip m = new ContextMenuStrip();
+            m.Font = Native.UiFont("Segoe UI", 9f, k);
+            m.ImageScalingSize = new Size(ic, ic);
+            bool taken = false;
+            for (int i = 0; i < MenuKeys.Length; i++)
+            {
+                string key = MenuKeys[i];
+                if (!MenuHas(key)) continue;
+                if (key == "paint" && m.Items.Count > 0) m.Items.Add(new ToolStripSeparator());     // other programs below the line
+                ToolStripMenuItem it = new ToolStripMenuItem(Lang.T(MenuNames[i]));
+                it.Image = Icons.Cmd(key == "editor" ? "edit" : key, ic);
+                if (key == "editor") it.Font = new Font(m.Font, FontStyle.Bold);
+                it.Click += (s, e) => { taken = true; RunCaptureChoice(key, b, title, cur, curAt); };
+                m.Items.Add(it);
+            }
+            if (m.Items.Count > 0 && m.Items[m.Items.Count - 1] is ToolStripSeparator) m.Items.RemoveAt(m.Items.Count - 1);
+            m.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem close = new ToolStripMenuItem(Lang.T("Close (keep nothing)"));
+            close.Image = Icons.Cmd("close", ic);
+            m.Items.Add(close);           // its click just closes the menu: the picture goes below, like Esc
+            m.Closed += (s, e) =>
+            {
+                // closed without a choice (Close, Esc, a click elsewhere): wait a moment, an item's click may still be on its way
+                System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
+                t.Interval = 300;
+                t.Tick += (s2, e2) =>
+                {
+                    t.Stop(); t.Dispose();
+                    foreach (ToolStripItem it in m.Items) if (it.Image != null) it.Image.Dispose();
+                    m.Dispose();
+                    if (taken) return;
+                    b.Dispose();
+                    if (cur != null) cur.Image.Dispose();
+                };
+                t.Start();
+            };
+            m.Show(Cursor.Position);
+            try { Native.SetForegroundWindow(m.Handle); } catch (Exception) { }     // so Esc and a click elsewhere close it
+            m.Focus();
+            return m;
+        }
+        /// <summary>Save as for a capture: the save folder and pattern suggested, the format from the file type.</summary>
+        static string SaveCaptureAs(Bitmap b, string title)
+        {
+            using (SaveFileDialog d = new SaveFileDialog())
+            {
+                d.Title = "Save the capture as";
+                d.Filter = "PNG picture (*.png)|*.png|JPEG picture (*.jpg)|*.jpg|Bitmap (*.bmp)|*.bmp|GIF picture (*.gif)|*.gif|TIFF picture (*.tif)|*.tif";
+                string ext = Output.Format;
+                d.FilterIndex = ext == "jpg" ? 2 : ext == "bmp" ? 3 : ext == "gif" ? 4 : ext == "tif" ? 5 : 1;
+                try { d.InitialDirectory = Settings.SaveFolder; } catch (Exception) { }
+                d.FileName = Output.MakeName(Output.Pattern, DateTime.Now, title, 0);
+                d.AddExtension = true;
+                d.OverwritePrompt = true;
+                if (d.ShowDialog() != DialogResult.OK) return null;
+                try { Output.SaveBitmap(b, d.FileName); return d.FileName; }
+                catch (Exception ex) { MessageBox.Show("Could not save the capture: " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); return null; }
+            }
+        }
+
+        /// <summary>Opens a picture in Windows Paint (a PNG copy in the temp folder; Paint's Save puts it where you choose).</summary>
+        public static void OpenInPaint(Bitmap b)
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "SnapMeasure");
+            Directory.CreateDirectory(dir);
+            // tidy up copies from earlier days
+            try { foreach (string old in Directory.GetFiles(dir, "Paint-*.png")) if (File.GetLastWriteTime(old) < DateTime.Now.AddDays(-2)) File.Delete(old); }
+            catch (Exception) { }
+            string path = Path.Combine(dir, "Paint-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + ".png");
+            b.Save(path, ImageFormat.Png);
+            try { System.Diagnostics.Process.Start("mspaint.exe", "\"" + path + "\""); }
+            catch (Exception ex) { MessageBox.Show(Lang.T("Could not open Paint:") + " " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        /// <summary>Prints a picture, as large as fits the page (never enlarged past 1 picture pixel = 1/96 inch… unless it is small: then up to the page).</summary>
+        public static void PrintPicture(IWin32Window owner, Bitmap b, string title)
+        {
+            using (System.Drawing.Printing.PrintDocument doc = new System.Drawing.Printing.PrintDocument())
+            using (PrintDialog dlg = new PrintDialog())
+            {
+                doc.DocumentName = string.IsNullOrEmpty(title) ? "SnapMeasure" : title;
+                dlg.Document = doc;
+                dlg.UseEXDialog = true;
+                if (b.Width > b.Height) doc.DefaultPageSettings.Landscape = true;
+                if ((owner == null ? dlg.ShowDialog() : dlg.ShowDialog(owner)) != DialogResult.OK) return;
+                doc.PrintPage += (s, e) =>
+                {
+                    Rectangle mb = e.MarginBounds;               // hundredths of an inch
+                    float sc = Math.Min(mb.Width / (float)b.Width, mb.Height / (float)b.Height);
+                    float w = b.Width * sc, h = b.Height * sc;
+                    e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    e.Graphics.DrawImage(b, mb.X + (mb.Width - w) / 2f, mb.Y + (mb.Height - h) / 2f, w, h);
+                    e.HasMorePages = false;
+                };
+                doc.Print();
+            }
+        }
         /// <summary>Settings → Capture: wait a moment (lets menus close) and decide whether to include the mouse pointer.</summary>
         static int PreCapture()
         {
@@ -1380,6 +1819,9 @@ namespace SnapMeasure
         static bool HideCadCrosshair(IntPtr target)
         {
             if (target == IntPtr.Zero || !ScreenCapture.IsCadApp(Native.ProcessNameOf(target))) return false;
+            // a drop-down or menu is open (e.g. an AutoCAD ribbon drop-down): taking the focus would close it before the grab.
+            // The pointer is on the drop-down then, so there is no crosshair to hide anyway.
+            if (Native.PopupOpenIn(target)) return false;
             if (focusSink == null || focusSink.IsDisposed)
             {
                 focusSink = new Form();
@@ -1553,43 +1995,21 @@ namespace SnapMeasure
                 return img == null ? null : new Bitmap(img);
         }
 
-        /// <summary>Tray icon click: the clipboard picture in a new editor, or a blank canvas when the clipboard holds
-        /// no picture. Always a new window (other editors stay as they are).</summary>
-        public static void ShowEditor()
-        {
-            Bitmap b = null;
-            try { b = ClipboardPicture(); } catch (Exception) { }
-            if (b != null)
-            {
-                try { ProjectFile.CheckImageSize(b.Width, b.Height); }
-                catch (Exception) { b.Dispose(); b = null; }
-            }
-            if (b != null) { EditorForm f = new EditorForm(b, "Clipboard"); f.Show(); f.Activate(); }
-            else NewBlankCanvas(null);
-        }
-
         public static string FailedHotkeys = "";
 
         /// <summary>About = the About tab of the settings window.</summary>
         public static void ShowAbout(IWin32Window owner)
         {
-            Dialogs.ShowSettings(owner, 3);       // tabs: General, Capture, Output, About
+            Dialogs.ShowSettings(owner, 4);       // tabs: General, Capture, Output, Styles, About
         }
 
         /// <summary>Empty canvas to draw and scribble on.</summary>
         public static void NewBlankCanvas(IWin32Window owner)
         {
-            int w, h; Color bg; bool grid;
-            if (!Dialogs.NewCanvas(owner, out w, out h, out bg, out grid)) return;
-            Bitmap b = Canvas.BlankImage(w, h, bg);
-            if (grid)
-                using (Graphics g = Graphics.FromImage(b))
-                using (Pen minor = new Pen(Color.FromArgb(232, 236, 242)))
-                using (Pen major = new Pen(Color.FromArgb(205, 214, 226)))
-                {
-                    for (int x = 0; x <= w; x += 10) g.DrawLine(x % 50 == 0 ? major : minor, x, 0, x, h);
-                    for (int y = 0; y <= h; y += 10) g.DrawLine(y % 50 == 0 ? major : minor, 0, y, w, y);
-                }
+            int w, h; string paper;
+            if (!Dialogs.NewCanvas(owner, out w, out h, out paper)) return;
+            Bitmap b = Canvas.BlankImage(w, h, Papers.BackColor(paper));
+            Papers.Decorate(b, paper);
             EditorForm f = new EditorForm(b, "Blank " + w + "×" + h);
             f.Show();
             f.Activate();
@@ -1832,8 +2252,8 @@ namespace SnapMeasure
 
         public Keys Value { get { return value; } set { this.value = value; Text = value == Keys.None ? "(none)" : Hotkeys.Text(value); } }
 
-        protected override void OnEnter(EventArgs e) { base.OnEnter(e); if (Hotkeys.Pause != null) Hotkeys.Pause(true); BackColor = Color.FromArgb(255, 250, 220); }
-        protected override void OnLeave(EventArgs e) { base.OnLeave(e); if (Hotkeys.Pause != null) Hotkeys.Pause(false); BackColor = SystemColors.Window; }
+        protected override void OnEnter(EventArgs e) { base.OnEnter(e); if (Hotkeys.Pause != null) Hotkeys.Pause(true); BackColor = Theme.MapBack(Color.FromArgb(255, 250, 220)); }
+        protected override void OnLeave(EventArgs e) { base.OnLeave(e); if (Hotkeys.Pause != null) Hotkeys.Pause(false); BackColor = Theme.MapBack(Color.White); }
 
         protected override bool IsInputKey(Keys keyData) { return (keyData & Keys.KeyCode) != Keys.Tab || (keyData & (Keys.Control | Keys.Alt)) != 0; }
 
@@ -1923,11 +2343,15 @@ namespace SnapMeasure
             Item(menu, "Open save folder", "", OpenFolder, false).Image = Icons.Cmd("folderopen", 16);
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "About SnapMeasure && shortcuts…", "", ShowAbout, false).Image = Icons.Cmd("help", 16);
+            ToolStripMenuItem support = Item(menu, "Support SnapMeasure", "", () => App.OpenSupport(), false);
+            support.Image = Icons.Cmd("coffee", 16);
+            support.ToolTipText = "Optional. Nothing in SnapMeasure is locked.";
             Item(menu, "Exit", "", ExitApp, false).Image = Icons.Cmd("exit", 16);
             ni.ContextMenuStrip = menu;
             Lang.Apply(menu.Items);
             App.Notify = m => { try { ni.ShowBalloonTip(3000, "SnapMeasure", Lang.T(m), ToolTipIcon.Info); } catch { } };
-            ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.ShowEditor(); };
+            // a click on the tray icon takes a region (1.4): it never opens the last file or the clipboard picture
+            ni.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) App.CaptureRegion(); };
 
             hk = new HotkeyWindow();
             hk.Pressed += id => { Action a; if (actions.TryGetValue(id, out a)) a(); };
@@ -1970,8 +2394,19 @@ namespace SnapMeasure
                     if (k == Keys.None || !Hotkeys.Usable(k)) continue;
                     Reg(id++, Hotkeys.Mods(k), k & Keys.KeyCode, Hotkeys.Text(k), runs[i]);
                 }
+            // the keys show as a tooltip when the mouse rests on an item (the menu itself stays plain)
+            for (int i = 0; i < keyItems.Length && i < Hotkeys.Ids.Length; i++)
+            {
+                List<string> ks = new List<string>();
+                for (int slot = 0; slot < 2; slot++)
+                {
+                    Keys k = Hotkeys.Get(i, slot);
+                    if (k != Keys.None && Hotkeys.Usable(k)) ks.Add(Hotkeys.Text(k));
+                }
+                keyItems[i].ToolTipText = ks.Count == 0 ? "" : string.Join("   or   ", ks.ToArray());
+            }
             keySig = Hotkeys.Signature();
-            App.FailedHotkeys = string.Join(", ", failedKeys.ToArray());
+            App.FailedHotkeys =string.Join(", ", failedKeys.ToArray());
         }
 
         ToolStripMenuItem Item(ContextMenuStrip m, string text, string keys, Action a, bool delayed = true)
@@ -2100,6 +2535,7 @@ namespace SnapMeasure
             sb.AppendLine();
             sb.AppendLine("Edit");
             row("C", "crop (Delete = remove the crop)");
+            row("Ctrl+Plus / Minus", "extend / shrink the canvas by 10 px a side");
             row("Ctrl+A", "select all");
             row("Ctrl+C / X / V", "copy, cut, paste shapes");
             row("Ctrl+D", "duplicate");
@@ -2542,6 +2978,69 @@ namespace SnapMeasure
     }
 
 
+    /// <summary>A dialog that follows the display scaling of the monitor it is on. Moved to a monitor with other scaling,
+    /// Windows makes the window itself bigger or smaller, but not what is in it (the Settings tabs stayed small in a
+    /// big window): scale the boxes, buttons and text by the same amount.</summary>
+    internal class DpiDialog : Form
+    {
+        float k;
+        public DpiDialog(float k) { this.k = k; }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == Native.WM_DPICHANGED)
+            {
+                float nk = (m.WParam.ToInt64() & 0xFFFF) / 96f;
+                Native.RECT r = (Native.RECT)System.Runtime.InteropServices.Marshal.PtrToStructure(m.LParam, typeof(Native.RECT));
+                if (nk >= 0.5f && Math.Abs(nk - k) > 0.01f)
+                {
+                    float f = nk / k;
+                    k = nk;
+                    Rescale(f);
+                }
+                Bounds = r.ToRectangle();          // the size Windows suggests for the new monitor
+                m.Result = IntPtr.Zero;
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        void Rescale(float f)
+        {
+            // note which controls have a font of their own (bold titles, the language list) before the form's font changes
+            List<KeyValuePair<Control, Font>> own = new List<KeyValuePair<Control, Font>>();
+            Action<Control> walk = null;
+            walk = c =>
+            {
+                foreach (Control ch in c.Controls)
+                {
+                    if (!ch.Font.Equals(c.Font)) own.Add(new KeyValuePair<Control, Font>(ch, ch.Font));
+                    walk(ch);
+                }
+            };
+            walk(this);
+            SuspendLayout();
+            try
+            {
+                Font = new Font(Font.FontFamily, Font.Size * f, Font.Style, Font.Unit);
+                foreach (KeyValuePair<Control, Font> kv in own)
+                    kv.Key.Font = new Font(kv.Value.FontFamily, kv.Value.Size * f, kv.Value.Style, kv.Value.Unit);
+                foreach (Control c in Controls) c.Scale(new SizeF(f, f));
+                Action<Control> tabs = null;
+                tabs = c =>
+                {
+                    TabControl tc = c as TabControl;
+                    if (tc != null && tc.SizeMode == TabSizeMode.Fixed)
+                        tc.ItemSize = new Size((int)Math.Round(tc.ItemSize.Width * f), (int)Math.Round(tc.ItemSize.Height * f));
+                    foreach (Control ch in c.Controls) tabs(ch);
+                };
+                tabs(this);
+            }
+            finally { ResumeLayout(true); }
+            Invalidate(true);
+        }
+    }
+
     internal static class Dialogs
     {
         static float K(IWin32Window owner)
@@ -2551,7 +3050,7 @@ namespace SnapMeasure
 
         static Form Base(string title, float k, int w, int h)
         {
-            Form f = new Form();
+            Form f = new DpiDialog(k);
             f.Text = title;
             f.FormBorderStyle = FormBorderStyle.FixedDialog;
             f.MinimizeBox = false; f.MaximizeBox = false; f.ShowInTaskbar = false;
@@ -2559,7 +3058,7 @@ namespace SnapMeasure
             f.AutoScaleMode = AutoScaleMode.None;
             f.Font = Native.UiFont("Segoe UI", 9f, k);
             f.ClientSize = new Size((int)(w * k), (int)(h * k));
-            f.Load += (s, e) => Lang.Apply(f, null);       // translated once all its boxes and buttons are in
+            f.Load += (s, e) => { Lang.Apply(f, null); Theme.Apply(f); };       // translated, then dark if wanted, once all its boxes and buttons are in
             return f;
         }
 
@@ -2622,12 +3121,62 @@ namespace SnapMeasure
             }
         }
 
+        /// <summary>Adjust → Extend canvas: pixels to add on each side and the colour of the new room.
+        /// 'edge' = the colour at the picture's corner (offered as "Like the picture's edge").</summary>
+        public static bool ExtendCanvas(IWin32Window owner, Color edge, out int left, out int top, out int right, out int bottom, out Color back)
+        {
+            left = top = right = bottom = 0; back = Color.White;
+            float k = K(owner);
+            Func<float, int> S = v => (int)Math.Round(v * k);
+            using (Form f = Base("Extend canvas", k, 330, 252))
+            {
+                Label intro = new Label(); intro.Text = "Add room round the picture (pixels):"; intro.AutoSize = true; intro.Location = new Point(S(12), S(12));
+                f.Controls.Add(intro);
+                string[] names = { "Top", "Bottom", "Left", "Right" };
+                NumericUpDown[] n = new NumericUpDown[4];
+                int last = Math.Max(0, SnapMeasure.Settings.GetInt("ExtendBy", 50));
+                for (int i = 0; i < 4; i++)
+                {
+                    Label l = new Label(); l.Text = names[i]; l.AutoSize = true; l.Location = new Point(S(24 + (i % 2) * 150), S(44 + (i / 2) * 34));
+                    NumericUpDown u = new NumericUpDown(); u.Minimum = 0; u.Maximum = 5000; u.Value = Math.Min(5000, last);
+                    u.SetBounds(S(84 + (i % 2) * 150), S(40 + (i / 2) * 34), S(70), S(26));
+                    n[i] = u;
+                    f.Controls.Add(l); f.Controls.Add(u);
+                }
+                CheckBox same = new CheckBox(); same.Text = "Same on all sides"; same.AutoSize = true; same.Checked = true; same.Location = new Point(S(24), S(112));
+                f.Controls.Add(same);
+                bool sync = false;
+                for (int i = 0; i < 4; i++)
+                {
+                    NumericUpDown me = n[i];
+                    me.ValueChanged += (s, e) =>
+                    {
+                        if (sync || !same.Checked) return;
+                        sync = true; foreach (NumericUpDown o in n) if (o != me) o.Value = me.Value; sync = false;
+                    };
+                }
+                Label lc = new Label(); lc.Text = "Colour"; lc.AutoSize = true; lc.Location = new Point(S(24), S(150));
+                ComboBox cc = new ComboBox(); cc.DropDownStyle = ComboBoxStyle.DropDownList;
+                cc.Items.AddRange(new object[] { "White", "Like the picture's edge", "Transparent", "Black" });
+                cc.SelectedIndex = Math.Max(0, Math.Min(3, SnapMeasure.Settings.GetInt("ExtendColour", 0)));
+                cc.SetBounds(S(84), S(146), S(200), S(26));
+                f.Controls.Add(lc); f.Controls.Add(cc);
+                Buttons(f, k);
+                if (f.ShowDialog(owner) != DialogResult.OK) return false;
+                top = (int)n[0].Value; bottom = (int)n[1].Value; left = (int)n[2].Value; right = (int)n[3].Value;
+                back = cc.SelectedIndex == 1 ? edge : cc.SelectedIndex == 2 ? Color.Transparent : cc.SelectedIndex == 3 ? Color.Black : Color.White;
+                SnapMeasure.Settings.Set("ExtendBy", ((int)n[0].Value).ToString(CultureInfo.InvariantCulture));
+                SnapMeasure.Settings.Set("ExtendColour", cc.SelectedIndex.ToString(CultureInfo.InvariantCulture));
+                return top + bottom + left + right > 0;
+            }
+        }
+
         /// <summary>A question with three plain-worded buttons. Returns 0, 1 or 2 (the button), or -1 if closed.</summary>
         public static int Choose(IWin32Window owner, string title, string message, string b0, string b1, string b2)
         {
             float k = K(owner);
             Func<float, int> S = v => (int)Math.Round(v * k);
-            using (Form f = Base(title, k, 470, 120))
+            using (Form f = Base(title, k, 400, 112))
             {
                 if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
                 PictureBox ic = new PictureBox();
@@ -2635,16 +3184,16 @@ namespace SnapMeasure
                 f.FormClosed += (s, e) => { Image im = ic.Image; ic.Image = null; if (im != null) im.Dispose(); };
                 ic.SizeMode = PictureBoxSizeMode.Zoom;
                 ic.SetBounds(S(14), S(14), S(32), S(32));
-                Label l = new Label(); l.Text = message; l.AutoSize = true; l.MaximumSize = new Size(S(390), 0); l.Location = new Point(S(58), S(20));
+                Label l = new Label(); l.Text = message; l.AutoSize = true; l.MaximumSize = new Size(S(320), 0); l.Location = new Point(S(58), S(22));
                 f.Controls.Add(ic); f.Controls.Add(l);
                 int result = -1;
                 string[] texts = { b0, b1, b2 };
-                int x = S(458);
+                int x = S(388);
                 for (int i = 2; i >= 0; i--)
                 {
                     Button b = new Button();
                     b.Text = texts[i];
-                    int w = Math.Max(S(96), TextRenderer.MeasureText(texts[i], f.Font).Width + S(24));
+                    int w = Math.Max(S(84), TextRenderer.MeasureText(Lang.T(texts[i]), f.Font).Width + S(24));
                     x -= w + S(8);
                     b.SetBounds(x + S(8), f.ClientSize.Height - S(40), w, S(28));
                     int idx = i;
@@ -2659,8 +3208,6 @@ namespace SnapMeasure
         }
 
         /// <summary>Output settings: save folder, file name pattern, format, quality, and what else to do on save.</summary>
-        public static void OutputSettings(IWin32Window owner) { ShowSettings(owner, 2); }
-
         /// <summary>
         /// Settings window: Capture (what PrtSc does, mouse pointer, sound, notifications, magnifier, delay),
         /// Output (folder, file name, format, quality) and About (version, GitHub, updates, shortcuts).
@@ -2672,15 +3219,15 @@ namespace SnapMeasure
         {
             float k = K(owner);
             Func<float, int> S = v => (int)Math.Round(v * k);
-            using (Form f = Base("SnapMeasure settings", k, 560, 520))
+            using (Form f = Base("SnapMeasure settings", k, 560, 584))
             {
                 if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
                 f.Icon = AppIcon.Get();
                 f.ShowIcon = true;
                 TabControl tabs = new TabControl();
-                tabs.SetBounds(S(8), S(8), S(544), S(458));
-                TabPage tGen = new TabPage("General"), tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tAbout = new TabPage("About");
-                tabs.TabPages.Add(tGen); tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tAbout);
+                tabs.SetBounds(S(8), S(8), S(544), S(522));
+                TabPage tGen = new TabPage("General"), tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tSty = new TabPage("Styles"), tAbout = new TabPage("About");
+                tabs.TabPages.Add(tGen); tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tSty); tabs.TabPages.Add(tAbout);
                 f.Controls.Add(tabs);
                 f.FormClosed += (s, e) => { if (Hotkeys.Pause != null) Hotkeys.Pause(false); };   // never leave the keys switched off
 
@@ -2718,7 +3265,7 @@ namespace SnapMeasure
                     int curIcon = SnapMeasure.Settings.GetInt("IconSize", 20);
                     iconSize.SelectedIndex = curIcon <= 16 ? 0 : (curIcon >= 24 ? 2 : 1);
                     iconSize.SetBounds(S(230), S(330), S(140), S(26));
-                    Label lin = new Label(); lin.Text = "(new editor windows)"; lin.AutoSize = true;
+                    Label lin = new Label(); lin.Text = "(smaller when the window is too short)"; lin.MaximumSize = new Size(S(150), 0); lin.AutoSize = true;
                     lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(378), S(334));
                     CheckBox cLock = new CheckBox(); cLock.Name = "lock"; cLock.AutoSize = true; cLock.Location = new Point(S(12), S(362));
                     cLock.Text = "Editor: start with \"Keep inside\" locked (Ctrl+L switches it in the editor)";
@@ -2732,41 +3279,73 @@ namespace SnapMeasure
                     Label lLangN = new Label(); lLangN.Text = "(new windows; restart for the tray menu)"; lLangN.AutoSize = true;
                     lLangN.ForeColor = Color.FromArgb(90, 90, 90); lLangN.Location = new Point(S(378), S(394));
                     lLangN.MaximumSize = new Size(S(150), 0);
-                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock, lLang, lang, lLangN });
+                    Label lTheme = new Label(); lTheme.Text = "Appearance"; lTheme.AutoSize = true; lTheme.Location = new Point(S(12), S(430));
+                    ComboBox theme = new ComboBox(); theme.Name = "theme"; theme.DropDownStyle = ComboBoxStyle.DropDownList;
+                    theme.Items.AddRange(new object[] { "Automatic", "Light", "Dark" });
+                    theme.SelectedIndex = Theme.Mode == "Light" ? 1 : Theme.Mode == "Dark" ? 2 : 0;
+                    theme.SetBounds(S(230), S(426), S(140), S(26));
+                    Label lThemeN = new Label(); lThemeN.Text = "(Automatic follows Windows; new windows, restart for the tray menu)"; lThemeN.AutoSize = true;
+                    lThemeN.ForeColor = Color.FromArgb(90, 90, 90); lThemeN.Location = new Point(S(378), S(430));
+                    lThemeN.MaximumSize = new Size(S(150), 0);
+                    CheckBox cCount = new CheckBox(); cCount.Name = "count"; cCount.AutoSize = true; cCount.Location = new Point(S(12), S(470));
+                    cCount.Text = "Show the capture count in the editor's status bar";
+                    cCount.Checked = Usage.ShowCount;
+                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock, lLang, lang, lLangN, lTheme, theme, lThemeN, cCount });
                 }
 
                 // ---------- Capture ----------
                 {
-                    Label la = new Label(); la.Text = "After a capture (PrtSc, Ctrl+Shift+1 …):"; la.AutoSize = true; la.Location = new Point(S(12), S(14));
+                    Label la = new Label(); la.Text = "After a capture (PrtSc, Ctrl+Shift+1 …, a click on the tray icon):"; la.AutoSize = true; la.Location = new Point(S(12), S(12));
+                    la.Font = new Font(f.Font, FontStyle.Bold);
                     tCap.Controls.Add(la);
-                    string[] acts = { "Open it in the SnapMeasure editor", "Only copy it to the clipboard (default)", "Only save it to the save folder", "Copy it and save it (no editor)" };
-                    int cur = SnapMeasure.Settings.GetInt("AfterCapture", App.DefaultAfter);
-                    for (int i = 0; i < acts.Length; i++)
+                    // 1.4: a menu next to the pointer asks what to do (like Greenshot's "select destination dynamically"), or one fixed action
+                    CheckBox cMenu = new CheckBox(); cMenu.Name = "menu"; cMenu.AutoSize = true; cMenu.Location = new Point(S(24), S(36));
+                    cMenu.Text = "Show a menu to choose what to do with each capture"; cMenu.Checked = App.CaptureMenuOn;
+                    tCap.Controls.Add(cMenu);
+                    Label lIn = new Label(); lIn.Text = "In the menu:"; lIn.AutoSize = true; lIn.Location = new Point(S(44), S(62));
+                    tCap.Controls.Add(lIn);
+                    List<CheckBox> menuBoxes = new List<CheckBox>();
+                    for (int i = 0; i < App.MenuKeys.Length; i++)
                     {
-                        RadioButton r = new RadioButton(); r.Text = acts[i]; r.AutoSize = true; r.Location = new Point(S(24), S(38 + i * 24));
-                        r.Checked = i == cur; r.Tag = i; r.Name = "after" + i;
-                        tCap.Controls.Add(r);
+                        CheckBox mb = new CheckBox(); mb.Name = "menu_" + App.MenuKeys[i]; mb.Text = App.MenuNames[i]; mb.AutoSize = true;
+                        mb.Location = new Point(S(i < 4 ? 140 : 340), S(62 + (i % 4) * 22));
+                        mb.Checked = App.MenuHas(App.MenuKeys[i]);
+                        menuBoxes.Add(mb);
+                        tCap.Controls.Add(mb);
                     }
+                    Label lOff = new Label(); lOff.Text = "Without the menu:"; lOff.AutoSize = true; lOff.Location = new Point(S(44), S(158));
+                    ComboBox cAfter = new ComboBox(); cAfter.Name = "after"; cAfter.DropDownStyle = ComboBoxStyle.DropDownList;
+                    cAfter.Items.AddRange(new object[] { "Open the editor", "Copy to the clipboard", "Save to the save folder", "Copy and save" });
+                    cAfter.SelectedIndex = Math.Max(0, Math.Min(3, SnapMeasure.Settings.GetInt("AfterCapture", App.DefaultAfter)));
+                    cAfter.SetBounds(S(170), S(154), S(200), S(26));
+                    tCap.Controls.Add(lOff); tCap.Controls.Add(cAfter);
+                    Action menuState = () =>
+                    {
+                        foreach (CheckBox mb in menuBoxes) mb.Enabled = cMenu.Checked;
+                        lIn.Enabled = cMenu.Checked;
+                        cAfter.Enabled = lOff.Enabled = !cMenu.Checked;
+                    };
+                    cMenu.CheckedChanged += (s, e) => menuState();
+                    menuState();
                     CheckBox cClip = new CheckBox(); cClip.Name = "clip"; cClip.Text = "When the editor opens, also copy the capture to the clipboard";
-                    cClip.AutoSize = true; cClip.Location = new Point(S(24), S(136)); cClip.Checked = SnapMeasure.Settings.GetBool("CopyOnCapture", true);
-                    Label sep = new Label(); sep.BorderStyle = BorderStyle.Fixed3D; sep.SetBounds(S(12), S(166), S(510), 2);
-                    CheckBox cCur = new CheckBox(); cCur.Name = "cursor"; cCur.Text = "Capture the mouse pointer"; cCur.AutoSize = true; cCur.Location = new Point(S(12), S(178));
+                    cClip.AutoSize = true; cClip.Location = new Point(S(24), S(188)); cClip.Checked = SnapMeasure.Settings.GetBool("CopyOnCapture", true);
+                    Label sep = new Label(); sep.BorderStyle = BorderStyle.Fixed3D; sep.SetBounds(S(12), S(216), S(510), 2);
+                    CheckBox cCur = new CheckBox(); cCur.Name = "cursor"; cCur.Text = "Capture the mouse pointer"; cCur.AutoSize = true; cCur.Location = new Point(S(12), S(226));
                     cCur.Checked = SnapMeasure.Settings.GetBool("CaptureCursor", false);
-                    CheckBox cSnd = new CheckBox(); cSnd.Name = "sound"; cSnd.Text = "Play a camera sound"; cSnd.AutoSize = true; cSnd.Location = new Point(S(12), S(204));
+                    CheckBox cSnd = new CheckBox(); cSnd.Name = "sound"; cSnd.Text = "Play a camera sound"; cSnd.AutoSize = true; cSnd.Location = new Point(S(12), S(250));
                     cSnd.Checked = SnapMeasure.Settings.GetBool("CameraSound", false);
-                    CheckBox cNot = new CheckBox(); cNot.Name = "notify"; cNot.Text = "Show a notification when a capture is copied or saved"; cNot.AutoSize = true; cNot.Location = new Point(S(12), S(230));
+                    CheckBox cNot = new CheckBox(); cNot.Name = "notify"; cNot.Text = "Show a notification when a capture is copied or saved"; cNot.AutoSize = true; cNot.Location = new Point(S(12), S(274));
                     cNot.Checked = SnapMeasure.Settings.GetBool("Notify", true);
-                    CheckBox cMag = new CheckBox(); cMag.Name = "mag"; cMag.Text = "Show the magnifier while picking an area"; cMag.AutoSize = true; cMag.Location = new Point(S(12), S(256));
+                    CheckBox cMag = new CheckBox(); cMag.Name = "mag"; cMag.Text = "Show the magnifier while picking an area"; cMag.AutoSize = true; cMag.Location = new Point(S(12), S(298));
                     cMag.Checked = SnapMeasure.Settings.GetBool("Magnifier", true);
                     NumericUpDown nd = new NumericUpDown(); nd.Name = "delay"; nd.Minimum = 0; nd.Maximum = 10000; nd.Increment = 100;
                     nd.Value = Math.Max(0, Math.Min(10000, SnapMeasure.Settings.GetInt("CaptureDelay", 0)));
-                    nd.SetBounds(S(12), S(284), S(80), S(26));
-                    Label ld = new Label(); ld.Text = "milliseconds to wait before capturing (lets menus close)"; ld.AutoSize = true; ld.Location = new Point(S(98), S(287));
-                    Label sep2 = new Label(); sep2.BorderStyle = BorderStyle.Fixed3D; sep2.SetBounds(S(12), S(320), S(510), 2);
-                    CheckBox cMatch = new CheckBox(); cMatch.Name = "match"; cMatch.Text = "Editor: match the capture size (open the window just big enough for the picture at 100 %)";
-                    WrapBox(cMatch, new Rectangle(S(12), S(332), S(510), S(40)));
-                    cMatch.Checked = SnapMeasure.Settings.GetBool("MatchCaptureSize", false);
-                    foreach (Control c in new Control[] { cClip, sep, cCur, cSnd, cNot, cMag, nd, ld, sep2, cMatch }) tCap.Controls.Add(c);
+                    nd.SetBounds(S(12), S(324), S(80), S(26));
+                    Label ld = new Label(); ld.Text = "milliseconds to wait before capturing (lets menus close)"; ld.AutoSize = true; ld.Location = new Point(S(98), S(327));
+                    Label sep2 = new Label(); sep2.BorderStyle = BorderStyle.Fixed3D; sep2.SetBounds(S(12), S(360), S(510), 2);
+                    CheckBox cMatch = new CheckBox(); cMatch.Name = "match"; cMatch.Text = "Size the editor window to fit the capture";
+                    WrapBox(cMatch, new Rectangle(S(12), S(370), S(510), S(40)));
+                    cMatch.Checked = SnapMeasure.Settings.GetBool("MatchCaptureSize", false);                    foreach (Control c in new Control[] { cClip, sep, cCur, cSnd, cNot, cMag, nd, ld, sep2, cMatch }) tCap.Controls.Add(c);
                 }
 
                 // ---------- Output ----------
@@ -2835,6 +3414,37 @@ namespace SnapMeasure
 
                 foreach (Control c in new Control[] { folder, browse, pattern, help, example, fmt, q, ql, proj, copy, explorer, pane }) tOut.Controls.Add(c);
 
+                // ---------- Styles (1.4): remember the user's own colours, line ends, text and numbering ----------
+                {
+                    Label lh = new Label(); lh.Text = "Your styles"; lh.AutoSize = true; lh.Location = new Point(S(12), S(12)); lh.Font = new Font(f.Font, FontStyle.Bold);
+                    CheckBox cRem = new CheckBox(); cRem.Name = "remember"; cRem.Checked = StylePrefs.On;
+                    cRem.Text = "Remember my styles: new editors start with the colours, line widths, arrowheads, text and font, and marker numbering I used last";
+                    WrapBox(cRem, new Rectangle(S(12), S(38), S(510), S(40)));
+                    Label lx = new Label(); lx.AutoSize = true; lx.MaximumSize = new Size(S(490), 0); lx.Location = new Point(S(32), S(84));
+                    lx.ForeColor = Color.FromArgb(90, 90, 90);
+                    lx.Text = "They are saved when you close an editor. Off: every editor starts with SnapMeasure's own styles.";
+                    EditorForm ed = owner as EditorForm;
+                    if (ed == null) foreach (Form of in Application.OpenForms) { EditorForm e2 = of as EditorForm; if (e2 != null) ed = e2; }
+                    Label st = new Label(); st.AutoSize = true; st.MaximumSize = new Size(S(490), 0); st.Location = new Point(S(12), S(170));
+                    st.ForeColor = Color.FromArgb(0, 110, 60);
+                    Button bSaveNow = new Button(); bSaveNow.Text = "Save current styles"; bSaveNow.SetBounds(S(12), S(126), S(190), S(30));
+                    bSaveNow.Enabled = ed != null;
+                    if (ed == null) new ToolTip().SetToolTip(bSaveNow, "Open an editor first: its styles are the ones saved");
+                    bSaveNow.Click += (s, e) =>
+                    {
+                        if (ed == null || ed.IsDisposed) return;
+                        bool ok = StylePrefs.Save(ed.CanvasControl);
+                        if (ok) cRem.Checked = true;
+                        st.Text = Lang.T(ok ? "Saved. New editors start with these styles." : "Could not save the styles.");
+                    };
+                    Button bReset = new Button(); bReset.Text = "Reset to SnapMeasure's styles"; bReset.SetBounds(S(212), S(126), S(230), S(30));
+                    bReset.Click += (s, e) =>
+                    {
+                        StylePrefs.Reset();
+                        st.Text = Lang.T("Done. New editors start with SnapMeasure's own styles.");
+                    };
+                    foreach (Control c in new Control[] { lh, cRem, lx, bSaveNow, bReset, st }) tSty.Controls.Add(c);
+                }
                 // ---------- About ----------
                 {
                     PictureBox logo = new PictureBox(); logo.Image = AppIcon.Render(S(56)); logo.SetBounds(S(14), S(14), S(56), S(56));
@@ -2852,7 +3462,18 @@ namespace SnapMeasure
                     LinkLabel upd = new LinkLabel(); upd.Text = "Check for updates"; upd.AutoSize = true; upd.Location = new Point(S(84), S(106));
                     LinkLabel iss = new LinkLabel(); iss.Text = "Report a problem or ask for a feature"; iss.AutoSize = true; iss.Location = new Point(S(220), S(106));
                     iss.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.IssuesUrl);
-                    Label us = new Label(); us.AutoSize = true; us.ForeColor = Color.FromArgb(90, 90, 90); us.Location = new Point(S(84), S(126));
+                    LinkLabel coffee = new LinkLabel(); coffee.Text = "☕ Support SnapMeasure"; coffee.AutoSize = true; coffee.Location = new Point(S(84), S(128));
+                    coffee.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.SupportUrl);
+                    new ToolTip().SetToolTip(coffee, "Optional. Nothing in SnapMeasure is locked.");
+                    // 1.4: the user's own total (kept only on this PC), and a thank-you
+                    Label thanks = new Label(); thanks.AutoSize = true; thanks.UseMnemonic = false;
+                    thanks.Location = new Point(S(84) + TextRenderer.MeasureText(Lang.T(coffee.Text), f.Font).Width + S(24), S(128));
+                    int nCap = Usage.Captures;
+                    thanks.Text = nCap > 0
+                        ? string.Format(Lang.T("{0} captures so far – thank you for using SnapMeasure!"), nCap.ToString("N0", CultureInfo.CurrentCulture))
+                        : Lang.T("Thank you for using SnapMeasure!");
+                    thanks.Name = "thanks";
+                    Label us = new Label(); us.AutoSize = true; us.ForeColor = Color.FromArgb(90, 90, 90); us.Location = new Point(S(84), S(150));
                     upd.LinkClicked += (s, e) => { us.Text = Lang.T("Checking GitHub…"); UpdateCheck.Start(f, m => us.Text = m); };
                     if (AppInfo.IsStoreApp)
                     {
@@ -2864,8 +3485,8 @@ namespace SnapMeasure
                     TextBox keys = new TextBox(); keys.Multiline = true; keys.ReadOnly = true; keys.ScrollBars = ScrollBars.Vertical;
                     keys.BackColor = Color.FromArgb(247, 248, 250); keys.Font = Native.UiFont("Consolas", 8.5f, k);
                     keys.Text = AboutText.Shortcuts(App.FailedHotkeys).Replace("\r\n", "\n").Replace("\n", "\r\n");
-                    keys.SetBounds(S(12), S(150), S(512), S(220));
-                    foreach (Control c in new Control[] { logo, name, sub, repo, store, upd, iss, us, keys }) tAbout.Controls.Add(c);
+                    keys.SetBounds(S(12), S(176), S(512), S(220));
+                    foreach (Control c in new Control[] { logo, name, sub, repo, store, upd, iss, coffee, thanks, us, keys }) tAbout.Controls.Add(c);
                 }
 
                 tabs.SelectedIndex = Math.Max(0, Math.Min(tabs.TabCount - 1, startTab));
@@ -2887,7 +3508,15 @@ namespace SnapMeasure
                     if (clash != null) { tabs.SelectedTab = tGen; MessageBox.Show(f, clash + "\n\nGive each capture its own keys.", "Settings"); continue; }
                     for (int i = 0; i < Hotkeys.Ids.Length; i++)
                         for (int slot = 0; slot < 2; slot++) Hotkeys.Set(i, slot, keyBox[i, slot].Value);
-                    SnapMeasure.Settings.Set("IconSize", (iconSize.SelectedIndex == 0 ? 16 : iconSize.SelectedIndex == 2 ? 24 : 20).ToString(CultureInfo.InvariantCulture));
+                    int iconWas = SnapMeasure.Settings.GetInt("IconSize", 20), iconNow = iconSize.SelectedIndex == 0 ? 16 : iconSize.SelectedIndex == 2 ? 24 : 20;
+                    SnapMeasure.Settings.Set("IconSize", iconNow.ToString(CultureInfo.InvariantCulture));
+                    if (iconWas != iconNow)
+                    {
+                        // open editors take the new size at once (not only new windows)
+                        List<EditorForm> eds = new List<EditorForm>();
+                        foreach (Form of in Application.OpenForms) { EditorForm ef = of as EditorForm; if (ef != null) eds.Add(ef); }
+                        foreach (EditorForm ef in eds) ef.RebuildBars();
+                    }
                     CheckBox lockBox = tGen.Controls["lock"] as CheckBox;
                     if (lockBox != null) SnapMeasure.Settings.Set("LockInside", lockBox.Checked ? "1" : "0");
                     ComboBox langBox = tGen.Controls["lang"] as ComboBox;
@@ -2915,18 +3544,29 @@ namespace SnapMeasure
                         string note = ShellPreview.SetPane(f, pane.Checked);
                         if (note != null) MessageBox.Show(f, note, "Settings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     }
-                    for (int i = 0; i < 4; i++)
-                    {
-                        RadioButton r = tCap.Controls["after" + i] as RadioButton;
-                        if (r != null && r.Checked) SnapMeasure.Settings.Set("AfterCapture", i.ToString(CultureInfo.InvariantCulture));
-                    }
                     Func<string, bool> chk = n => { CheckBox c = tCap.Controls[n] as CheckBox; return c != null && c.Checked; };
+                    SnapMeasure.Settings.Set("CaptureMenu", chk("menu") ? "1" : "0");
+                    List<string> inMenu = new List<string>();
+                    foreach (string mk in App.MenuKeys) if (chk("menu_" + mk)) inMenu.Add(mk);
+                    SnapMeasure.Settings.Set("CaptureMenuItems", inMenu.Count == 0 ? "none" : string.Join(",", inMenu.ToArray()));
+                    ComboBox afterBox = tCap.Controls["after"] as ComboBox;
+                    if (afterBox != null) SnapMeasure.Settings.Set("AfterCapture", Math.Max(0, afterBox.SelectedIndex).ToString(CultureInfo.InvariantCulture));
                     SnapMeasure.Settings.Set("CopyOnCapture", chk("clip") ? "1" : "0");
                     SnapMeasure.Settings.Set("CaptureCursor", chk("cursor") ? "1" : "0");
                     SnapMeasure.Settings.Set("CameraSound", chk("sound") ? "1" : "0");
                     SnapMeasure.Settings.Set("Notify", chk("notify") ? "1" : "0");
                     SnapMeasure.Settings.Set("Magnifier", chk("mag") ? "1" : "0");
                     SnapMeasure.Settings.Set("MatchCaptureSize", chk("match") ? "1" : "0");
+                    CheckBox cc = tGen.Controls["count"] as CheckBox;
+                    if (cc != null) SnapMeasure.Settings.Set("ShowCaptureCount", cc.Checked ? "1" : "0");
+                    ComboBox thm = tGen.Controls["theme"] as ComboBox;
+                    if (thm != null)
+                    {
+                        string was = Theme.Mode, now = thm.SelectedIndex == 1 ? "Light" : thm.SelectedIndex == 2 ? "Dark" : "Auto";
+                        if (now != was) { SnapMeasure.Settings.Set("Theme", now); Theme.Reset(); }
+                    }
+                    CheckBox remBox = tSty.Controls["remember"] as CheckBox;
+                    if (remBox != null) SnapMeasure.Settings.Set("RememberStyles", remBox.Checked ? "1" : "0");
                     NumericUpDown dl = tCap.Controls["delay"] as NumericUpDown;
                     if (dl != null) SnapMeasure.Settings.Set("CaptureDelay", ((int)dl.Value).ToString(CultureInfo.InvariantCulture));
                     return;
@@ -2935,9 +3575,9 @@ namespace SnapMeasure
         }
 
         /// <summary>Size and background for a new blank canvas.</summary>
-        public static bool NewCanvas(IWin32Window owner, out int w, out int h, out Color bg, out bool grid)
+        public static bool NewCanvas(IWin32Window owner, out int w, out int h, out string paper)
         {
-            w = h = 0; bg = Color.White; grid = false;
+            w = h = 0; paper = "White";
             float k = K(owner);
             Rectangle scr = Screen.FromPoint(Cursor.Position).Bounds;
             string[] names = { "Screen size (" + scr.Width + " × " + scr.Height + ")", "1920 × 1080 (Full HD)", "1280 × 720", "A4 portrait (1240 × 1754)", "A4 landscape (1754 × 1240)", "800 × 600", "Custom" };
@@ -2956,7 +3596,8 @@ namespace SnapMeasure
                 nw.SetBounds((int)(110 * k), (int)(46 * k), (int)(80 * k), (int)(26 * k));
                 nh.SetBounds((int)(206 * k), (int)(46 * k), (int)(80 * k), (int)(26 * k));
                 ComboBox back = new ComboBox(); back.DropDownStyle = ComboBoxStyle.DropDownList;
-                back.Items.AddRange(new string[] { "White", "Grid paper", "Transparent", "Black" });
+                back.Items.AddRange(Papers.Names);
+                back.DropDownHeight = (int)(300 * k);
                 back.SetBounds((int)(110 * k), (int)(80 * k), (int)(236 * k), (int)(26 * k));
                 bool busy = false;
                 preset.SelectedIndexChanged += (s, e) =>
@@ -2968,16 +3609,14 @@ namespace SnapMeasure
                 EventHandler custom = (s, e) => { if (!busy) preset.SelectedIndex = names.Length - 1; };
                 nw.ValueChanged += custom; nh.ValueChanged += custom;
                 preset.SelectedIndex = Math.Max(0, Math.Min(names.Length - 2, Settings.GetInt("BlankPreset", 1)));
-                back.SelectedIndex = Math.Max(0, Math.Min(3, Settings.GetInt("BlankBack", 0)));
+                back.SelectedIndex = Math.Max(0, Array.IndexOf(Papers.Names, Papers.Remembered()));
                 f.Controls.Add(preset); f.Controls.Add(nw); f.Controls.Add(nh); f.Controls.Add(back);
                 Buttons(f, k);
                 if (f.ShowDialog(owner) != DialogResult.OK) return false;
                 w = (int)nw.Value; h = (int)nh.Value;
-                int bi = back.SelectedIndex;
-                bg = bi == 2 ? Color.Transparent : (bi == 3 ? Color.Black : Color.White);
-                grid = bi == 1;
+                paper = back.SelectedIndex >= 0 ? Papers.Names[back.SelectedIndex] : "White";
                 if (preset.SelectedIndex < names.Length - 1) Settings.Set("BlankPreset", preset.SelectedIndex.ToString(CultureInfo.InvariantCulture));
-                Settings.Set("BlankBack", bi.ToString(CultureInfo.InvariantCulture));
+                Settings.Set("BlankPaper", paper);
                 return true;
             }
         }
@@ -3209,31 +3848,51 @@ namespace SnapMeasure
             DrawCol = Color.FromArgb(208, 46, 46), HighlightCol = Color.FromArgb(208, 132, 0), TextCol = Color.FromArgb(18, 128, 96),
             ToolInk = Color.FromArgb(52, 56, 64);
 
+        /// <summary>Ink for drawing icons: light on a dark tool column.</summary>
+        public static Color IconInk { get { return Theme.Dark ? Theme.Ink : ToolInk; } }
+
+        // dark mode: the same groups in the brighter tones Apple uses on dark backgrounds (the light ones are too dim there)
+        static readonly Color MeasureDark = Color.FromArgb(64, 156, 255), CountDark = Color.FromArgb(191, 130, 255),
+            DrawDark = Color.FromArgb(255, 105, 97), HighlightDark = Color.FromArgb(255, 179, 64), TextDark = Color.FromArgb(48, 209, 160);
+
         /// <summary>The colour of the tool's group (see the headings in the editor's tool column).</summary>
         public static Color Group(Tool t)
         {
+            bool d = Theme.Dark;
             switch (t)
             {
                 case Tool.Calibrate: case Tool.Dimension: case Tool.Perimeter: case Tool.Area: case Tool.Cutout:
                 case Tool.Angle: case Tool.Radius: case Tool.Coord:
-                    return MeasureCol;
+                    return d ? MeasureDark : MeasureCol;
                 case Tool.Counter: case Tool.Letter:
-                    return CountCol;
+                    return d ? CountDark : CountCol;
                 case Tool.Arrow: case Tool.Line: case Tool.PolyDraw: case Tool.Polyline: case Tool.Arc: case Tool.Freehand:
                 case Tool.Rect: case Tool.Ellipse: case Tool.Polygon: case Tool.Cloud:
-                    return DrawCol;
+                    return d ? DrawDark : DrawCol;
                 case Tool.Highlight: case Tool.Marker: case Tool.Pixelate:
-                    return HighlightCol;
+                    return d ? HighlightDark : HighlightCol;
                 case Tool.Text: case Tool.Bubble: case Tool.Stamp: case Tool.Note: case Tool.Markup:
-                    return TextCol;
+                    return d ? TextDark : TextCol;
                 default:
                     return ToolInk;
             }
         }
 
-        /// <summary>c lightened towards white (0 = c, 1 = white): fills that stay the group's colour.</summary>
+        static readonly SolidBrush darkPaper = new SolidBrush(Color.FromArgb(66, 66, 70));
+        /// <summary>The "paper" inside icons (a page, a window, a bubble): white, or a raised grey in dark mode so the light
+        /// outline and lines on it still show.</summary>
+        static Brush Paper { get { return Theme.Dark ? (Brush)darkPaper : Brushes.White; } }
+
+        /// <summary>c lightened towards white (0 = c, 1 = white): fills that stay the group's colour.
+        /// In dark mode a deep tint of c instead (a pale fill would glow on the dark bar and hide the light lines on it).</summary>
         static Color Light(Color c, float f)
         {
+            if (Theme.Dark)
+            {
+                float a = Math.Max(0.18f, (1 - f) * 1.4f);
+                Color bg = Theme.Elevated;
+                return Color.FromArgb((int)(bg.R + (c.R - bg.R) * a), (int)(bg.G + (c.G - bg.G) * a), (int)(bg.B + (c.B - bg.B) * a));
+            }
             return Color.FromArgb((int)(c.R + (255 - c.R) * f), (int)(c.G + (255 - c.G) * f), (int)(c.B + (255 - c.B) * f));
         }
 
@@ -3247,7 +3906,8 @@ namespace SnapMeasure
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
                 g.ScaleTransform(size / 32f, size / 32f);
-                Color ink = ToolInk, acc = Group(t);
+                Color ink = IconInk, acc = Group(t);
+                if (acc == ToolInk) acc = ink;
                 Color red = acc, blue = acc, amber = acc;
                 using (Pen p = new Pen(ink, 2.2f))
                 using (Pen pr = new Pen(red, 2.4f))
@@ -3263,14 +3923,13 @@ namespace SnapMeasure
                         case Tool.Select:
                             {
                                 PointF[] a = { new PointF(9, 4), new PointF(9, 26), new PointF(14, 21), new PointF(18, 29), new PointF(22, 27.5f), new PointF(18, 19.5f), new PointF(25, 19.5f) };
-                                g.FillPolygon(Brushes.White, a);
+                                g.FillPolygon(Paper, a);
                                 using (Pen pp = new Pen(ink, 1.8f)) { pp.LineJoin = LineJoin.Round; g.DrawPolygon(pp, a); }
                                 break;
                             }
                         case Tool.Rect: g.DrawRectangle(pr, 5, 8, 22, 16); break;
                         case Tool.Ellipse:
                             g.DrawEllipse(pr, 4, 4, 24, 24);
-                            using (Pen pp = new Pen(ink, 1.4f)) { g.DrawLine(pp, 13, 16, 19, 16); g.DrawLine(pp, 16, 13, 16, 19); }
                             break;
                         case Tool.Line: g.DrawLine(pr, 6, 26, 26, 6); break;
                         case Tool.Arrow:
@@ -3361,7 +4020,7 @@ namespace SnapMeasure
                             break;
                         case Tool.Letter:
                             // the letter marker: the same violet, as a ring, so it is told apart from the number marker
-                            g.FillEllipse(Brushes.White, 5, 5, 22, 22);
+                            g.FillEllipse(Paper, 5, 5, 22, 22);
                             using (Pen rp = new Pen(acc, 2.2f)) g.DrawEllipse(rp, 6, 6, 20, 20);
                             using (SolidBrush ab = new SolidBrush(acc))
                             using (Font mkFont = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("A", mkFont, ab, new RectangleF(5, 5, 22, 23), sf);
@@ -3416,7 +4075,7 @@ namespace SnapMeasure
                         case Tool.Bubble:
                             using (GraphicsPath gp = Renderer.BubblePath(new RectangleF(3, 4, 26, 17), new PointF(9, 29)))
                             {
-                                g.FillPath(Brushes.White, gp);
+                                g.FillPath(Paper, gp);
                                 using (Pen pp = new Pen(acc, 2f)) { pp.LineJoin = LineJoin.Round; g.DrawPath(pp, gp); }
                             }
                             using (Pen pp = new Pen(ink, 1.6f)) { g.DrawLine(pp, 8, 10, 24, 10); g.DrawLine(pp, 8, 15, 19, 15); }
@@ -3459,7 +4118,7 @@ namespace SnapMeasure
                             {
                                 using (SolidBrush f = new SolidBrush(Light(acc, 0.75f))) g.FillRectangle(f, 3, 4, 26, 24);
                                 g.DrawRectangle(pb, 3, 4, 26, 24);
-                                g.FillRectangle(Brushes.White, 11, 11, 11, 10);
+                                g.FillRectangle(Paper, 11, 11, 11, 10);
                                 using (Pen dp = new Pen(ink, 1.6f)) { dp.DashStyle = DashStyle.Dash; g.DrawRectangle(dp, 11, 11, 11, 10); }
                                 break;
                             }
@@ -3512,7 +4171,7 @@ namespace SnapMeasure
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.ScaleTransform(size / 16f, size / 16f);
-                Color ink = Color.FromArgb(55, 55, 60), blue = Color.FromArgb(0, 110, 210), red = Color.FromArgb(215, 45, 45),
+                Color ink = Theme.Dark ? Theme.Ink : Color.FromArgb(55, 55, 60), blue = Color.FromArgb(0, 110, 210), red = Color.FromArgb(215, 45, 45),
                       green = Color.FromArgb(30, 150, 70), amber = Color.FromArgb(235, 165, 0);
                 using (Pen p = new Pen(ink, 1.3f))
                 using (Pen pb = new Pen(blue, 1.4f))
@@ -3539,8 +4198,15 @@ namespace SnapMeasure
                             if (name == "saveas") using (Pen pp = new Pen(red, 1.6f)) { pp.StartCap = pp.EndCap = LineCap.Round; g.DrawLine(pp, 9, 14.5f, 15, 8.5f); }
                             break;
                         case "copy":
-                            g.FillRectangle(Brushes.White, 1.5f, 1.5f, 9, 10); g.DrawRectangle(p, 1.5f, 1.5f, 9, 10);
-                            g.FillRectangle(Brushes.White, 5.5f, 4.5f, 9, 10); g.DrawRectangle(p, 5.5f, 4.5f, 9, 10);
+                            g.FillRectangle(Paper, 1.5f, 1.5f, 9, 10); g.DrawRectangle(p, 1.5f, 1.5f, 9, 10);
+                            g.FillRectangle(Paper, 5.5f, 4.5f, 9, 10); g.DrawRectangle(p, 5.5f, 4.5f, 9, 10);
+                            break;
+                        case "copysave":    // two sheets and a small disk
+                            g.FillRectangle(Paper, 0.5f, 0.5f, 8, 9); g.DrawRectangle(p, 0.5f, 0.5f, 8, 9);
+                            g.FillRectangle(Paper, 3.5f, 3, 8, 9); g.DrawRectangle(p, 3.5f, 3, 8, 9);
+                            g.FillRectangle(bb, 8, 8, 7.5f, 7.5f);
+                            g.FillRectangle(Brushes.White, 9.5f, 8, 4, 2.5f);
+                            g.FillRectangle(Brushes.White, 9.3f, 12.2f, 4.4f, 3.3f);
                             break;
                         case "pin":
                             {
@@ -3575,7 +4241,7 @@ namespace SnapMeasure
                         case "rotcw":       // picture with a turning arrow (left: mirrored)
                         case "rotccw":
                             if (name == "rotccw") { g.TranslateTransform(16, 0); g.ScaleTransform(-1, 1); }
-                            g.FillRectangle(Brushes.White, 1.5f, 6.5f, 8, 8); g.DrawRectangle(p, 1.5f, 6.5f, 8, 8);
+                            g.FillRectangle(Paper, 1.5f, 6.5f, 8, 8); g.DrawRectangle(p, 1.5f, 6.5f, 8, 8);
                             using (Pen pp = new Pen(green, 1.6f)) { pp.StartCap = LineCap.Round; g.DrawArc(pp, 5, 1.5f, 9, 9, 200, 160); }
                             using (SolidBrush gb = new SolidBrush(green)) g.FillPolygon(gb, new PointF[] { new PointF(11.5f, 5), new PointF(16, 5), new PointF(13.75f, 9) });
                             break;
@@ -3594,12 +4260,12 @@ namespace SnapMeasure
                         case "shadow":      // card with a soft shadow
                             using (SolidBrush sb = new SolidBrush(Color.FromArgb(90, 0, 0, 0))) g.FillRectangle(sb, 4.5f, 4.5f, 10.5f, 10.5f);
                             using (SolidBrush sb = new SolidBrush(Color.FromArgb(45, 0, 0, 0))) g.FillRectangle(sb, 5.5f, 5.5f, 10.5f, 10.5f);
-                            g.FillRectangle(Brushes.White, 1.5f, 1.5f, 10.5f, 10.5f); g.DrawRectangle(p, 1.5f, 1.5f, 10.5f, 10.5f);
+                            g.FillRectangle(Paper, 1.5f, 1.5f, 10.5f, 10.5f); g.DrawRectangle(p, 1.5f, 1.5f, 10.5f, 10.5f);
                             break;
                         case "torn":        // page with a ragged bottom edge
                             {
                                 PointF[] pg = { new PointF(2, 1.5f), new PointF(14, 1.5f), new PointF(14, 11), new PointF(12, 13.5f), new PointF(10, 11.5f), new PointF(8, 14), new PointF(6, 11.5f), new PointF(4, 13.5f), new PointF(2, 11) };
-                                g.FillPolygon(Brushes.White, pg); g.DrawPolygon(p, pg);
+                                g.FillPolygon(Paper, pg); g.DrawPolygon(p, pg);
                                 using (Pen lp = new Pen(Color.FromArgb(150, 150, 155), 1f)) { g.DrawLine(lp, 4.5f, 4.5f, 11.5f, 4.5f); g.DrawLine(lp, 4.5f, 7.5f, 11.5f, 7.5f); }
                                 break;
                             }
@@ -3609,7 +4275,7 @@ namespace SnapMeasure
                             g.DrawEllipse(p, 1.5f, 1.5f, 13, 13);
                             break;
                         case "invert":      // circle half black, half white
-                            g.FillEllipse(Brushes.White, 1.5f, 1.5f, 13, 13);
+                            g.FillEllipse(Paper, 1.5f, 1.5f, 13, 13);
                             g.FillPie(bi, 1.5f, 1.5f, 13, 13, -90, 180);
                             g.DrawEllipse(p, 1.5f, 1.5f, 13, 13);
                             break;
@@ -3702,7 +4368,7 @@ namespace SnapMeasure
                             using (Pen rp = new Pen(red, 1.5f)) { g.DrawLine(rp, 8, 5, 8, 11); g.DrawLine(rp, 5, 8, 11, 8); }
                             break;
                         case "window":
-                            g.FillRectangle(Brushes.White, 1.5f, 2.5f, 13, 11);
+                            g.FillRectangle(Paper, 1.5f, 2.5f, 13, 11);
                             g.FillRectangle(bb, 1.5f, 2.5f, 13, 3);
                             g.DrawRectangle(p, 1.5f, 2.5f, 13, 11);
                             break;
@@ -3710,9 +4376,9 @@ namespace SnapMeasure
                         case "allscreens":
                             {
                                 float w = name == "screen" ? 13 : 8;
-                                g.FillRectangle(Brushes.White, 1.5f, 2.5f, w, 9);
+                                g.FillRectangle(Paper, 1.5f, 2.5f, w, 9);
                                 g.DrawRectangle(p, 1.5f, 2.5f, w, 9);
-                                if (name == "allscreens") { g.FillRectangle(Brushes.White, 8.5f, 4.5f, 6.5f, 7); g.DrawRectangle(p, 8.5f, 4.5f, 6.5f, 7); }
+                                if (name == "allscreens") { g.FillRectangle(Paper, 8.5f, 4.5f, 6.5f, 7); g.DrawRectangle(p, 8.5f, 4.5f, 6.5f, 7); }
                                 g.DrawLine(p, 5, 14, 11, 14);
                                 g.DrawLine(p, 8, 11.5f, 8, 14);
                                 break;
@@ -3723,7 +4389,7 @@ namespace SnapMeasure
                             using (SolidBrush gb = new SolidBrush(green)) g.FillPolygon(gb, new PointF[] { new PointF(3, 6), new PointF(7, 5.5f), new PointF(5, 9) });
                             break;
                         case "timer":
-                            g.FillEllipse(Brushes.White, 2, 3, 12, 12); g.DrawEllipse(p, 2, 3, 12, 12);
+                            g.FillEllipse(Paper, 2, 3, 12, 12); g.DrawEllipse(p, 2, 3, 12, 12);
                             g.DrawLine(p, 8, 9, 8, 5.5f); g.DrawLine(p, 8, 9, 10.5f, 10.5f);
                             g.DrawLine(p, 6.5f, 1, 9.5f, 1);
                             break;
@@ -3748,6 +4414,58 @@ namespace SnapMeasure
                             if (name == "folderopen")
                                 using (Pen gp = new Pen(green, 1.8f)) { gp.StartCap = gp.EndCap = LineCap.Round; g.DrawLine(gp, 6, 11, 11, 7); g.DrawLine(gp, 8, 7, 11, 7); g.DrawLine(gp, 11, 7, 11, 10); }
                             break;
+                        case "edit":        // picture with a pencil (open in the SnapMeasure editor)
+                            g.FillRectangle(Paper, 1.5f, 2.5f, 11, 10); g.DrawRectangle(p, 1.5f, 2.5f, 11, 10);
+                            using (SolidBrush sk = new SolidBrush(Color.FromArgb(150, 205, 245))) g.FillRectangle(sk, 3, 4, 8, 4);
+                            using (Pen yp = new Pen(amber, 2.6f)) g.DrawLine(yp, 7.5f, 13.5f, 14, 7);
+                            g.FillPolygon(bi, new PointF[] { new PointF(5.5f, 15.5f), new PointF(6.2f, 12.6f), new PointF(8.4f, 14.8f) });
+                            break;
+                        case "paint":       // palette with colour dots
+                            {
+                                using (SolidBrush pb2 = new SolidBrush(Theme.Dark ? Color.FromArgb(205, 175, 130) : Color.FromArgb(225, 190, 140)))
+                                    g.FillEllipse(pb2, 1, 2, 14, 12);
+                                using (SolidBrush hole = new SolidBrush(Theme.Dark ? Theme.Elevated : Color.White)) g.FillEllipse(hole, 9, 9, 3.5f, 3.5f);
+                                using (SolidBrush c1 = new SolidBrush(red)) g.FillEllipse(c1, 3, 6, 3, 3);
+                                using (SolidBrush c2 = new SolidBrush(blue)) g.FillEllipse(c2, 5.5f, 3, 3, 3);
+                                using (SolidBrush c3 = new SolidBrush(green)) g.FillEllipse(c3, 9.5f, 4, 3, 3);
+                                using (SolidBrush c4 = new SolidBrush(amber)) g.FillEllipse(c4, 4, 10, 3, 3);
+                                break;
+                            }
+                        case "print":       // printer with a sheet
+                            g.FillRectangle(Paper, 4, 1.5f, 8, 5); g.DrawRectangle(p, 4, 1.5f, 8, 5);
+                            g.FillRectangle(bi, 1.5f, 6, 13, 6);
+                            g.FillRectangle(Paper, 4, 10, 8, 5); g.DrawRectangle(p, 4, 10, 8, 5);
+                            using (SolidBrush gb = new SolidBrush(green)) g.FillRectangle(gb, 11.5f, 7.5f, 1.5f, 1.5f);
+                            break;
+                        case "extend":      // picture with arrows pointing outwards
+                            g.FillRectangle(Paper, 5, 5, 6, 6); g.DrawRectangle(p, 5, 5, 6, 6);
+                            using (Pen ap = new Pen(blue, 1.4f))
+                            {
+                                ap.StartCap = ap.EndCap = LineCap.Round;
+                                g.DrawLine(ap, 8, 3.5f, 8, 0.8f); g.DrawLine(ap, 6.5f, 2.2f, 8, 0.8f); g.DrawLine(ap, 9.5f, 2.2f, 8, 0.8f);
+                                g.DrawLine(ap, 8, 12.5f, 8, 15.2f); g.DrawLine(ap, 6.5f, 13.8f, 8, 15.2f); g.DrawLine(ap, 9.5f, 13.8f, 8, 15.2f);
+                                g.DrawLine(ap, 3.5f, 8, 0.8f, 8); g.DrawLine(ap, 2.2f, 6.5f, 0.8f, 8); g.DrawLine(ap, 2.2f, 9.5f, 0.8f, 8);
+                                g.DrawLine(ap, 12.5f, 8, 15.2f, 8); g.DrawLine(ap, 13.8f, 6.5f, 15.2f, 8); g.DrawLine(ap, 13.8f, 9.5f, 15.2f, 8);
+                            }
+                            break;
+                        case "coffee":      // a cup of coffee with steam (Support SnapMeasure / Ko-fi)
+                            {
+                                Color cup = Theme.Dark ? Color.FromArgb(214, 150, 96) : Color.FromArgb(170, 102, 52);
+                                using (SolidBrush cb = new SolidBrush(cup))
+                                using (Pen hp = new Pen(cup, 1.6f))
+                                {
+                                    g.FillPolygon(cb, new PointF[] { new PointF(1.5f, 7), new PointF(12, 7), new PointF(11, 13.5f), new PointF(2.5f, 13.5f) });
+                                    g.DrawArc(hp, 10f, 8f, 4.5f, 4f, -90, 180);
+                                    g.FillRectangle(cb, 1f, 14.2f, 11.5f, 1.3f);
+                                }
+                                using (Pen sp = new Pen(Theme.Dark ? Color.FromArgb(170, 170, 176) : Color.FromArgb(130, 130, 136), 1.1f))
+                                {
+                                    sp.StartCap = sp.EndCap = LineCap.Round;
+                                    g.DrawBezier(sp, 4.5f, 5.5f, 3.5f, 4f, 5.5f, 3f, 4.5f, 1f);
+                                    g.DrawBezier(sp, 8.5f, 5.5f, 7.5f, 4f, 9.5f, 3f, 8.5f, 1f);
+                                }
+                                break;
+                            }
                         case "help":
                             g.FillEllipse(bb, 1.5f, 1.5f, 13, 13);
                             using (Font f = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Pixel))
@@ -3758,7 +4476,7 @@ namespace SnapMeasure
                             }
                             break;
                         case "blank":       // empty page with a pencil
-                            g.FillRectangle(Brushes.White, 2.5f, 1.5f, 10, 13); g.DrawRectangle(p, 2.5f, 1.5f, 10, 13);
+                            g.FillRectangle(Paper, 2.5f, 1.5f, 10, 13); g.DrawRectangle(p, 2.5f, 1.5f, 10, 13);
                             using (Pen yp = new Pen(amber, 3f)) g.DrawLine(yp, 8, 12, 14, 5);
                             using (Pen tp = new Pen(ink, 1f)) g.DrawLine(tp, 6.5f, 14, 8, 12);
                             break;
@@ -3779,7 +4497,7 @@ namespace SnapMeasure
                                 break;
                             }
                         case "panel":       // window with a right side panel
-                            g.FillRectangle(Brushes.White, 1.5f, 2.5f, 13, 11); g.DrawRectangle(p, 1.5f, 2.5f, 13, 11);
+                            g.FillRectangle(Paper, 1.5f, 2.5f, 13, 11); g.DrawRectangle(p, 1.5f, 2.5f, 13, 11);
                             using (SolidBrush pb2 = new SolidBrush(Color.FromArgb(180, 0, 110, 210))) g.FillRectangle(pb2, 10, 3, 4, 10);
                             break;
                         case "alignl":
@@ -3805,7 +4523,7 @@ namespace SnapMeasure
                             g.FillRectangle(bi, 4, 4.5f, 8, 1.6f); g.FillRectangle(bi, 4, 7.5f, 8, 1.6f); g.FillRectangle(bi, 4, 10.5f, 5, 1.6f);
                             break;
                         case "scroll":      // long page with a down arrow
-                            g.FillRectangle(Brushes.White, 2.5f, 0.5f, 8, 15); g.DrawRectangle(p, 2.5f, 0.5f, 8, 15);
+                            g.FillRectangle(Paper, 2.5f, 0.5f, 8, 15); g.DrawRectangle(p, 2.5f, 0.5f, 8, 15);
                             using (Pen ap = new Pen(blue, 1.6f)) { ap.StartCap = ap.EndCap = LineCap.Round; g.DrawLine(ap, 13.5f, 3, 13.5f, 12); g.DrawLine(ap, 11.5f, 10, 13.5f, 12.5f); g.DrawLine(ap, 15.5f, 10, 13.5f, 12.5f); }
                             break;
                         case "textcap":     // capture frame with "T"
@@ -3829,7 +4547,24 @@ namespace SnapMeasure
             return b;
         }
 
-        public static readonly string[] HeadNames = { "None", "Arrow (filled)", "Arrow (open)", "Arrow (hollow)", "Slash", "Tick", "Dot", "Circle", "Diamond", "Square" };
+        /// <summary>The line ends offered in the lists, with AutoCAD's names (1.4: half arrows added; Architectural tick, Dot small and Dot small blank dropped). HeadMenu[i] = the HeadStyle number.
+        /// The older ends that AutoCAD has no name for (Arrow filled, Arrow hollow, Tick, Diamond) still draw in old files,
+        /// but are not offered any more.</summary>
+        public static readonly int[] HeadMenu = { 0, 10, 11, 12, 20, 2, 21, 14, 13, 6, 7, 17, 9, 18, 19 };
+        public static readonly string[] HeadNames =
+        {
+            "None", "Closed filled", "Closed blank", "Closed", "Half closed", "Open", "Half open", "Open 30", "Oblique",
+            "Dot", "Dot blank", "Box", "Box filled", "Datum triangle", "Datum triangle filled"
+        };
+        /// <summary>Position of a HeadStyle number in the lists, or -1 for an older end that is no longer offered.</summary>
+        public static int HeadIndex(int style) { return Array.IndexOf(HeadMenu, style); }
+        /// <summary>Display name of any HeadStyle number (also the older ones).</summary>
+        public static string HeadName(int style)
+        {
+            int i = HeadIndex(style);
+            if (i >= 0) return HeadNames[i];
+            switch (style) { case 1: return "Arrow (filled)"; case 3: return "Arrow (hollow)"; case 4: return "Architectural tick"; case 5: return "Tick"; case 8: return "Diamond"; case 15: return "Dot small"; case 16: return "Dot small blank"; default: return "Line end"; }
+        }
 
         /// <summary>A short line with the given end style, for menus. atEnd = the head is on the right.</summary>
         public static Bitmap HeadPreview(int style, bool atEnd, int size) { return HeadPreviewWide(style, atEnd, size, size); }
@@ -3848,7 +4583,7 @@ namespace SnapMeasure
                 PointF u = new PointF((tip.X - other.X) / L, 0);
                 float hl = h * 0.42f, hw = hl * 0.55f;
                 float back = Renderer.HeadBack(style, lw, hl, hw);
-                Color col = Color.FromArgb(40, 40, 45);
+                Color col = Theme.Dark ? Theme.Ink : Color.FromArgb(40, 40, 45);
                 using (Pen p = new Pen(col, lw))
                 {
                     p.StartCap = p.EndCap = LineCap.Flat;

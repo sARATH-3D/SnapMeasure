@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -98,7 +98,8 @@ namespace SnapMeasure
             HookSideWheel();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
-            BackColor = Color.FromArgb(52, 54, 58);
+            // dark mode: the drawing area is a deeper well than the bars round it (44), so the two are told apart at a glance
+            BackColor = Theme.Dark ? Color.FromArgb(22, 22, 24) : Color.FromArgb(52, 54, 58);
             TabStop = true;
         }
 
@@ -119,6 +120,8 @@ namespace SnapMeasure
             d[Tool.Line] = St(ShapeKind.Line, red, 3, Color.Yellow, 0, 16);
             d[Tool.Line].Heads = 0;
             d[Tool.Arrow] = St(ShapeKind.Arrow, red, 3, Color.Yellow, 0, 16);
+            d[Tool.Arrow].HeadStart = (int)HeadStyle.ClosedFilled;      // like an AutoCAD leader: the head sits where you click first
+            d[Tool.Arrow].HeadEnd = 0;
             d[Tool.Freehand] = St(ShapeKind.Freehand, red, 3, Color.Yellow, 0, 16);
             d[Tool.Freehand].HeadEnd = 0;                     // plain stroke; arrowheads are optional
             Shape marker = St(ShapeKind.Freehand, Color.FromArgb(255, 225, 0), 14, Color.Yellow, 0, 16);
@@ -132,7 +135,7 @@ namespace SnapMeasure
             d[Tool.PolyDraw].Mode = 1;                        // open polyline; heads optional; tick Closed for a polygon
             d[Tool.PolyDraw].HeadEnd = 0;
             d[Tool.Dimension] = St(ShapeKind.Dimension, red, 1.5f, Color.White, 0, 15);
-            d[Tool.Dimension].HeadStart = d[Tool.Dimension].HeadEnd = (int)HeadStyle.Filled;
+            d[Tool.Dimension].HeadStart = d[Tool.Dimension].HeadEnd = (int)HeadStyle.ClosedFilled;
             Color purple = Color.FromArgb(130, 60, 200), green = Color.FromArgb(30, 140, 60);
             d[Tool.Polyline] = St(ShapeKind.Polyline, purple, 2.5f, Color.White, 0, 15);
             d[Tool.Perimeter] = St(ShapeKind.Perimeter, green, 2.5f, Color.White, 0, 15);
@@ -647,13 +650,17 @@ namespace SnapMeasure
             catch (Exception) { return null; }
         }
 
-        /// <summary>Adds a picture on top of the canvas: fitted into the visible area (never enlarged), centred on 'at' or the view.</summary>
+        /// <summary>Adds a picture on top of the canvas at its real size (1 picture pixel = 1 pixel here), centred on 'at' or
+        /// the view; only a picture bigger than the whole picture being edited is made smaller to fit it (never enlarged).
+        /// Right-click → Reset picture brings back the real size.</summary>
         public void InsertImage(Bitmap b, PointF? at)
         {
             EndTextEdit(true);
             RectangleF vis = RectangleF.Intersect(ViewRect, Geo.Rect(ToImg(new Point((int)RulerSize, (int)RulerSize)), ToImg(new Point(Width, Height))));
             if (vis.Width < 4 || vis.Height < 4) vis = ViewRect;
-            float sc = Math.Min(1f, Math.Min(vis.Width * 0.8f / b.Width, vis.Height * 0.8f / b.Height));
+            RectangleF room = Image != null ? KeepArea : vis;
+            if (room.Width < 4 || room.Height < 4) room = vis;
+            float sc = Math.Min(1f, Math.Min(room.Width / b.Width, room.Height / b.Height));
             float w = Math.Max(4f, b.Width * sc), h = Math.Max(4f, b.Height * sc);
             PointF c = at.HasValue ? at.Value : Geo.Center(vis);
             Shape s = new Shape();
@@ -666,6 +673,31 @@ namespace SnapMeasure
             s.Pts.Add(new PointF(c.X + w / 2f, c.Y + h / 2f));
             if (tool != Tool.Select) CurrentTool = Tool.Select;
             AddShape(s);
+        }
+
+        /// <summary>A picture back to its real size (1 picture pixel = 1 pixel) and upright, around its middle.</summary>
+        public void ResetPicture(Shape s)
+        {
+            if (s == null || s.Kind != ShapeKind.Image || s.Img == null || s.Pts.Count < 2) return;
+            EndTextEdit(true);
+            PushUndo(Snapshot());
+            PointF c = ShapeOps.Center(s);
+            float w = s.Img.Width, h = s.Img.Height;
+            s.Pts[0] = new PointF(c.X - w / 2f, c.Y - h / 2f);
+            s.Pts[1] = new PointF(c.X + w / 2f, c.Y + h / 2f);
+            s.Angle = 0;
+            s.Cache = null;
+            FireDoc(); FireSel(); Invalidate();
+        }
+
+        /// <summary>How see-through a picture is (100 = solid); the same as the Fill opacity slider for a picture.</summary>
+        public void SetPictureOpacity(Shape s, int percent)
+        {
+            if (s == null || s.Kind != ShapeKind.Image || s.FillOpacity == percent) return;
+            PushUndo(Snapshot());
+            s.FillOpacity = Math.Max(0, Math.Min(100, percent));
+            s.Cache = null;
+            FireDoc(); FireSel(); Invalidate();
         }
 
         public void DuplicateSelection()
@@ -904,6 +936,83 @@ namespace SnapMeasure
             Fit(); FireDoc(); FireSel();
         }
 
+        /// <summary>Adjust → Extend canvas: more room round the picture (pixels per side, in 'back'). The shapes, guides and
+        /// scale stay on the same spots of the picture. A crop is made permanent first (same undo step).</summary>
+        public void ExtendCanvas(int left, int top, int right, int bottom, Color back)
+        {
+            if (Image == null) return;
+            left = Math.Max(0, left); top = Math.Max(0, top); right = Math.Max(0, right); bottom = Math.Max(0, bottom);
+            if (left + top + right + bottom == 0) return;
+            int baseW = CropRect.HasValue ? CropRect.Value.Width : Image.Width, baseH = CropRect.HasValue ? CropRect.Value.Height : Image.Height;
+            ProjectFile.CheckImageSize(baseW + left + right, baseH + top + bottom);       // too big: throws before anything changes
+            EndTextEdit(true);
+            creating = null;
+            PushUndo(Snapshot());
+            Bitmap preBake = Image;
+            BakeCrop();
+            Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;
+            int W = Image.Width + left + right, H = Image.Height + top + bottom;
+            Bitmap nb = new Bitmap(W, H, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(nb))
+            {
+                g.Clear(back);
+                g.CompositingMode = CompositingMode.SourceCopy;
+                g.DrawImage(Image, new Rectangle(left, top, Image.Width, Image.Height), 0, 0, Image.Width, Image.Height, GraphicsUnit.Pixel);
+            }
+            List<Shape> ns = new List<Shape>();
+            foreach (Shape s in Shapes)
+            {
+                Shape c = s.Clone();
+                c.Cache = null;
+                c.Offset(left, top);
+                ns.Add(c);
+            }
+            for (int i = 0; i < HGuides.Count; i++) HGuides[i] += top;
+            for (int i = 0; i < VGuides.Count; i++) VGuides[i] += left;
+            Image = nb;
+            if (baked != null) ReleaseImage(baked);
+            Shapes = ns;
+            Sel.Clear();
+            Fit(); FireDoc(); FireSel();
+        }
+
+        /// <summary>Ctrl+Minus: takes 'px' off every side of the picture (the opposite of ExtendCanvas). Shapes, guides and
+        /// scale stay on the same spots of the picture. Returns false when the picture would get smaller than 16 × 16.</summary>
+        public bool ShrinkCanvas(int px)
+        {
+            if (Image == null || px <= 0) return false;
+            int baseW = CropRect.HasValue ? CropRect.Value.Width : Image.Width, baseH = CropRect.HasValue ? CropRect.Value.Height : Image.Height;
+            if (baseW - 2 * px < 16 || baseH - 2 * px < 16) return false;
+            EndTextEdit(true);
+            creating = null;
+            PushUndo(Snapshot());
+            Bitmap preBake = Image;
+            BakeCrop();
+            Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;
+            Bitmap nb = new Bitmap(Image.Width - 2 * px, Image.Height - 2 * px, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(nb))
+            {
+                g.CompositingMode = CompositingMode.SourceCopy;
+                g.DrawImage(Image, new Rectangle(0, 0, nb.Width, nb.Height), px, px, nb.Width, nb.Height, GraphicsUnit.Pixel);
+            }
+            List<Shape> ns = new List<Shape>();
+            foreach (Shape s in Shapes)
+            {
+                Shape c = s.Clone();
+                c.Cache = null;
+                c.Offset(-px, -px);
+                ns.Add(c);
+            }
+            for (int i = 0; i < HGuides.Count; i++) HGuides[i] -= px;
+            for (int i = 0; i < VGuides.Count; i++) VGuides[i] -= px;
+            Image = nb;
+            if (baked != null) ReleaseImage(baked);
+            Shapes = ns;
+            Sel.Clear();
+            Fit(); FireDoc(); FireSel();
+            return true;
+        }
+
         // ---------- snapping ----------
         bool SnapTool
         {
@@ -924,13 +1033,6 @@ namespace SnapMeasure
                 bool perim = creating != null ? creating.IsFocusPoly : Styles[Tool.Highlight].Form == (int)HighlightForm.Perimeter;
                 return perim ? Tool.Polygon : tool;
             }
-        }
-
-        static bool PolyTool(Tool t) { return t == Tool.Polygon || t == Tool.PolyDraw || t == Tool.Area || t == Tool.Polyline || t == Tool.Perimeter || t == Tool.Cutout; }
-        static bool BoxTool(Tool t)
-        {
-            return t == Tool.Rect || t == Tool.Ellipse || t == Tool.Pixelate || t == Tool.Crop || t == Tool.Highlight || t == Tool.Bubble ||
-                   t == Tool.Cloud || t == Tool.Stamp || t == Tool.Markup || t == Tool.Ocr;
         }
 
         PointF Snap(PointF ip)
@@ -1210,7 +1312,7 @@ namespace SnapMeasure
             FireDoc(); Invalidate();
         }
 
-        bool ClickBuilt(Shape s) { return s != null && (s.IsPoly || s.Kind == ShapeKind.Angle || s.Kind == ShapeKind.Arc || s.Kind == ShapeKind.Radius); }
+
 
         /// <summary>Text markup: tighten the dragged box to the words found under it (Windows text recognition).</summary>
         RectangleF SnapToText(RectangleF r)
@@ -1261,7 +1363,7 @@ namespace SnapMeasure
             tb.BorderStyle = BorderStyle.FixedSingle;
             float fsz = s.Kind == ShapeKind.Stamp ? 16f : s.FontSize;
             Font oldTbFont = tb.Font;
-            tb.Font = new Font("Segoe UI", Math.Max(6f, fsz * Zoom), s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style, GraphicsUnit.Pixel);
+            tb.Font = new Font(s.HasTextStyle ? s.FontFamilyName : Renderer.DefaultFont, Math.Max(6f, fsz * Zoom), s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style, GraphicsUnit.Pixel);
             if (!ReferenceEquals(oldTbFont, tb.Font) && !ReferenceEquals(oldTbFont, Font) && !ReferenceEquals(oldTbFont, Control.DefaultFont)) oldTbFont.Dispose();
             tb.ForeColor = Color.FromArgb(255, s.Stroke);
             tb.BackColor = s.FillOpacity > 0 && s.Kind != ShapeKind.Cloud ? Color.FromArgb(255, s.Fill) : Color.White;
@@ -1291,7 +1393,7 @@ namespace SnapMeasure
         public void RefreshEditStyle()
         {
             if (editBox == null) return;
-            SetEditFont(new Font("Segoe UI", Math.Max(6f, editShape.FontSize * Zoom), editShape.Style, GraphicsUnit.Pixel));
+            SetEditFont(new Font(editShape.HasTextStyle ? editShape.FontFamilyName : Renderer.DefaultFont, Math.Max(6f, editShape.FontSize * Zoom), editShape.Style, GraphicsUnit.Pixel));
             editBox.TextAlign = TbAlign(editShape.Align);
             editBox.ForeColor = Color.FromArgb(255, editShape.Stroke);
             LayoutEditBox();
@@ -1314,8 +1416,9 @@ namespace SnapMeasure
             Shape s = editShape;
             float newSize = Math.Max(6f, (s.Kind == ShapeKind.Stamp ? 16f : s.FontSize) * Zoom);
             FontStyle fst = s.Kind == ShapeKind.Stamp ? FontStyle.Bold : s.Style;
-            if (Math.Abs(editBox.Font.Size - newSize) > 0.1f || editBox.Font.Style != fst)
-                SetEditFont(new Font("Segoe UI", newSize, fst, GraphicsUnit.Pixel));
+            string fam = s.HasTextStyle ? Renderer.GetFont(12f, FontStyle.Regular, s.FontFamilyName).FontFamily.Name : Renderer.DefaultFont;   // (a missing family falls back)
+            if (Math.Abs(editBox.Font.Size - newSize) > 0.1f || editBox.Font.Style != fst || editBox.Font.FontFamily.Name != fam)
+                SetEditFont(new Font(fam, newSize, fst, GraphicsUnit.Pixel));
             if (s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Cloud)
             {
                 RectangleF r = s.Kind == ShapeKind.Stamp ? Geo.Rect(s.Pts[0], s.Pts[1]) : Renderer.CalloutRect(s);
@@ -1420,10 +1523,10 @@ namespace SnapMeasure
                     ToolStripMenuItem sub = new ToolStripMenuItem(start ? "Start head" : "End head");
                     sub.Image = Icons.HeadPreview(start ? curS : curE, !start, (int)(16 * Dpi));
                     sub.DropDown.Font = m.Font;
-                    for (int hsty = 0; hsty <= 9; hsty++)
+                    for (int hi = 0; hi < Icons.HeadMenu.Length; hi++)
                     {
-                        int st = hsty;
-                        ToolStripMenuItem it = new ToolStripMenuItem(Icons.HeadNames[st]);
+                        int st = Icons.HeadMenu[hi];
+                        ToolStripMenuItem it = new ToolStripMenuItem(Icons.HeadNames[hi]);
                         it.Image = Icons.HeadPreview(st, !start, (int)(16 * Dpi));
                         it.Checked = (start ? curS : curE) == st;
                         it.Click += (s, e) => SetHeads(start, st);
@@ -1446,6 +1549,36 @@ namespace SnapMeasure
                 if (one.Kind != ShapeKind.Area) m.Items.Add(new ToolStripSeparator());
                 add(one.Kind == ShapeKind.Area ? "Add a cut-out (opening)" : one.Kind == ShapeKind.Highlight ? "Add a cut-out" : "Add a cut-out (hollow section)", "X", true, () => CurrentTool = Tool.Cutout);
                 if (one.Holes != null) add("Remove cut-outs", "", true, ClearCutouts);
+            }
+            if (one != null && one.HasTextStyle)
+            {
+                // strike-out lives here (the text bar keeps just font, B, I, U and alignment)
+                m.Items.Add(new ToolStripSeparator());
+                ToolStripMenuItem so = add("Strike out", "", true, () =>
+                {
+                    PushUndo(Snapshot());
+                    one.Strikeout = !one.Strikeout;
+                    one.Cache = null;
+                    FireDoc(); FireSel(); Invalidate();
+                });
+                so.Checked = one.Strikeout;
+            }
+            if (one != null && one.Kind == ShapeKind.Image && one.Img != null)
+            {
+                // a pasted or inserted picture: back to its real size, and how see-through it is
+                m.Items.Add(new ToolStripSeparator());
+                add("Reset picture (real size, not rotated)", "", true, () => ResetPicture(one));
+                ToolStripMenuItem op = new ToolStripMenuItem("Picture opacity");
+                op.DropDown.Font = m.Font;
+                foreach (int v in new[] { 100, 75, 50, 25 })
+                {
+                    int vv = v;
+                    ToolStripMenuItem it = new ToolStripMenuItem(v + " %");
+                    it.Checked = one.FillOpacity == v;
+                    it.Click += (s, e) => SetPictureOpacity(one, vv);
+                    op.DropDownItems.Add(it);
+                }
+                m.Items.Add(op);
             }
             m.Items.Add(new ToolStripSeparator());
             add("Bring to front", "Ctrl+Shift+]", any, () => Order(0));
@@ -1569,6 +1702,21 @@ namespace SnapMeasure
                                 PushUndo(Snapshot());
                                 Selected.Pts.RemoveAt(h.Value.Index);
                                 FireDoc(); Invalidate();
+                                return;
+                            }
+                            if (ctrl && h.Value.Kind == HKind.HolePoint && Selected.Holes != null)
+                            {
+                                // Ctrl+click a cut-out corner: remove that corner (a three-corner cut-out goes altogether)
+                                int hi = h.Value.Index / ShapeOps.HoleStride, pi = h.Value.Index % ShapeOps.HoleStride;
+                                if (hi < Selected.Holes.Count)
+                                {
+                                    PushUndo(Snapshot());
+                                    if (Selected.Holes[hi].Count > 3) Selected.Holes[hi].RemoveAt(pi);
+                                    else Selected.Holes.RemoveAt(hi);
+                                    if (Selected.Holes.Count == 0) Selected.Holes = null;
+                                    Selected.Cache = null;
+                                    FireDoc(); Invalidate();
+                                }
                                 return;
                             }
                             before = Snapshot(); changedDuringDrag = false;
@@ -2519,7 +2667,7 @@ namespace SnapMeasure
             t.Width = src.Width;
             if (t.HasOutlineStyle && (src.Dash != (int)LineStyle.Cloud || t.CanBeCloud)) t.Dash = src.Dash;
             t.FontSize = src.FontSize;
-            t.Bold = src.Bold; t.Italic = src.Italic; t.Underline = src.Underline; t.Strikeout = src.Strikeout;
+            t.Bold = src.Bold; t.Italic = src.Italic; t.Underline = src.Underline; t.Strikeout = src.Strikeout; t.FontName = src.FontName;
             if (t.HasHeads && src.HasHeads) { t.HeadStart = src.HeadStart; t.HeadEnd = src.HeadEnd; }
             if (t.CanShadow) t.Shadow = src.Shadow;
             if (src.Kind == t.Kind) t.Strength = src.Strength;
@@ -2954,7 +3102,7 @@ namespace SnapMeasure
             if (major / sub / uPerScr < 6 * Dpi) sub = 2;
             double minor = major / sub;
             int dec = major >= 1 ? 0 : (int)Math.Ceiling(-Math.Log10(major) - 1e-9);
-            Color bgc = Color.FromArgb(244, 244, 244), ink = Color.FromArgb(80, 80, 80);
+            Color bgc = Theme.Dark ? Theme.Elevated : Color.FromArgb(244, 244, 244), ink = Theme.Dark ? Theme.Label2 : Color.FromArgb(80, 80, 80);
             Font f = Renderer.GetFont(10f * Dpi, false);
             SmoothingMode sm = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.None;
@@ -2962,7 +3110,7 @@ namespace SnapMeasure
             using (SolidBrush bg = new SolidBrush(bgc))
             using (SolidBrush tb = new SolidBrush(ink))
             using (Pen tp = new Pen(ink, 1f))
-            using (Pen edge = new Pen(Color.FromArgb(170, 170, 170), 1f))
+            using (Pen edge = new Pen(Theme.Dark ? Theme.Border : Color.FromArgb(170, 170, 170), 1f))
             using (Pen red = new Pen(Color.FromArgb(230, 30, 30), 2f))
             using (Pen blue = new Pen(GuideColor, 2f))           // guide marks on the rulers
             {
@@ -3103,6 +3251,11 @@ namespace SnapMeasure
                         break;
                     case HKind.Center:
                         DrawCenterMark(g, q);
+                        break;
+                    case HKind.HolePoint:
+                        // a corner of a cut-out: round, so it is told apart from the outline's square corners
+                        g.FillEllipse(Brushes.White, rr);
+                        using (Pen pp = new Pen(Color.FromArgb(230, 120, 0), 1.5f)) g.DrawEllipse(pp, rr);
                         break;
                     case HKind.DimOffset:
                     case HKind.Tail:

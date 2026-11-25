@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -20,7 +20,7 @@ namespace SnapMeasure
                        Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius, PolyDraw }
 
     /// <summary>Focus modes. Grayscale = gray outside the shape, Pixelate = pixelate inside it; 1.3 adds the other side of each.</summary>
-    public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4, GrayscaleInside = 5, PixelateOutside = 6 }
+    public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4, GrayscaleInside = 5, PixelateOutside = 6, Blur = 7, BlurOutside = 8 }
 
     /// <summary>Outline style for lines and shapes. Cloud = scalloped outline.</summary>
     public enum LineStyle { Solid = 0, Dashed = 1, Dotted = 2, DashDot = 3, LongDash = 4, Cloud = 5 }
@@ -32,7 +32,17 @@ namespace SnapMeasure
     public enum CloudCallout { None = 0, Triangle = 1, TextBox = 2 }
 
     /// <summary>Line ends for arrows, lines and dimensions.</summary>
-    public enum HeadStyle { None = 0, Filled = 1, Open = 2, Hollow = 3, Slash = 4, Tick = 5, Dot = 6, Circle = 7, Diamond = 8, Square = 9 }
+    /// <summary>Line ends. 0–9 are the ones from 1.0–1.3 (their numbers never change, so old files look the same).
+    /// 10 and up match AutoCAD's arrowhead list: Closed filled, Closed blank, Closed, Oblique, Open 30, Dot small,
+    /// Dot small blank, Box, Datum triangle, Datum triangle filled. Dot = Dot, Slash = Architectural tick,
+    /// Circle = Dot blank, Square = Box filled, Open = Open.</summary>
+    public enum HeadStyle
+    {
+        None = 0, Filled = 1, Open = 2, Hollow = 3, Slash = 4, Tick = 5, Dot = 6, Circle = 7, Diamond = 8, Square = 9,
+        ClosedFilled = 10, ClosedBlank = 11, Closed = 12, Oblique = 13, Open30 = 14, DotSmall = 15, DotSmallBlank = 16,
+        Box = 17, DatumTriangle = 18, DatumTriangleFilled = 19,
+        HalfClosed = 20, HalfOpen = 21          // 1.4: one-sided (harpoon) arrows
+    }
 
     /// <summary>Text markup: drag over a line of text in the picture.</summary>
     public enum MarkupMode { Underline = 0, StrikeOut = 1, HighlightText = 2 }
@@ -85,6 +95,8 @@ namespace SnapMeasure
         public int Mode;             // HighlightMode for Highlight shapes; 0 = numbers, 1 = letters for markers
         public bool Bold, Italic;    // Text and speech bubble
         public bool Underline, Strikeout;   // Text and speech bubble (1.3)
+        public string FontName;      // Text and speech bubble: font family; null = Segoe UI (1.4)
+        public string FontFamilyName { get { return string.IsNullOrEmpty(FontName) ? Renderer.DefaultFont : FontName; } }
         public PointF LabelOffset;          // Area: where its label sits, from the middle of the area (1.3)
         public RectangleF LabelRect;        // Area: the label box as last drawn (for its handles; not saved)
         public int Align;            // 0 left, 1 centre, 2 right (Text, speech bubble)
@@ -99,6 +111,8 @@ namespace SnapMeasure
         public int FromArea;         // open length made with the Area tool (Closed unticked): its Show setting + 1, so ticking Closed gives the area back
 
         /// <summary>Pixelate block size in picture pixels.</summary>
+        /// <summary>Blur radius in picture pixels: strength 1 = 3 px … 10 = 30 px (0 = older shapes: 9 px).</summary>
+        public int BlurRadius { get { return Strength > 0 ? Strength * 3 : 9; } }
         public int PixelBlock { get { return Strength > 0 ? Math.Max(3, Strength * 4) : Math.Max(3, (int)Math.Round(Width * 4)); } }
         /// <summary>Magnify factor: strength 1 = ×1.5 … 10 = ×6 (2 = ×2).</summary>
         public float MagnifyFactor { get { return Strength > 0 ? 1f + Strength * 0.5f : 2f; } }
@@ -175,7 +189,8 @@ namespace SnapMeasure
             get
             {
                 return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Line || Kind == ShapeKind.Arrow || Kind == ShapeKind.Freehand ||
-                       Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter || Kind == ShapeKind.Arc;
+                       Kind == ShapeKind.Polygon || Kind == ShapeKind.Area || Kind == ShapeKind.Polyline || Kind == ShapeKind.Perimeter || Kind == ShapeKind.Arc ||
+                       Kind == ShapeKind.Text;          // the text's frame (line width above 0)
             }
         }
         /// <summary>Cloud (scalloped) outlines only make sense round a closed shape.</summary>
@@ -183,7 +198,7 @@ namespace SnapMeasure
         {
             get
             {
-                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Area ||
+                return Kind == ShapeKind.Rect || Kind == ShapeKind.Ellipse || Kind == ShapeKind.Area || Kind == ShapeKind.Text ||
                        ((Kind == ShapeKind.Polygon || Kind == ShapeKind.Perimeter) && !IsOpenPath);
             }
         }
@@ -811,7 +826,7 @@ namespace SnapMeasure
         public static void ReleaseCache(Bitmap img)
         {
             if (img == null) return;
-            foreach (List<FxCopy> list in new[] { grayCopies, pixCopies })
+            foreach (List<FxCopy> list in new[] { grayCopies, pixCopies, blurCopies })
                 for (int i = list.Count - 1; i >= 0; i--)
                     if (ReferenceEquals(list[i].For, img)) { list[i].Img.Dispose(); list.RemoveAt(i); }
         }
@@ -886,6 +901,90 @@ namespace SnapMeasure
         }
 
         /// <summary>A pixelated copy of the whole picture (blocks of 'block' pixels), kept while nothing changes.</summary>
+        static readonly List<FxCopy> blurCopies = new List<FxCopy>();
+
+        /// <summary>A blurred copy of the picture (Focus → Blur), kept while the picture and the strength stay the same.</summary>
+        static Bitmap BlurredOf(Bitmap img, int radius)
+        {
+            return FxGet(blurCopies, img, radius, () => Blurred(img, radius));
+        }
+
+        /// <summary>
+        /// A soft blur of about 'radius' pixels: the picture is shrunk (fast; it is going to be blurred anyway), blurred
+        /// with three box passes each way (close to a Gaussian blur) and enlarged again with smoothing. Worked on
+        /// premultiplied colours, so see-through parts don't leave dark fringes.
+        /// </summary>
+        internal static Bitmap Blurred(Bitmap img, int radius)
+        {
+            radius = Math.Max(1, radius);
+            int w = img.Width, h = img.Height;
+            int d = Math.Max(1, radius / 3);
+            int sw = Math.Max(1, (w + d - 1) / d), sh = Math.Max(1, (h + d - 1) / d);
+            int rr = Math.Max(1, (int)Math.Round(radius / (float)d / 1.7f));
+            using (Bitmap small = new Bitmap(sw, sh, PixelFormat.Format32bppPArgb))
+            {
+                using (Graphics g = Graphics.FromImage(small))
+                using (ImageAttributes ia = new ImageAttributes())
+                {
+                    ia.SetWrapMode(WrapMode.TileFlipXY);
+                    g.InterpolationMode = d > 1 ? InterpolationMode.HighQualityBilinear : InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(img, new Rectangle(0, 0, sw, sh), 0, 0, w, h, GraphicsUnit.Pixel, ia);
+                }
+                BitmapData bd = small.LockBits(new Rectangle(0, 0, sw, sh), ImageLockMode.ReadWrite, PixelFormat.Format32bppPArgb);
+                try
+                {
+                    int[] px = new int[sw * sh];
+                    System.Runtime.InteropServices.Marshal.Copy(bd.Scan0, px, 0, px.Length);
+                    int[] tmp = new int[px.Length];
+                    for (int pass = 0; pass < 3; pass++)
+                    {
+                        BoxPass(px, tmp, sw, sh, rr, true);
+                        BoxPass(tmp, px, sw, sh, rr, false);
+                    }
+                    System.Runtime.InteropServices.Marshal.Copy(px, 0, bd.Scan0, px.Length);
+                }
+                finally { small.UnlockBits(bd); }
+                Bitmap res = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+                using (Graphics g = Graphics.FromImage(res))
+                using (ImageAttributes ia = new ImageAttributes())
+                {
+                    ia.SetWrapMode(WrapMode.TileFlipXY);
+                    g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(small, new Rectangle(0, 0, w, h), 0, 0, sw, sh, GraphicsUnit.Pixel, ia);
+                }
+                return res;
+            }
+        }
+
+        /// <summary>One box-blur pass along the rows (or the columns) of src into dst; the edge pixels repeat outwards.</summary>
+        static void BoxPass(int[] src, int[] dst, int w, int h, int r, bool rows)
+        {
+            int lines = rows ? h : w, len = rows ? w : h, step = rows ? 1 : w;
+            int win = 2 * r + 1;
+            for (int ln = 0; ln < lines; ln++)
+            {
+                int start = rows ? ln * w : ln;
+                long sa = 0, sr = 0, sg = 0, sb = 0;
+                for (int k = -r; k <= r; k++)
+                {
+                    int v = src[start + Math.Max(0, Math.Min(len - 1, k)) * step];
+                    sa += (v >> 24) & 255; sr += (v >> 16) & 255; sg += (v >> 8) & 255; sb += v & 255;
+                }
+                for (int i = 0; i < len; i++)
+                {
+                    dst[start + i * step] = (int)((sa / win) << 24 | (sr / win) << 16 | (sg / win) << 8 | (sb / win));
+                    int vOut = src[start + Math.Max(0, i - r) * step];
+                    int vIn = src[start + Math.Min(len - 1, i + r + 1) * step];
+                    sa += ((vIn >> 24) & 255) - ((vOut >> 24) & 255);
+                    sr += ((vIn >> 16) & 255) - ((vOut >> 16) & 255);
+                    sg += ((vIn >> 8) & 255) - ((vOut >> 8) & 255);
+                    sb += (vIn & 255) - (vOut & 255);
+                }
+            }
+        }
+
         static Bitmap PixelatedOf(Bitmap img, int block)
         {
             // the picture with the pasted pictures starts somewhere on the drawing: its blocks line up with the
@@ -905,16 +1004,28 @@ namespace SnapMeasure
 
         public static Font GetFont(float px, bool bold) { return GetFont(px, bold ? FontStyle.Bold : FontStyle.Regular); }
 
-        public static Font GetFont(float px, FontStyle style)
+        public const string DefaultFont = "Segoe UI";
+
+        public static Font GetFont(float px, FontStyle style) { return GetFont(px, style, DefaultFont); }
+
+        /// <summary>A font of the family the text uses (Segoe UI if that family isn't installed on this PC).</summary>
+        public static Font GetFont(float px, FontStyle style, string family)
         {
             px = Math.Max(4f, (float)Math.Round(px, 1));
-            string key = px.ToString(CultureInfo.InvariantCulture) + "|" + (int)style;
+            if (string.IsNullOrEmpty(family)) family = DefaultFont;
+            string key = px.ToString(CultureInfo.InvariantCulture) + "|" + (int)style + "|" + family;
             Font f;
             if (!fonts.TryGetValue(key, out f))
             {
                 // keep the cache small: fonts still in use stay valid (not disposed here; the finalizer frees them)
                 if (fonts.Count > 300) fonts.Clear();
-                f = new Font("Segoe UI", px, style, GraphicsUnit.Pixel);
+                try
+                {
+                    f = new Font(family, px, style, GraphicsUnit.Pixel);
+                    // a family that isn't installed comes back as Microsoft Sans Serif; one without this style throws
+                    if (family != DefaultFont && !string.Equals(f.FontFamily.Name, family, StringComparison.OrdinalIgnoreCase)) { f.Dispose(); f = new Font(DefaultFont, px, style, GraphicsUnit.Pixel); }
+                }
+                catch (Exception) { f = new Font(DefaultFont, px, style, GraphicsUnit.Pixel); }
                 fonts[key] = f;
             }
             return f;
@@ -924,8 +1035,13 @@ namespace SnapMeasure
         /// hairline, this one is as heavy as the letters (heavier for bold).</summary>
         public static void DrawStyledText(Graphics g, string text, float px, FontStyle st, Brush b, RectangleF r, StringFormat sf)
         {
+            DrawStyledText(g, text, px, st, b, r, sf, DefaultFont);
+        }
+
+        public static void DrawStyledText(Graphics g, string text, float px, FontStyle st, Brush b, RectangleF r, StringFormat sf, string family)
+        {
             bool strike = (st & FontStyle.Strikeout) != 0;
-            Font f = GetFont(px, st & ~FontStyle.Strikeout);
+            Font f = GetFont(px, st & ~FontStyle.Strikeout, family);
             g.DrawString(text ?? "", f, b, r, sf);
             if (!strike || string.IsNullOrEmpty(text)) return;
             FontFamily ff = f.FontFamily;
@@ -981,12 +1097,12 @@ namespace SnapMeasure
             float wrap = WrapWidth(s);
             if (wrap > 0)
             {
-                SizeF wz = MeasureG.MeasureString(t, GetFont(s.FontSize, s.Style), (int)Math.Ceiling(wrap));
+                SizeF wz = MeasureG.MeasureString(t, GetFont(s.FontSize, s.Style, s.FontFamilyName), (int)Math.Ceiling(wrap));
                 // the box is at least as tall as dragged (Pts[1] = bottom-right); it grows when the text needs more room
                 float boxH = s.Pts[1].Y - s.Pts[0].Y;
                 return new SizeF(wrap, Math.Max(Math.Max(wz.Height, s.FontSize * 1.2f), boxH));
             }
-            SizeF sz = MeasureG.MeasureString(t, GetFont(s.FontSize, s.Style));
+            SizeF sz = MeasureG.MeasureString(t, GetFont(s.FontSize, s.Style, s.FontFamilyName));
             return new SizeF(Math.Max(sz.Width, s.FontSize * 0.6f), sz.Height);
         }
 
@@ -1248,19 +1364,31 @@ namespace SnapMeasure
                     }
                 case ShapeKind.Text:
                     {
-                        Font f = GetFont(s.FontSize, s.Style);
+                        Font f = GetFont(s.FontSize, s.Style, s.FontFamilyName);
                         SizeF sz = TextSize(s);
                         if (fill)
                             using (SolidBrush b = new SolidBrush(fCol))
-                                g.FillRectangle(b, s.Pts[0].X - 4, s.Pts[0].Y - 2, sz.Width + 8, sz.Height + 4);
+                            {
+                                if (IsCloudStyle(s) && s.Width > 0)
+                                {
+                                    // a cloud frame: the fill reaches into the scallops too
+                                    RectangleF cr = new RectangleF(s.Pts[0].X - 4 - w / 2f, s.Pts[0].Y - 2 - w / 2f, sz.Width + 8 + w, sz.Height + 4 + w);
+                                    using (GraphicsPath cp = CloudPath(cr, w)) g.FillPath(b, cp);
+                                }
+                                else g.FillRectangle(b, s.Pts[0].X - 4, s.Pts[0].Y - 2, sz.Width + 8, sz.Height + 4);
+                            }
                         if (s.Width > 0)          // line width 0 = no frame; any width draws the frame
                             using (Pen fp = OutlinePen(s, sCol, w))
-                                g.DrawRectangle(fp, s.Pts[0].X - 4 - w / 2f, s.Pts[0].Y - 2 - w / 2f, sz.Width + 8 + w, sz.Height + 4 + w);
+                            {
+                                RectangleF fr = new RectangleF(s.Pts[0].X - 4 - w / 2f, s.Pts[0].Y - 2 - w / 2f, sz.Width + 8 + w, sz.Height + 4 + w);
+                                if (IsCloudStyle(s)) using (GraphicsPath cp = CloudPath(fr, w)) g.DrawPath(fp, cp);      // a revision-cloud frame
+                                else g.DrawRectangle(fp, fr.X, fr.Y, fr.Width, fr.Height);
+                            }
                         using (SolidBrush b = new SolidBrush(sCol))
                         using (StringFormat sf = new StringFormat())
                         {
                             sf.Alignment = HAlign(s.Align);
-                            DrawStyledText(g, s.Text, s.FontSize, s.Style, b, new RectangleF(s.Pts[0].X, s.Pts[0].Y, sz.Width + 1f, sz.Height + 1f), sf);
+                            DrawStyledText(g, s.Text, s.FontSize, s.Style, b, new RectangleF(s.Pts[0].X, s.Pts[0].Y, sz.Width + 1f, sz.Height + 1f), sf, s.FontFamilyName);
                         }
                         break;
                     }
@@ -1507,6 +1635,15 @@ namespace SnapMeasure
                                 else DrawPixelate(g, s, img);
                                 g.Restore(st);
                             }
+                            else if (s.Mode == (int)HighlightMode.Blur && img != null)
+                            {
+                                GraphicsState st = g.Save();
+                                g.SetClip(hp, CombineMode.Intersect);
+                                g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                                g.PixelOffsetMode = PixelOffsetMode.Half;
+                                g.DrawImage(BlurredOf(img, s.BlurRadius), WorldOf(img), new RectangleF(0, 0, img.Width, img.Height), GraphicsUnit.Pixel);
+                                g.Restore(st);
+                            }
                             else if (s.Mode == (int)HighlightMode.GrayscaleInside && img != null)
                             {
                                 GraphicsState st = g.Save();
@@ -1538,7 +1675,7 @@ namespace SnapMeasure
                             using (StringFormat sf = new StringFormat())
                             {
                                 sf.Alignment = HAlign(s.Align); sf.LineAlignment = StringAlignment.Center;
-                                DrawStyledText(g, s.Text, s.FontSize, s.Style, b, tr, sf);
+                                DrawStyledText(g, s.Text, s.FontSize, s.Style, b, tr, sf, s.FontFamilyName);
                             }
                         }
                         break;
@@ -1620,6 +1757,18 @@ namespace SnapMeasure
         }
 
         static float DotRadius(float w, float half) { return Math.Max(w * 1.4f, half * 0.55f); }
+        static float SmallDotRadius(float w, float half) { return Math.Max(w * 0.8f, DotRadius(w, half) * 0.45f); }
+        static float SmallBlankRadius(float w, float half) { return Math.Max(w * 1.1f, DotRadius(w, half) * 0.6f); }
+        static float BoxHalf(float w, float half) { return DotRadius(w, half) * 0.95f; }
+
+        /// <summary>AutoCAD's closed arrow: a slender triangle, three times as long as it is wide.</summary>
+        static PointF[] Slender(PointF tip, PointF u, float len, float w)
+        {
+            return Head(tip, u, len, Math.Max(len / 6f, w * 0.9f));
+        }
+
+        /// <summary>The datum triangle: a plain triangle, about as wide as it is long.</summary>
+        static PointF[] Datum(PointF tip, PointF u, float len) { return Head(tip, u, len * 0.9f, len * 0.45f); }
 
         /// <summary>How far back from the tip the line has to stop for this head style.</summary>
         public static float HeadBack(int style, float w, float len, float half)
@@ -1629,7 +1778,14 @@ namespace SnapMeasure
                 case HeadStyle.Filled: return len * 0.85f;
                 case HeadStyle.Hollow: return len;
                 case HeadStyle.Circle: return DotRadius(w, half);
-                default: return 0f;
+                case HeadStyle.ClosedFilled: return len * 0.92f;
+                case HeadStyle.ClosedBlank: return len;
+                case HeadStyle.DotSmallBlank: return SmallBlankRadius(w, half);
+                case HeadStyle.Box: return BoxHalf(w, half);
+                case HeadStyle.DatumTriangle: return len * 0.9f;
+                case HeadStyle.DatumTriangleFilled: return len * 0.85f;
+                case HeadStyle.HalfClosed: return len;          // the line stops at the head's base: a thick line can't poke out past its slant
+                default: return 0f;           // Closed, Open, Open 30, ticks and solid dots: the line runs to the tip
             }
         }
 
@@ -1694,6 +1850,76 @@ namespace SnapMeasure
                             g.FillPolygon(br, new PointF[] {
                                 new PointF(tip.X + (u.X + n.X) * r, tip.Y + (u.Y + n.Y) * r), new PointF(tip.X + (-u.X + n.X) * r, tip.Y + (-u.Y + n.Y) * r),
                                 new PointF(tip.X + (-u.X - n.X) * r, tip.Y + (-u.Y - n.Y) * r), new PointF(tip.X + (u.X - n.X) * r, tip.Y + (u.Y - n.Y) * r) });
+                            break;
+                        }
+                    // ---- AutoCAD's own list (10 and up) ----
+                    case HeadStyle.ClosedFilled:
+                        g.FillPolygon(br, Slender(tip, u, len, w));
+                        break;
+                    case HeadStyle.ClosedBlank:
+                        using (Pen hp = new Pen(col, Math.Max(1f, w * 0.7f))) { hp.LineJoin = LineJoin.Miter; g.DrawPolygon(hp, Slender(tip, u, len, w)); }
+                        break;
+                    case HeadStyle.Closed:       // the outline with the line running on to the tip
+                        using (Pen hp = new Pen(col, Math.Max(1f, w * 0.7f))) { hp.LineJoin = LineJoin.Miter; g.DrawPolygon(hp, Slender(tip, u, len, w)); }
+                        break;
+                    case HeadStyle.Oblique:      // a thin 45° stroke, as wide as the line
+                        {
+                            float k = half * 0.85f;
+                            PointF d = new PointF((u.X + n.X) * 0.7071f * k, (u.Y + n.Y) * 0.7071f * k);
+                            using (Pen sp = new Pen(col, Math.Max(1f, w))) g.DrawLine(sp, tip.X - d.X, tip.Y - d.Y, tip.X + d.X, tip.Y + d.Y);
+                            break;
+                        }
+                    case HeadStyle.Open30:       // two thin strokes, 30° apart
+                        {
+                            float hl2 = len * 1.15f;
+                            PointF[] h = Head(tip, u, hl2, hl2 * 0.2679f);     // tan 15°
+                            g.DrawLines(p, new PointF[] { h[1], tip, h[2] });
+                            break;
+                        }
+                    case HeadStyle.DotSmall:
+                        {
+                            float r = SmallDotRadius(w, half);
+                            g.FillEllipse(br, tip.X - r, tip.Y - r, 2 * r, 2 * r);
+                            break;
+                        }
+                    case HeadStyle.DotSmallBlank:
+                        {
+                            float r = SmallBlankRadius(w, half);
+                            using (Pen cp = new Pen(col, Math.Max(1f, w * 0.85f))) g.DrawEllipse(cp, tip.X - r, tip.Y - r, 2 * r, 2 * r);
+                            break;
+                        }
+                    case HeadStyle.Box:
+                        {
+                            float r = BoxHalf(w, half);
+                            using (Pen bp = new Pen(col, Math.Max(1f, w * 0.85f)))
+                            {
+                                bp.LineJoin = LineJoin.Miter;
+                                g.DrawPolygon(bp, new PointF[] {
+                                    new PointF(tip.X + (u.X + n.X) * r, tip.Y + (u.Y + n.Y) * r), new PointF(tip.X + (-u.X + n.X) * r, tip.Y + (-u.Y + n.Y) * r),
+                                    new PointF(tip.X + (-u.X - n.X) * r, tip.Y + (-u.Y - n.Y) * r), new PointF(tip.X + (u.X - n.X) * r, tip.Y + (u.Y - n.Y) * r) });
+                            }
+                            break;
+                        }
+                    case HeadStyle.DatumTriangle:
+                        using (Pen hp = new Pen(col, Math.Max(1f, w * 0.85f))) { hp.LineJoin = LineJoin.Miter; g.DrawPolygon(hp, Datum(tip, u, len)); }
+                        break;
+                    case HeadStyle.DatumTriangleFilled:
+                        g.FillPolygon(br, Datum(tip, u, len));
+                        break;
+                    case HeadStyle.HalfClosed:   // a filled half arrow (harpoon): flush with one edge of the line, flaring out on the other
+                        {
+                            float e = w / 2f, flare = Math.Max(len * 0.32f, w * 1.2f);
+                            PointF a = new PointF(tip.X - n.X * e, tip.Y - n.Y * e);                                 // tip, on the line's far edge
+                            PointF b = new PointF(a.X - u.X * len, a.Y - u.Y * len);                                 // straight back along that edge
+                            PointF c = new PointF(tip.X - u.X * len + n.X * (e + flare), tip.Y - u.Y * len + n.Y * (e + flare));   // the barb
+                            g.FillPolygon(br, new PointF[] { a, b, c });
+                            break;
+                        }
+                    case HeadStyle.HalfOpen:     // one barb, from the tip out past the line's near edge
+                        {
+                            float e = w / 2f, flare = Math.Max(len * 0.32f, w * 1.2f);
+                            PointF c = new PointF(tip.X - u.X * len * 0.95f + n.X * (e + flare), tip.Y - u.Y * len * 0.95f + n.Y * (e + flare));
+                            g.DrawLine(p, tip, c);
                             break;
                         }
                 }
@@ -1807,22 +2033,6 @@ namespace SnapMeasure
                 default: p.AddRectangle(r); break;
             }
             return p;
-        }
-
-        /// <summary>Direction out of the end of a stroke, measured over about 'over' pixels (smooths shaky freehand ends).</summary>
-        static PointF PathDir(List<PointF> p, bool atStart, float over)
-        {
-            PointF tip = atStart ? p[0] : p[p.Count - 1], back = tip;
-            float run = 0;
-            for (int i = 1; i < p.Count; i++)
-            {
-                PointF q = atStart ? p[i] : p[p.Count - 1 - i], prev = atStart ? p[i - 1] : p[p.Count - i];
-                run += Geo.Dist(q, prev);
-                back = q;
-                if (run >= over) break;
-            }
-            float L = Geo.Dist(tip, back);
-            return L < 0.01f ? new PointF(1, 0) : new PointF((tip.X - back.X) / L, (tip.Y - back.Y) / L);
         }
 
         static void DrawOpenPath(Graphics g, Shape s, ScaleInfo sc, string name, Color sCol, float w, bool stroke)
@@ -2055,7 +2265,7 @@ namespace SnapMeasure
         static void DrawGlobalHighlights(Graphics g, List<Shape> shapes, Bitmap img, RectangleF area)
         {
             if (img == null) return;
-            List<Shape> spot = new List<Shape>(), gray = new List<Shape>(), pixOut = new List<Shape>();
+            List<Shape> spot = new List<Shape>(), gray = new List<Shape>(), pixOut = new List<Shape>(), blurOut = new List<Shape>();
             int spotOp = 0;
             foreach (Shape s in shapes)
             {
@@ -2063,6 +2273,7 @@ namespace SnapMeasure
                 if (s.Mode == (int)HighlightMode.Spotlight) { spot.Add(s); spotOp = Math.Max(spotOp, s.FillOpacity); }
                 else if (s.Mode == (int)HighlightMode.Grayscale) gray.Add(s);
                 else if (s.Mode == (int)HighlightMode.PixelateOutside) pixOut.Add(s);
+                else if (s.Mode == (int)HighlightMode.BlurOutside) blurOut.Add(s);
             }
             // the whole picture, pasted pictures lying outside it included
             RectangleF all = WorldOf(img), px = new RectangleF(0, 0, img.Width, img.Height);
@@ -2078,6 +2289,20 @@ namespace SnapMeasure
                     g.InterpolationMode = InterpolationMode.NearestNeighbor;
                     g.PixelOffsetMode = PixelOffsetMode.Half;
                     g.DrawImage(PixelatedOf(img, block), all, px, GraphicsUnit.Pixel);
+                    g.Restore(st);
+                }
+            }
+            if (blurOut.Count > 0)
+            {
+                // everything outside the shapes is blurred (strength from the first one)
+                using (Region rg = new Region(area))
+                {
+                    foreach (Shape s in blurOut) using (GraphicsPath hp = HighlightPath(s)) rg.Exclude(hp);
+                    GraphicsState st = g.Save();
+                    g.SetClip(rg, CombineMode.Intersect);
+                    g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(BlurredOf(img, blurOut[0].BlurRadius), all, px, GraphicsUnit.Pixel);
                     g.Restore(st);
                 }
             }
@@ -2109,7 +2334,7 @@ namespace SnapMeasure
         {
             return s.Kind == ShapeKind.Highlight && s.Pts.Count >= (s.IsFocusPoly ? 3 : 2) &&
                    (s.Mode == (int)HighlightMode.Spotlight || s.Mode == (int)HighlightMode.Grayscale ||
-                    s.Mode == (int)HighlightMode.PixelateOutside);
+                    s.Mode == (int)HighlightMode.PixelateOutside || s.Mode == (int)HighlightMode.BlurOutside);
         }
 
         /// <summary>Focus modes that show the picture changed (gray, pixelated, magnified): they need the picture as it looks.</summary>
@@ -2345,7 +2570,7 @@ namespace SnapMeasure
         }
     }
 
-    public enum HKind { Point, Box, Rotate, Center, DimOffset, Tail, Label, LabelSize }
+    public enum HKind { Point, Box, Rotate, Center, DimOffset, Tail, Label, LabelSize, HolePoint }
 
     public struct Handle
     {
@@ -2407,6 +2632,9 @@ namespace SnapMeasure
             return new PointF[] { Geo.Rot(BoxPoint(r, 0), c, a), Geo.Rot(BoxPoint(r, 2), c, a), Geo.Rot(BoxPoint(r, 4), c, a), Geo.Rot(BoxPoint(r, 6), c, a) };
         }
 
+        /// <summary>A cut-out corner's handle index is cut-out × HoleStride + corner.</summary>
+        public const int HoleStride = 100000;
+
         /// <summary>Editable handles. rotDist = distance of the rotate knob above the shape, in image units.</summary>
         public static List<Handle> Handles(Shape s, float rotDist)
         {
@@ -2442,6 +2670,10 @@ namespace SnapMeasure
                     {
                         if (s.Kind != ShapeKind.Freehand)
                             for (int i = 0; i < s.Pts.Count; i++) h.Add(new Handle(s.Pts[i], HKind.Point, i));
+                        // the corners of its cut-outs: drag to reshape a cut-out (Ctrl+click removes a corner)
+                        if (s.Holes != null)
+                            for (int k = 0; k < s.Holes.Count; k++)
+                                for (int i = 0; i < s.Holes[k].Count && i < HoleStride; i++) h.Add(new Handle(s.Holes[k][i], HKind.HolePoint, k * HoleStride + i));
                         // area / perimeter label: yellow knob in its middle = move it, corner = size of its text
                         if ((s.Kind == ShapeKind.Area || (s.Kind == ShapeKind.Perimeter && !s.IsOpenPath)) && !s.LabelRect.IsEmpty)
                         {
@@ -2544,6 +2776,12 @@ namespace SnapMeasure
                         s.Pts[h.Index] = p;
                     }
                     break;
+                case HKind.HolePoint:
+                    {
+                        int hi = h.Index / HoleStride, pi = h.Index % HoleStride;
+                        if (s.Holes != null && hi < s.Holes.Count && pi < s.Holes[hi].Count) { s.Holes[hi][pi] = p; s.Cache = null; }
+                        break;
+                    }
                 case HKind.DimOffset:
                 case HKind.Tail:
                     {
@@ -2994,6 +3232,7 @@ namespace SnapMeasure
             w.WriteAttributeString("italic", s.Italic ? "1" : "0");
             if (s.Underline) w.WriteAttributeString("underline", "1");
             if (s.Strikeout) w.WriteAttributeString("strikeout", "1");
+            if (!string.IsNullOrEmpty(s.FontName)) w.WriteAttributeString("fontName", s.FontName);
             w.WriteAttributeString("align", s.Align.ToString(Inv));
             if (s.Kind == ShapeKind.Freehand)
             {
@@ -3140,8 +3379,8 @@ namespace SnapMeasure
             s.StrokeOpacity = Math.Max(0, Math.Min(100, s.StrokeOpacity));
             s.FillOpacity = Math.Max(0, Math.Min(100, s.FillOpacity));
             s.Align = Math.Max(0, Math.Min(2, s.Align));
-            s.HeadStart = Math.Max(0, Math.Min(9, s.HeadStart));
-            s.HeadEnd = Math.Max(0, Math.Min(9, s.HeadEnd));
+            s.HeadStart = Math.Max(0, Math.Min(21, s.HeadStart));
+            s.HeadEnd = Math.Max(0, Math.Min(21, s.HeadEnd));
             s.Mode = Math.Max(0, Math.Min(Math.Max(20, Stamps.Custom), s.Mode));   // stamps go up to Custom
             s.Dash = Math.Max(0, Math.Min(5, s.Dash));
             s.Form = Math.Max(0, Math.Min((int)HighlightForm.Perimeter, s.Form));
@@ -3179,6 +3418,7 @@ namespace SnapMeasure
             s.Italic = e.GetAttribute("italic") == "1";
             s.Underline = e.GetAttribute("underline") == "1";
             s.Strikeout = e.GetAttribute("strikeout") == "1";
+            { string fn = e.GetAttribute("fontName"); s.FontName = string.IsNullOrEmpty(fn) || fn.Length > 64 ? null : fn; }
             s.Align = PI(e.GetAttribute("align"), s.Kind == ShapeKind.Bubble ? 1 : 0);
             if (s.Kind == ShapeKind.Freehand)
             {

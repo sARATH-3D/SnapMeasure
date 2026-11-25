@@ -315,6 +315,7 @@ Small (16 px)	작게 (16 px)
 Medium (20 px)	보통 (20 px)
 Large (24 px)	크게 (24 px)
 (new editor windows)	(새 편집기 창)
+(smaller when the window is too short)	(창이 낮으면 더 작게 표시)
 Editor: start with "Keep inside" locked (Ctrl+L switches it in the editor)	편집기: "안쪽 유지"를 켠 상태로 시작 (편집기에서 Ctrl+L로 전환)
 Language	언어
 (new windows; restart for the tray menu)	(새 창에 적용, 트레이 메뉴는 다시 시작 후)
@@ -370,3 +371,79 @@ Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)	실제 픽셀 
 Rulers along the top and left edge (Ctrl+R)	위쪽과 왼쪽 가장자리의 눈금자 (Ctrl+R)
 Actual pixels	실제 픽셀
 More options for this tool (the window is too narrow to show them all)	이 도구의 추가 옵션 (창이 좁아 모두 표시할 수 없음)
+
+# ---- 1.4 ----
+SnapMeasure	SnapMeasure
+Save your drawing before closing?	닫기 전에 그림을 저장할까요?
+Don't save	저장 안 함
+Open in the SnapMeasure editor	SnapMeasure 편집기에서 열기
+Copy to clipboard	클립보드에 복사
+Copy and save	복사 후 저장
+Open in Paint	그림판에서 열기
+Print	인쇄
+Close (keep nothing)	닫기 (저장 안 함)
+After a capture (PrtSc, Ctrl+Shift+1 …, a click on the tray icon):	캡처한 후 (PrtSc, Ctrl+Shift+1 …, 트레이 아이콘 클릭):
+Show a menu to choose what to do with each capture	캡처할 때마다 작업을 고르는 메뉴 표시
+In the menu:	메뉴 항목:
+Without the menu:	메뉴를 끄면:
+Open the editor	편집기 열기
+Copy to the clipboard	클립보드에 복사
+Save to the save folder	저장 폴더에 저장
+Styles	스타일
+Your styles	내 스타일
+Remember my styles: new editors start with the colours, line widths, arrowheads, text and font, and marker numbering I used last	내 스타일 기억: 새 편집기를 열 때 마지막으로 쓴 색, 선 두께, 화살촉, 텍스트와 글꼴, 마커 번호 매기기로 시작
+They are saved when you close an editor. Off: every editor starts with SnapMeasure's own styles.	편집기를 닫을 때 저장됩니다. 끄면 모든 편집기가 SnapMeasure 기본 스타일로 시작합니다.
+Save current styles	현재 스타일 저장
+Reset to SnapMeasure's styles	SnapMeasure 기본 스타일로 초기화
+Saved. New editors start with these styles.	저장했습니다. 새 편집기는 이 스타일로 시작합니다.
+Could not save the styles.	스타일을 저장할 수 없습니다.
+Done. New editors start with SnapMeasure's own styles.	완료. 새 편집기는 SnapMeasure 기본 스타일로 시작합니다.
+Open an editor first: its styles are the ones saved	먼저 편집기를 여세요. 그 편집기의 스타일이 저장됩니다
+{0} captures so far – thank you for using SnapMeasure!	지금까지 {0}회 캡처 – SnapMeasure를 사용해 주셔서 감사합니다!
+Thank you for using SnapMeasure!	SnapMeasure를 사용해 주셔서 감사합니다!
+thanks for using SnapMeasure. Optional: buy me a coffee	SnapMeasure를 사용해 주셔서 감사합니다. 선택 사항: 커피 한 잔 후원하기
+Support SnapMeasure	SnapMeasure 후원하기
+Closed filled	닫힘 채움
+Closed blank	닫힘 빈칸
+Half closed	반쪽 닫힘
+Half open	반쪽 열림
+Open 30	열림 30
+Oblique	사선
+Dot blank	빈 점
+Box	상자
+Box filled	채운 상자
+Datum triangle	데이텀 삼각형
+Datum triangle filled	채운 데이텀 삼각형
+Blur	흐림
+Blur outside	바깥 흐림
+Font	글꼴
+Text alignment	텍스트 정렬
+Opacity	불투명도
+Reset picture (real size, not rotated)	그림 초기화 (실제 크기, 회전 없음)
+Reset picture	그림 초기화
+Picture opacity	그림 불투명도
+Extend canvas	캔버스 확장
+Add room round the picture (pixels):	그림 둘레에 여백 추가 (픽셀):
+Same on all sides	모든 면 동일
+Top	위
+Bottom	아래
+Left	왼쪽
+Right	오른쪽
+White	흰색
+Black	검정
+Transparent	투명
+Like the picture's edge	그림 가장자리 색
+Colour	색
+Save the capture as	캡처를 다른 이름으로 저장
+Saved:	저장됨:
+Copied and saved:	복사 및 저장됨:
+Capture copied to the clipboard	캡처를 클립보드에 복사했습니다
+Could not save the capture:	캡처를 저장할 수 없습니다:
+Could not open Paint:	그림판을 열 수 없습니다:
+Could not print:	인쇄할 수 없습니다:
+Size the editor window to fit the capture	편집기 창 크기를 캡처에 맞추기
+thank you for using SnapMeasure! Optional: buy me a coffee (tray menu → Support SnapMeasure)	SnapMeasure를 사용해 주셔서 감사합니다! 선택 사항: 커피 한 잔 후원하기 (트레이 메뉴 → SnapMeasure 후원하기)
+Zoom in (Ctrl+mouse wheel)	확대 (Ctrl+마우스 휠)
+Zoom out (Ctrl+mouse wheel)	축소 (Ctrl+마우스 휠)
+The picture can't get any smaller.	그림을 더 작게 할 수 없습니다.
+Extend canvas…   (Ctrl+Plus / Ctrl+Minus = 10 px)	캔버스 확장…   (Ctrl+Plus / Ctrl+Minus = 10 px)

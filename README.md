@@ -1,6 +1,6 @@
 <img src="docs/icon.png" alt="SnapMeasure icon: a capture frame with an amber measuring arrow" width="96" align="right">
 
-# SnapMeasure 1.3.3
+# SnapMeasure 1.4.0
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
@@ -23,6 +23,18 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Free and light:** no subscription, no account, no ads, no telemetry. One ~520 KB exe that runs without installing,
   or the signed Microsoft Store version that updates itself. Paid takeoff software is great for full projects; SnapMeasure is
   for the quick check, the markup for a colleague, and the takeoff from a screenshot.
+
+**What's new in 1.4.0:**
+* **Dark mode:** Settings → General → Appearance: Automatic (follows Windows), Light or Dark.
+* **AutoCAD's line ends:** 15 arrowhead styles with AutoCAD's names and order (Closed filled, Closed blank, Closed, Dot, Architectural tick,
+  Oblique, Open, Open 30, Dot small, Dot blank, Dot small blank, Box, Box filled, Datum triangle, Datum triangle filled) and None.
+  A new arrow has the slender **Closed filled** head at its start and nothing at its end, like an AutoCAD leader. Older drawings look the same.
+* **12 backgrounds and papers** for a new blank canvas: White, Cream, Light gray, Black, Transparent, Grid, Graph (green), Dot grid,
+  Isometric, Lined, Blueprint and Dark grid.
+* **Capture counter** in the editor's status bar ("127 captures", kept only on your PC, never sent; switch it off in Settings → General).
+  An optional "buy me a coffee" line shows for a few seconds at capture 100, 200 and so on; ✕ ends it for good.
+* Capturing over **AutoCAD** no longer closes an open ribbon drop-down or menu before the picture is taken.
+* The tray menu shows each item's capture keys when the mouse rests on it. The Ellipse tool icon has no centre mark.
 
 **What's new in 1.3.3:**
 * **Focus as a perimeter:** pick *Perimeter* under Shape and click its corners like an area. The **Cut-out** tool (`X`) cuts holes in any focus.
@@ -168,13 +180,13 @@ In the Store version Windows asks once; you can also switch it in *Windows Setti
 
 | Capture | Keys |
 |---|---|
-| Region, or click a window | `PrtSc` or `Ctrl+Shift+1` |
+| Region, or click a window | `PrtSc` or `Ctrl+Shift+1` (or left-click the tray icon) |
 | Active window | `Alt+PrtSc` or `Ctrl+Shift+2` |
 | Screen under mouse | `Ctrl+PrtSc` or `Ctrl+Shift+3` |
 | Last region again | `Shift+PrtSc` or `Ctrl+Shift+4` |
 | **Scrolling capture** (long page): pick the area, SnapMeasure scrolls it and joins the pieces. Move the mouse to pause; **Stop** (bar under the area) or `Esc` finishes | `Ctrl+Shift+5` |
 | **Capture text (OCR)**: pick an area, its text goes to the clipboard | `Ctrl+Shift+6` |
-| **Open the clipboard picture** in a new editor (blank canvas if there is none) | `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` (or left-click the tray icon) |
+| **Open the clipboard picture** in a new editor (blank canvas if there is none) | `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` |
 
 These are the default keys. Choose your own in **Settings → General** (click a box and press the keys; two per capture).
 

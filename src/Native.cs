@@ -39,6 +39,47 @@ namespace SnapMeasure
             }
             catch { return ""; }
         }
+        [StructLayout(LayoutKind.Sequential)]
+        struct GUITHREADINFO { public int cbSize, flags; public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret; public RECT rcCaret; }
+        [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO gti);
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder sb, int max);
+
+        /// <summary>True while a menu or drop-down of the window's program is open (a Win32 menu, or a pop-up that has captured
+        /// the mouse, or a visible pop-up window of the same program that never takes the focus). Taking the focus away
+        /// from the program at that moment would close it.</summary>
+        public static bool PopupOpenIn(IntPtr target)
+        {
+            try
+            {
+                uint pid;
+                uint tid = GetWindowThreadProcessId(target, out pid);
+                if (tid == 0) return false;
+                GUITHREADINFO g = new GUITHREADINFO();
+                g.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+                if (GetGUIThreadInfo(tid, ref g))
+                {
+                    const int INMENU = 0x4, SYSMENU = 0x8, POPUPMENU = 0x10;
+                    if ((g.flags & (INMENU | SYSMENU | POPUPMENU)) != 0 || g.hwndMenuOwner != IntPtr.Zero || g.hwndCapture != IntPtr.Zero) return true;
+                }
+                bool found = false;
+                EnumWindows((h, l) =>
+                {
+                    if (h == target || !IsWindowVisible(h)) return true;
+                    uint p2;
+                    GetWindowThreadProcessId(h, out p2);
+                    if (p2 != pid) return true;
+                    long style = (uint)GetWindowLong(h, -16), ex = (uint)GetWindowLong(h, -20);
+                    bool popup = (style & 0x80000000L) != 0;                     // WS_POPUP
+                    bool noActivate = (ex & 0x08000000L) != 0;                   // WS_EX_NOACTIVATE
+                    System.Text.StringBuilder sb = new System.Text.StringBuilder(64);
+                    GetClassName(h, sb, 64);
+                    if (sb.ToString() == "#32768" || (popup && noActivate)) { found = true; return false; }   // menu class, or a pop-up that never takes the focus
+                    return true;
+                }, IntPtr.Zero);
+                return found;
+            }
+            catch { return false; }
+        }
         [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
