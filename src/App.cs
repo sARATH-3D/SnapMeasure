@@ -14,8 +14,8 @@ using System.Xml;
 [assembly: System.Reflection.AssemblyTitle("SnapMeasure")]
 [assembly: System.Reflection.AssemblyProduct("SnapMeasure")]
 [assembly: System.Reflection.AssemblyDescription("Screenshot tool with dimensions, area and scale")]
-[assembly: System.Reflection.AssemblyVersion("1.4.1.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.4.1.0")]
+[assembly: System.Reflection.AssemblyVersion("1.4.2.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.4.2.0")]
 [assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 sARATH – MIT licence – github.com/sARATH-3D/SnapMeasure")]
 // P/Invoke DLLs (user32, gdi32, dwmapi, kernel32) only from System32, never from the exe's folder
 [assembly: System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
@@ -344,14 +344,14 @@ namespace SnapMeasure
                       "gray|colour|colour|True/4/1|True|True|True");
             }
 
-            // focus border: every mode draws its outline in the line colour (thin by default)
+            // focus border: every mode draws its outline in the line colour when it has a width (1.4.2: 0 by default)
             using (Bitmap fb = new Bitmap(100, 100))
             {
                 using (Graphics q = Graphics.FromImage(fb)) q.Clear(Color.White);
                 List<string> bd = new List<string>();
                 foreach (int mode in new[] { (int)HighlightMode.Marker, (int)HighlightMode.Spotlight, (int)HighlightMode.Grayscale, (int)HighlightMode.Pixelate })
                 {
-                    Shape h = cv.Styles[Tool.Highlight].Clone(); h.Pts.Clear(); h.Mode = mode; h.Angle = 0; h.Stroke = Color.Blue; h.StrokeOpacity = 100;
+                    Shape h = cv.Styles[Tool.Highlight].Clone(); h.Pts.Clear(); h.Mode = mode; h.Angle = 0; h.Stroke = Color.Blue; h.StrokeOpacity = 100; h.Width = 1;
                     h.Pts.Add(new PointF(20.5f, 20.5f)); h.Pts.Add(new PointF(80.5f, 80.5f));
                     using (Bitmap o = new Bitmap(100, 100))
                     using (Graphics q = Graphics.FromImage(o))
@@ -362,7 +362,7 @@ namespace SnapMeasure
                         bd.Add(c.B > 150 && c.R < 120 ? "border" : "none");
                     }
                 }
-                check("Focus border in every mode", string.Join("|", bd.ToArray()) + "|" + cv.Styles[Tool.Highlight].Width, "border|border|border|border|1");
+                check("Focus border in every mode", string.Join("|", bd.ToArray()) + "|" + cv.Styles[Tool.Highlight].Width, "border|border|border|border|0");
             }
 
             // radius Show: all three values; capture keys include opening the clipboard picture (Ctrl+Shift+7)
@@ -630,11 +630,109 @@ namespace SnapMeasure
                         Color ex0 = ec.Image.GetPixel(0, 0), ex1 = ec.Image.GetPixel(50, 35);
                         check("Extend canvas", ec.Image.Width + "x" + ec.Image.Height + "|" + ex0.R + "," + ex0.G + "|" + ex1.R + "," + ex1.G + "|" + ec.Shapes[0].Pts[0].X + "," + ec.Shapes[0].Pts[0].Y,
                               "120x80|255,0|255,255|15,20");
-                        // Ctrl+Minus: 10 px off each side, drawings follow; too small = refused, nothing changed
+                        // Ctrl+Minus: up to 10 px of the added room off each side, drawings follow
                         bool shrunk = ec.ShrinkCanvas(10);
-                        bool tooSmall = ec.ShrinkCanvas(40);
-                        check("Shrink canvas", shrunk + "|" + ec.Image.Width + "x" + ec.Image.Height + "|" + ec.Shapes[0].Pts[0].X + "," + ec.Shapes[0].Pts[0].Y + "|" + tooSmall,
-                              "True|100x60|5,10|False");
+                        string mid = ec.Image.Width + "x" + ec.Image.Height + "|" + ec.Shapes[0].Pts[0].X + "," + ec.Shapes[0].Pts[0].Y;
+                        // 1.4.2: it stops at the original picture edge and never cuts the picture itself
+                        bool rest = ec.ShrinkCanvas(40);
+                        bool more = ec.ShrinkCanvas(10);
+                        Color orig = ec.Image.GetPixel(0, 0);
+                        check("Shrink canvas", shrunk + "|" + mid + "|" + rest + "|" + ec.Image.Width + "x" + ec.Image.Height + "|" + more + "|" + orig.G,
+                              "True|105x60|10,10|True|100x50|False|255");
+                        // undo brings back the room, and Ctrl+Minus works again
+                        ec.Undo();
+                        check("Shrink canvas undo", ec.Image.Width + "x" + ec.Image.Height + "|" + string.Join(",", Array.ConvertAll(ec.AddedRoom, x => x.ToString())), "105x60|0,0,5,10");
+                    }
+                }
+                {
+                    // 1.4.2 fill tool: inside a rectangle; through a 3 px gap in a hand-drawn outline it still stays inside
+                    using (Bitmap fimg = Canvas.BlankImage(300, 300, Color.White))
+                    using (Canvas fc = new Canvas())
+                    {
+                        fc.Image = Effects.To32(fimg);
+                        Shape fr = new Shape(); fr.Kind = ShapeKind.Rect; fr.Width = 2; fr.Pts.Add(new PointF(100, 100)); fr.Pts.Add(new PointF(200, 200));
+                        fc.Shapes.Add(fr);
+                        bool ok1 = fc.FillAt(new PointF(150, 150));
+                        Shape f1 = fc.Shapes[0];
+                        double a1 = Math.Abs(Geo.SignedArea(f1.Pts));
+                        Shape fg = new Shape(); fg.Kind = ShapeKind.Freehand; fg.Width = 2;
+                        foreach (PointF p in new[] { new PointF(20, 220), new PointF(80, 220), new PointF(80, 280), new PointF(20, 280), new PointF(20, 223) }) fg.Pts.Add(p);
+                        fc.Shapes.Add(fg);
+                        bool ok2 = fc.FillAt(new PointF(50, 250));
+                        double a2 = Math.Abs(Geo.SignedArea(fc.Shapes[0].Pts));
+                        bool onLine = fc.FillAt(new PointF(100, 150));
+                        check("Fill tool", ok1 + "|" + (f1.Kind == ShapeKind.Polygon) + "|" + (a1 > 9000 && a1 < 10500) + "|" + ok2 + "|" + (a2 > 3000 && a2 < 4000) + "|" + onLine + "|" + fc.Shapes.Count,
+                              "True|True|True|True|True|False|4");
+                        // undo takes the fill away again
+                        fc.Undo();
+                        check("Fill undo", fc.Shapes.Count + "|" + fc.Shapes[0].Kind, "3|Polygon");
+                        // like Paint: the fill reaches under the line (no white gap), and works outside the picture too
+                        RectangleF fb = ShapeOps.Bounds(f1);
+                        Shape fo = new Shape(); fo.Kind = ShapeKind.Rect; fo.Width = 4; fo.Pts.Add(new PointF(400, 50)); fo.Pts.Add(new PointF(500, 150));
+                        fc.Shapes.Add(fo);
+                        bool okOut = fc.FillAt(new PointF(450, 100));
+                        double aOut = okOut ? Math.Abs(Geo.SignedArea(fc.Shapes[0].Pts)) : 0;
+                        bool open = fc.FillAt(new PointF(350, 350));
+                        check("Fill reaches lines, outside picture", (fb.Left <= 100.5f && fb.Right >= 199.5f) + "|" + okOut + "|" + (aOut > 9500 && aOut < 10600) + "|" + open,
+                              "True|True|True|False");
+                    }
+                    // text in the picture doesn't stop the fill (no holes round the letters)
+                    using (Bitmap timg = Canvas.BlankImage(300, 300, Color.White))
+                    using (Canvas tc = new Canvas())
+                    {
+                        using (Graphics tg = Graphics.FromImage(timg))
+                        using (Font tf = new Font("Segoe UI", 14f, FontStyle.Regular, GraphicsUnit.Pixel))
+                            tg.DrawString("Room A 12.5 m2", tf, Brushes.Black, 70, 140);
+                        tc.Image = Effects.To32(timg);
+                        Shape tr = new Shape(); tr.Kind = ShapeKind.Rect; tr.Width = 2; tr.Pts.Add(new PointF(50, 100)); tr.Pts.Add(new PointF(250, 200));
+                        tc.Shapes.Add(tr);
+                        bool okT = tc.FillAt(new PointF(60, 110));
+                        check("Fill ignores text", okT + "|" + (tc.Shapes[0].Holes == null ? 0 : tc.Shapes[0].Holes.Count), "True|0");
+                    }
+                    {
+                        // 1.4.2 symbol markers: a short symbol is a disc, a longer text a pill
+                        Shape m1 = new Shape(); m1.Kind = ShapeKind.Counter; m1.Mode = 2; m1.FontSize = 18; m1.Text = "Ø"; m1.Pts.Add(new PointF(100, 100));
+                        Shape m2 = m1.Clone(); m2.Text = "Ø125 mm";
+                        RectangleF b1 = ShapeOps.Bounds(m1), b2 = ShapeOps.Bounds(m2);
+                        check("Symbol marker pill", (Math.Abs(b1.Width - b1.Height) < 0.1f) + "|" + (b2.Width > b2.Height * 2) + "|" + (Math.Abs(b2.Height - b1.Height) < 0.1f), "True|True|True");
+                        // text box: top / middle / bottom is kept in the file
+                        Shape tvx = new Shape(); tvx.Kind = ShapeKind.Text; tvx.Text = "20"; tvx.VAlign = 1; tvx.Pts.Add(new PointF(10, 10)); tvx.Pts.Add(new PointF(80, 90));
+                        List<Shape> vb = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { tvx }));
+                        check("Text box middle", vb.Count + "|" + vb[0].VAlign, "1|1");
+                    }
+                    // 1.4.2 remove background: the plain edge colour goes, the subject stays
+                    using (Bitmap bimg = Canvas.BlankImage(100, 100, Color.White))
+                    using (Canvas bc = new Canvas())
+                    {
+                        bc.Image = Effects.To32(bimg);
+                        using (Graphics g = Graphics.FromImage(bc.Image)) g.FillRectangle(Brushes.Black, 30, 30, 40, 40);
+                        int gone = bc.RemoveBackground();
+                        check("Remove background", gone + "|" + bc.Image.GetPixel(0, 0).A + "|" + bc.Image.GetPixel(50, 50).A + "|" + bc.Image.GetPixel(50, 50).R, "8400|0|255|0");
+                        bc.Undo();
+                        check("Remove background undo", bc.Image.GetPixel(0, 0).A + "|" + bc.RemoveBackground().ToString().Length, "255|4");
+                    }
+                    // 1.4.2 origin with its own coordinates; X ; Y typed in several ways
+                    ScaleInfo so = new ScaleInfo(); so.OriginX = 1250; so.OriginY = 300;
+                    double ox, oy, px2, py2;
+                    bool p1 = Canvas.ParseXY("1250 ; 300", out ox, out oy), p2 = Canvas.ParseXY("12.5 3", out px2, out py2), p3 = Canvas.ParseXY("abc", out px2, out py2);
+                    check("Origin coordinates", so.CoordX(new PointF(110, 90), new PointF(100, 100)) + "|" + so.CoordY(new PointF(110, 90), new PointF(100, 100)) + "|" + p1 + "|" + ox + "," + oy + "|" + p2 + "|" + p3,
+                          "1260|310|True|1250,300|True|False");
+                    // 1.4.2 highlight box: no border by default; the magenta guide shows in the editor only, never in a saved picture
+                    using (Bitmap himg = Canvas.BlankImage(60, 60, Color.White))
+                    using (Canvas hc = new Canvas())
+                    {
+                        Shape hb = hc.Styles[Tool.Highlight].Clone(); hb.Pts.Clear(); hb.Pts.Add(new PointF(10, 10)); hb.Pts.Add(new PointF(50, 50)); hb.FillOpacity = 0;
+                        Func<bool, int> minG = exp =>
+                        {
+                            using (Bitmap o = new Bitmap(60, 60))
+                            {
+                                using (Graphics g = Graphics.FromImage(o)) { g.Clear(Color.White); Renderer.DrawAll(g, new List<Shape> { hb }, himg, hc.Scale, null, exp); }
+                                int m = 255;
+                                for (int x = 7; x <= 13; x++) m = Math.Min(m, o.GetPixel(x, 30).G);
+                                return m;
+                            }
+                        };
+                        check("Highlight guide line: editor only", hc.Styles[Tool.Highlight].Width + "|" + (minG(false) < 120) + "|" + (minG(true) > 200), "0|True|True");
                     }
                 }
                 check("Cut-out corners can be dragged", hh.Count + "|" + Measure.NetArea(ar).ToString("F0", CultureInfo.InvariantCulture) + "|" + Measure.NetArea(ar2).ToString("F0", CultureInfo.InvariantCulture), "4|9600|9200");
@@ -991,6 +1089,24 @@ namespace SnapMeasure
             check("Letters go on Z-AA", lab(l1) + "," + lab(l2) + "," + ScaleInfo.LetterName(51) + "," + ScaleInfo.LetterName(701) + "," + ScaleInfo.LetterNumber("ab"), "Z,AA,AZ,ZZ,28");
             cv.Scale.LetterStart = 1;
             cv.Shapes.Remove(l1); cv.Shapes.Remove(l2);
+
+            // ---- 1.4.2 symbol markers: any character, never counted, styled on their own ----
+            {
+                Shape s1 = Mk(cv, Tool.Symbol, 400, 300), s2 = Mk(cv, Tool.Symbol, 420, 300);
+                s1.Text = "Ø"; s2.Text = "3";
+                int symRows = Measure.Rows(cv.Shapes, cv.Scale, false).FindAll(r => r.Type == "Symbol marker").Count;
+                check("Symbol markers don't count", lab(m1) + "," + lab(s1) + "," + lab(m2) + "," + lab(s2) + "," + lab(m3) + "|" + Measure.Count(cv.Shapes, false) + "|" + symRows + "|" + Canvas.ToolFor(s1),
+                      "1,Ø,2,3,3|3|2|Symbol");
+                Color s1Fill = s1.Fill;
+                Canvas.MatchProps(m1, s2);          // a hand-placed "3" made to look like the counted ③
+                cv.MatchMarkerSeries(s2);           // a symbol marker has no series: s1 keeps its look
+                check("Match properties across markers", (s2.Fill == m1.Fill) + "|" + s2.Text + "|" + s2.Mode + "|" + (s1.Fill == s1Fill) + "|" + (s1.Fill.ToArgb() == Icons.SymbolFill.ToArgb()),
+                      "True|3|2|True|True");
+                Shape mx = Mk(cv, Tool.Counter, 600, 600);
+                Canvas.MatchProps(s1, mx);          // and the other way round: a number marker takes a symbol marker's look
+                check("Match properties symbol → number", (mx.Fill == s1.Fill) + "|" + lab(mx) + "|" + mx.Mode, "True|4|0");
+                cv.Shapes.Remove(s1); cv.Shapes.Remove(s2); cv.Shapes.Remove(mx);
+            }
 
             // ---- angle (3 points) ----
             Shape ang = Mk(cv, Tool.Angle, 760, 520, 700, 560, 860, 560);
@@ -1626,7 +1742,7 @@ namespace SnapMeasure
                 Usage.NoteShown();
                 NoteForEditor = true;
                 if (Notify != null)
-                    Notify("☕ " + Usage.CountText + " – " + Lang.T("thank you for using SnapMeasure! Optional: buy me a coffee (tray menu → Support SnapMeasure)"));
+                    Notify("☕ " + Usage.CountText + " – " + Lang.T("thank you for using SnapMeasure! Optional: buy me a coffee (tray menu → Buy me a coffee)"));
             }
             ScreenCapture.CursorShot cur = ScreenCapture.TakeCursor();
             Point curAt = Point.Empty;
@@ -2360,7 +2476,7 @@ namespace SnapMeasure
             Item(menu, "Open save folder", "", OpenFolder, false).Image = Icons.Cmd("folderopen", 16);
             menu.Items.Add(new ToolStripSeparator());
             Item(menu, "About SnapMeasure && shortcuts…", "", ShowAbout, false).Image = Icons.Cmd("help", 16);
-            ToolStripMenuItem support = Item(menu, "Support SnapMeasure", "", () => App.OpenSupport(), false);
+            ToolStripMenuItem support = Item(menu, "Buy me a coffee — keep SnapMeasure free", "", () => App.OpenSupport(), false);
             support.Image = Icons.Cmd("coffee", 16);
             support.ToolTipText = "Optional. Nothing in SnapMeasure is locked.";
             Item(menu, "Exit", "", ExitApp, false).Image = Icons.Cmd("exit", 16);
@@ -2528,6 +2644,7 @@ namespace SnapMeasure
             sb.AppendLine();
             sb.AppendLine("Count");
             row("N  /  Shift+N", "number markers  /  letter markers");
+            row("Shift+M", "symbol marker (any character, doesn't count up)");
             sb.AppendLine();
             sb.AppendLine("Draw");
             row("A  /  L", "arrow  /  line");
@@ -2546,13 +2663,16 @@ namespace SnapMeasure
             sb.AppendLine("Text");
             row("T", "text");
             row("S", "speech bubble");
-            row("Z", "stamp");
+            row("Shift+Z", "stamp");
+            row("Shift+F", "fill a closed area (paint bucket)");
             row("O", "note (not printed)");
             row("Shift+T", "copy text from an area (OCR)");
             sb.AppendLine();
             sb.AppendLine("Edit");
             row("C", "crop (Delete = remove the crop)");
-            row("Ctrl+Plus / Minus", "extend / shrink the canvas by 10 px a side");
+            row("Ctrl+Plus / Minus", "extend / shrink the added room by 10 px a side");
+            row("Ctrl+I / Ctrl+G", "invert colours / grayscale");
+            row("Ctrl+F", "find text, labels and tools");
             row("Ctrl+A", "select all");
             row("Ctrl+C / X / V", "copy, cut, paste shapes");
             row("Ctrl+D", "duplicate");
@@ -2564,6 +2684,7 @@ namespace SnapMeasure
             sb.AppendLine();
             sb.AppendLine("View and save");
             row("Home", "fit and centre");
+            row("Z", "zoom to area (drag a box)");
             row("Ctrl+wheel", "zoom");
             row("Space+drag", "pan (or the middle mouse button)");
             row("Shift", "15° steps, squares and circles");
@@ -2741,7 +2862,8 @@ namespace SnapMeasure
             m.Items.Add("Copy", Icons.Cmd("copy", 16), (s, e) => CopyShown());
             m.Items.Add("Open in editor", Icons.Cmd("open", 16), (s, e) => { new EditorForm(ShownImage(), "Pinned image").Show(); });
             m.Items.Add(new ToolStripSeparator());
-            m.Items.Add("Crop  (C) – drag the part to keep", Icons.Make(Tool.Crop, 16), (s, e) => StartCrop());
+            m.ShowItemToolTips = true;
+            m.Items.Add("Crop – drag the part to keep", Icons.Make(Tool.Crop, 16), (s, e) => StartCrop()).ToolTipText = "C";
             ToolStripItem reset = m.Items.Add("Undo crop", null, (s, e) => { src = new Rectangle(0, 0, img.Width, img.Height); ApplySize(); });
             ToolStripMenuItem size = new ToolStripMenuItem("Size");
             foreach (int p in new int[] { 25, 50, 75, 100, 150, 200 })
@@ -2750,12 +2872,13 @@ namespace SnapMeasure
                 size.DropDownItems.Add(p + "%", null, (s, e) => { z = pp / 100f; ApplySize(); });
             }
             ToolStripMenuItem turn = new ToolStripMenuItem("Rotate / mirror");
-            turn.DropDownItems.Add("Rotate right 90°   (R)", null, (s, e) => Turn(RotateFlipType.Rotate90FlipNone));
-            turn.DropDownItems.Add("Rotate left 90°   (Shift+R)", null, (s, e) => Turn(RotateFlipType.Rotate270FlipNone));
+            turn.DropDown.ShowItemToolTips = true;
+            turn.DropDownItems.Add("Rotate right 90°", null, (s, e) => Turn(RotateFlipType.Rotate90FlipNone)).ToolTipText = "R";
+            turn.DropDownItems.Add("Rotate left 90°", null, (s, e) => Turn(RotateFlipType.Rotate270FlipNone)).ToolTipText = "Shift+R";
             turn.DropDownItems.Add("Rotate 180°", null, (s, e) => Turn(RotateFlipType.Rotate180FlipNone));
             turn.DropDownItems.Add(new ToolStripSeparator());
-            turn.DropDownItems.Add("Mirror left ↔ right   (H)", null, (s, e) => Turn(RotateFlipType.RotateNoneFlipX));
-            turn.DropDownItems.Add("Flip upside down   (V)", null, (s, e) => Turn(RotateFlipType.RotateNoneFlipY));
+            turn.DropDownItems.Add("Mirror left ↔ right", null, (s, e) => Turn(RotateFlipType.RotateNoneFlipX)).ToolTipText = "H";
+            turn.DropDownItems.Add("Flip upside down", null, (s, e) => Turn(RotateFlipType.RotateNoneFlipY)).ToolTipText = "V";
             m.Items.Add(turn);
             m.Items.Add(size);
             ToolStripMenuItem op = new ToolStripMenuItem("Opacity");
@@ -2766,7 +2889,7 @@ namespace SnapMeasure
             }
             m.Items.Add(op);
             m.Items.Add(new ToolStripSeparator());
-            m.Items.Add("Unpin – back to the editor  (Ctrl+P / Esc)", Icons.Cmd("close", 16), (s, e) => Close());
+            m.Items.Add("Unpin – back to the editor", Icons.Cmd("close", 16), (s, e) => Close()).ToolTipText = "Ctrl+P / Esc";
             m.Opening += (s, e) => reset.Enabled = src.Width != img.Width || src.Height != img.Height;
             ContextMenuStrip = m;
         }
@@ -3138,6 +3261,50 @@ namespace SnapMeasure
             }
         }
 
+        /// <summary>1.4.2 symbol picker: engineering symbols for text and symbol markers.</summary>
+        public static readonly string[] Symbols = {
+            "Ø", "°", "±", "×", "÷", "≈", "≠", "≤", "≥", "√", "∑",
+            "Δ", "π", "µ", "²", "³", "½", "¼", "¾", "‰", "∠", "⊥",
+            "∥", "⌀", "℄", "m²", "m³", "←", "→", "↑", "↓", "★", "✓" };
+
+        /// <summary>1.4.2: asks for a symbol marker's character – a short text box with the symbol picker under it.</summary>
+        public static string AskSymbol(IWin32Window owner, string title, string initial)
+        {
+            float k = K(owner);
+            Func<float, int> S = v => (int)Math.Round(v * k);
+            const int perRow = 11;
+            int rows = (Symbols.Length + perRow - 1) / perRow;
+            using (Form f = Base(title, k, 380, 104 + rows * 30))
+            {
+                TextBox t = new TextBox();
+                t.Text = initial ?? "";
+                t.MaxLength = 12;
+                t.Font = Native.UiFont("Segoe UI", 12f, k);
+                t.SetBounds(S(12), S(10), S(120), S(28));
+                f.Controls.Add(t);
+                Label hint = new Label(); hint.AutoSize = true; hint.ForeColor = Color.FromArgb(100, 100, 100);
+                hint.Text = Lang.T("Any character – or pick one:"); hint.Location = new Point(S(140), S(16));
+                f.Controls.Add(hint);
+                for (int i = 0; i < Symbols.Length; i++)
+                {
+                    string sy = Symbols[i];
+                    Button b = new Button();
+                    b.Text = sy; b.UseMnemonic = false;
+                    b.FlatStyle = FlatStyle.System;
+                    b.SetBounds(S(12 + (i % perRow) * 32), S(46 + (i / perRow) * 30), S(30), S(28));
+                    // a pick goes in at the caret (replacing only a selection), so "Ø" + typed "12" builds "Ø12"
+                    b.Click += (s, e) => { t.Focus(); t.SelectedText = sy; };
+                    f.Controls.Add(b);
+                }
+                Buttons(f, k);
+                KeepClearOf(f, owner);
+                f.Shown += (s, e) => { f.Activate(); t.Focus(); t.SelectAll(); };
+                if (f.ShowDialog(owner) != DialogResult.OK) return null;
+                string v = t.Text.Trim();
+                return v.Length == 0 ? null : v;
+            }
+        }
+
         /// <summary>Adjust → Extend canvas: pixels to add on each side and the colour of the new room.
         /// 'edge' = the colour at the picture's corner (offered as "Like the picture's edge").</summary>
         public static bool ExtendCanvas(IWin32Window owner, Color edge, out int left, out int top, out int right, out int bottom, out Color back)
@@ -3479,16 +3646,18 @@ namespace SnapMeasure
                     LinkLabel upd = new LinkLabel(); upd.Text = "Check for updates"; upd.AutoSize = true; upd.Location = new Point(S(84), S(106));
                     LinkLabel iss = new LinkLabel(); iss.Text = "Report a problem or ask for a feature"; iss.AutoSize = true; iss.Location = new Point(S(220), S(106));
                     iss.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.IssuesUrl);
-                    LinkLabel coffee = new LinkLabel(); coffee.Text = "☕ Support SnapMeasure"; coffee.AutoSize = true; coffee.Location = new Point(S(84), S(128));
+                    LinkLabel coffee = new LinkLabel(); coffee.Text = "☕ Buy me a coffee — keep SnapMeasure free"; coffee.AutoSize = true; coffee.Location = new Point(S(84), S(128));
                     coffee.LinkClicked += (s, e) => AppInfo.OpenUrl(AppInfo.SupportUrl);
                     new ToolTip().SetToolTip(coffee, "Optional. Nothing in SnapMeasure is locked.");
-                    // 1.4: the user's own total (kept only on this PC), and a thank-you
+                    // 1.4.2: the user's own total (kept only on this PC), plain and small: "Captures: 28"
                     Label thanks = new Label(); thanks.AutoSize = true; thanks.UseMnemonic = false;
-                    thanks.Location = new Point(S(84) + TextRenderer.MeasureText(Lang.T(coffee.Text), f.Font).Width + S(24), S(128));
+                    thanks.Font = Native.UiFont("Segoe UI", 8f, k);
+                    thanks.ForeColor = Color.FromArgb(120, 120, 120);
+                    thanks.Location = new Point(S(84) + TextRenderer.MeasureText(Lang.T(coffee.Text), f.Font).Width + S(24), S(129));
                     int nCap = Usage.Captures;
-                    thanks.Text = nCap > 0
-                        ? string.Format(Lang.T("{0} captures so far – thank you for using SnapMeasure!"), nCap.ToString("N0", CultureInfo.CurrentCulture))
-                        : Lang.T("Thank you for using SnapMeasure!");
+                    thanks.Text = Lang.T("Captures:") + " " + nCap.ToString("N0", CultureInfo.CurrentCulture);
+                    thanks.Visible = nCap > 0;
+                    new ToolTip().SetToolTip(thanks, Lang.T("Captures on this PC. Never sent anywhere."));
                     thanks.Name = "thanks";
                     Label us = new Label(); us.AutoSize = true; us.ForeColor = Color.FromArgb(90, 90, 90); us.Location = new Point(S(84), S(150));
                     upd.LinkClicked += (s, e) => { us.Text = Lang.T("Checking GitHub…"); UpdateCheck.Start(f, m => us.Text = m); };
@@ -3861,6 +4030,8 @@ namespace SnapMeasure
     {
         // one colour per group of tools, so the colour of an icon says which kind of tool it is:
         // measure = drafting blue, count = violet, draw = red, highlight = amber, text = green, the rest ink
+        /// <summary>1.4.2 symbol marker: light purple tint, dark purple character (icon and new markers alike).</summary>
+        public static readonly Color SymbolFill = Color.FromArgb(0xCE, 0xCB, 0xF6), SymbolInk = Color.FromArgb(0x3C, 0x34, 0x89);
         public static readonly Color MeasureCol = Color.FromArgb(0, 105, 190), CountCol = Color.FromArgb(118, 62, 192),
             DrawCol = Color.FromArgb(208, 46, 46), HighlightCol = Color.FromArgb(208, 132, 0), TextCol = Color.FromArgb(18, 128, 96),
             ToolInk = Color.FromArgb(52, 56, 64);
@@ -3881,8 +4052,10 @@ namespace SnapMeasure
                 case Tool.Calibrate: case Tool.Dimension: case Tool.Perimeter: case Tool.Area: case Tool.Cutout:
                 case Tool.Angle: case Tool.Radius: case Tool.Coord:
                     return d ? MeasureDark : MeasureCol;
-                case Tool.Counter: case Tool.Letter:
+                case Tool.Counter: case Tool.Letter: case Tool.Symbol:
                     return d ? CountDark : CountCol;
+                case Tool.Fill:
+                    return d ? DrawDark : DrawCol;
                 case Tool.Arrow: case Tool.Line: case Tool.PolyDraw: case Tool.Polyline: case Tool.Arc: case Tool.Freehand:
                 case Tool.Rect: case Tool.Ellipse: case Tool.Polygon: case Tool.Cloud:
                     return d ? DrawDark : DrawCol;
@@ -4042,6 +4215,39 @@ namespace SnapMeasure
                             using (SolidBrush ab = new SolidBrush(acc))
                             using (Font mkFont = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel)) g.DrawString("A", mkFont, ab, new RectangleF(5, 5, 22, 23), sf);
                             break;
+                        case Tool.Symbol:
+                            // 1.4.2 symbol marker: the same purple family as a light tint, with Ω (any character, no counting)
+                            using (SolidBrush tb = new SolidBrush(Theme.Dark ? Color.FromArgb(72, 66, 140) : SymbolFill)) g.FillEllipse(tb, 5, 5, 22, 22);
+                            using (Pen rp = new Pen(Theme.Dark ? Color.FromArgb(175, 169, 236) : Color.FromArgb(0x7F, 0x77, 0xDD), 1.8f)) g.DrawEllipse(rp, 5.9f, 5.9f, 20.2f, 20.2f);
+                            // the glyph is centred by its ink, not by the font's line box (Ω sat high in the ring)
+                            using (SolidBrush ab = new SolidBrush(Theme.Dark ? Color.FromArgb(238, 237, 254) : SymbolInk))
+                            using (FontFamily ff = new FontFamily("Segoe UI"))
+                            using (GraphicsPath gp = new GraphicsPath())
+                            {
+                                gp.AddString("Ω", ff, (int)FontStyle.Bold, 14f, PointF.Empty, StringFormat.GenericTypographic);
+                                RectangleF gb = gp.GetBounds();
+                                using (Matrix mx = new Matrix()) { mx.Translate(16f - (gb.X + gb.Width / 2f), 16f - (gb.Y + gb.Height / 2f)); gp.Transform(mx); }
+                                g.FillPath(ab, gp);
+                            }
+                            break;
+                        case Tool.Fill:
+                            {
+                                // a paint bucket pouring
+                                Color acc2 = Theme.Dark ? Color.FromArgb(120, 200, 255) : Color.FromArgb(0, 120, 212);
+                                GraphicsState st = g.Save();
+                                g.TranslateTransform(14, 17); g.RotateTransform(-35);
+                                RectangleF bk = new RectangleF(-8, -7, 16, 14);
+                                g.FillRectangle(Paper, bk);
+                                using (Pen pp = new Pen(ink, 1.8f)) { g.DrawRectangle(pp, bk.X, bk.Y, bk.Width, bk.Height); g.DrawArc(pp, -8, -14, 16, 12, 180, 180); }
+                                using (SolidBrush f = new SolidBrush(acc2)) g.FillRectangle(f, -7, -1, 15, 7);
+                                g.Restore(st);
+                                using (SolidBrush f = new SolidBrush(acc2))
+                                {
+                                    g.FillEllipse(f, 23, 18, 7, 9);
+                                    g.FillPolygon(f, new PointF[] { new PointF(23.3f, 21.5f), new PointF(26.5f, 14), new PointF(29.7f, 21.5f) });
+                                }
+                                break;
+                            }
                         case Tool.Angle:
                             using (Pen pp = new Pen(blue, 2.2f))
                             {
@@ -4296,6 +4502,19 @@ namespace SnapMeasure
                             g.FillPie(bi, 1.5f, 1.5f, 13, 13, -90, 180);
                             g.DrawEllipse(p, 1.5f, 1.5f, 13, 13);
                             break;
+                        case "find":        // 1.4.2: lines of text with a magnifier on them
+                            using (Pen tl = new Pen(Color.FromArgb(150, ink), 1.4f))
+                            {
+                                g.DrawLine(tl, 1, 2.5f, 13, 2.5f); g.DrawLine(tl, 1, 5.5f, 7, 5.5f); g.DrawLine(tl, 1, 8.5f, 4.5f, 8.5f);
+                            }
+                            using (Pen pp = new Pen(ink, 1.5f))
+                            {
+                                g.FillEllipse(Paper, 5.5f, 4.5f, 7.5f, 7.5f);
+                                g.DrawEllipse(pp, 5.5f, 4.5f, 7.5f, 7.5f);
+                                pp.StartCap = pp.EndCap = LineCap.Round; pp.Width = 2.2f;
+                                g.DrawLine(pp, 12, 11, 15, 14.5f);
+                            }
+                            break;
                         case "zoomin":
                         case "zoomout":
                             using (Pen pp = new Pen(ink, 1.5f)) { g.DrawEllipse(pp, 1.5f, 1.5f, 9.5f, 9.5f); pp.StartCap = pp.EndCap = LineCap.Round; pp.Width = 2.2f; g.DrawLine(pp, 10, 10, 14.5f, 14.5f); }
@@ -4465,6 +4684,20 @@ namespace SnapMeasure
                                 g.DrawLine(ap, 12.5f, 8, 15.2f, 8); g.DrawLine(ap, 13.8f, 6.5f, 15.2f, 8); g.DrawLine(ap, 13.8f, 9.5f, 15.2f, 8);
                             }
                             break;
+                        case "removebg":    // 1.4.2: a checkerboard (see-through) with a solid subject on it
+                            {
+                                using (SolidBrush lg = new SolidBrush(Color.FromArgb(200, 200, 205)))
+                                {
+                                    g.FillRectangle(Paper, 1, 1, 14, 14);
+                                    for (int yy = 0; yy < 4; yy++)
+                                        for (int xx = 0; xx < 4; xx++)
+                                            if ((xx + yy) % 2 == 0) g.FillRectangle(lg, 1 + xx * 3.5f, 1 + yy * 3.5f, 3.5f, 3.5f);
+                                }
+                                g.DrawRectangle(p, 1, 1, 14, 14);
+                                g.FillEllipse(bb, 4.5f, 3.5f, 7, 7);
+                                g.FillPie(bb, 2.5f, 9.5f, 11, 9, 180, 180);
+                                break;
+                            }
                         case "coffee":      // a cup of coffee with steam (Support SnapMeasure / Ko-fi)
                             {
                                 Color cup = Theme.Dark ? Color.FromArgb(214, 150, 96) : Color.FromArgb(170, 102, 52);

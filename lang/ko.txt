@@ -72,7 +72,7 @@ Fit	맞춤
 Fit and centre the image (Home, 0, or double-click the middle mouse button)	이미지를 창에 맞추고 가운데 정렬 (Home, 0 또는 마우스 가운데 버튼 두 번 클릭)
 Actual pixels 1:1	실제 픽셀 1:1
 Zoom to area	영역 확대
-Zoom to area: drag a box around the part to see (Shift+Z; Esc cancels)	영역 확대: 보고 싶은 부분을 상자로 드래그 (Shift+Z, Esc 취소)
+Zoom to area: drag a box around the part to see (Z; Esc cancels)	영역 확대: 보고 싶은 부분을 상자로 드래그 (Z, Esc 취소)
 Keep inside	안쪽 유지
 Keep inside the picture: drawing, moving, pasting and resizing stay within the screenshot (Ctrl+L)	그림 안쪽 유지: 그리기, 이동, 붙여넣기, 크기 조정이 스크린샷 안에서만 됩니다 (Ctrl+L)
 Panel	패널
@@ -128,7 +128,7 @@ Note (not printed)	메모 (인쇄 안 됨)
 Note – shown here only, not printed (O)	메모 – 여기에만 표시, 인쇄되지 않음 (O)
 Note: click where it goes (never printed).	메모: 놓을 위치를 클릭하세요 (인쇄되지 않음).
 Stamp	스탬프
-Stamp: Approved / Revise / Draft / For construction … (Z)	스탬프: 승인 / 수정 / 초안 / 시공용 … (Z)
+Stamp: Approved / Revise / Draft / For construction … (Shift+Z)	스탬프: 승인 / 수정 / 초안 / 시공용 … (Shift+Z)
 Stamp: click where it goes.	스탬프: 놓을 위치를 클릭하세요.
 Stamp type – sets the word and colour (double-click a stamp to edit its text)	스탬프 종류 – 문구와 색을 정합니다 (스탬프를 두 번 클릭하면 문구 편집)
 Revision cloud	수정 구름
@@ -403,6 +403,9 @@ Open an editor first: its styles are the ones saved	먼저 편집기를 여세�
 Thank you for using SnapMeasure!	SnapMeasure를 사용해 주셔서 감사합니다!
 thanks for using SnapMeasure. Optional: buy me a coffee	SnapMeasure를 사용해 주셔서 감사합니다. 선택 사항: 커피 한 잔 후원하기
 Support SnapMeasure	SnapMeasure 후원하기
+Buy me a coffee — keep SnapMeasure free	커피 한 잔 후원하기 — SnapMeasure를 계속 무료로
+☕ Buy me a coffee — keep SnapMeasure free	☕ 커피 한 잔 후원하기 — SnapMeasure를 계속 무료로
+Captures:	캡처:
 Closed filled	닫힘 채움
 Closed blank	닫힘 빈칸
 Half closed	반쪽 닫힘
@@ -442,8 +445,19 @@ Could not save the capture:	캡처를 저장할 수 없습니다:
 Could not open Paint:	그림판을 열 수 없습니다:
 Could not print:	인쇄할 수 없습니다:
 Size the editor window to fit the capture	편집기 창 크기를 캡처에 맞추기
-thank you for using SnapMeasure! Optional: buy me a coffee (tray menu → Support SnapMeasure)	SnapMeasure를 사용해 주셔서 감사합니다! 선택 사항: 커피 한 잔 후원하기 (트레이 메뉴 → SnapMeasure 후원하기)
+thank you for using SnapMeasure! Optional: buy me a coffee (tray menu → Buy me a coffee)	SnapMeasure를 사용해 주셔서 감사합니다! 선택 사항: 커피 한 잔 후원하기 (트레이 메뉴 → 커피 한 잔 후원하기)
 Zoom in (Ctrl+mouse wheel)	확대 (Ctrl+마우스 휠)
 Zoom out (Ctrl+mouse wheel)	축소 (Ctrl+마우스 휠)
 The picture can't get any smaller.	그림을 더 작게 할 수 없습니다.
-Extend canvas…   (Ctrl+Plus / Ctrl+Minus = 10 px)	캔버스 확장…   (Ctrl+Plus / Ctrl+Minus = 10 px)
+Extend canvas…	캔버스 확장…
+Ctrl+Plus = 10 px more room · Ctrl+Minus = 10 px less (never cuts the picture)	Ctrl+Plus = 여백 10 px 추가 · Ctrl+Minus = 10 px 줄이기 (그림은 자르지 않음)
+No added room left – Ctrl+Minus stops at the picture's own edge.	추가한 여백이 없습니다 – Ctrl+Minus는 그림 가장자리에서 멈춥니다.
+Remove background	배경 제거
+Make the plain background round the subject transparent (the colour at the picture's edges)	대상 주변의 단색 배경을 투명하게 만들기 (그림 가장자리의 색)
+Colours inverted (Ctrl+Z undoes it)	색 반전됨 (Ctrl+Z로 되돌리기)
+Grayscale (Ctrl+Z undoes it)	회색조 (Ctrl+Z로 되돌리기)
+Save as…	다른 이름으로 저장…
+Crop – drag the part to keep	자르기 – 남길 부분을 드래그
+Mirror left ↔ right	좌우 반전
+Flip upside down	상하 뒤집기
+Unpin – back to the editor	고정 해제 – 편집기로 돌아가기

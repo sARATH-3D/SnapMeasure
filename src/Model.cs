@@ -17,7 +17,7 @@ namespace SnapMeasure
                             Cloud, Stamp, Note, Markup, Polyline, Perimeter, Coord, Origin, Arc, Radius }
 
     public enum Tool { Select, Rect, Ellipse, Line, Arrow, Freehand, Text, Polygon, Dimension, Area, Calibrate, Counter, Pixelate, Crop, Highlight, Bubble, Letter, Angle,
-                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius, PolyDraw }
+                       Cloud, Stamp, Note, Markup, Polyline, Perimeter, Cutout, Ocr, Coord, Marker, Arc, Radius, PolyDraw, Symbol, Fill }
 
     /// <summary>Focus modes. Grayscale = gray outside the shape, Pixelate = pixelate inside it; 1.3 adds the other side of each.</summary>
     public enum HighlightMode { Marker = 0, Spotlight = 1, Grayscale = 2, Magnify = 3, Pixelate = 4, GrayscaleInside = 5, PixelateOutside = 6, Blur = 7, BlurOutside = 8 }
@@ -100,6 +100,7 @@ namespace SnapMeasure
         public PointF LabelOffset;          // Area: where its label sits, from the middle of the area (1.3)
         public RectangleF LabelRect;        // Area: the label box as last drawn (for its handles; not saved)
         public int Align;            // 0 left, 1 centre, 2 right (Text, speech bubble)
+        public int VAlign;           // 1.4.2: 0 top, 1 middle, 2 bottom – where the text sits in a taller text box
         public int HeadStart;        // Line / Arrow / Dimension: HeadStyle at the first point
         public int HeadEnd = 1;      // … and at the second point
         public Bitmap Img;           // Image shapes: the pasted picture (shared between undo copies, never modified)
@@ -144,6 +145,10 @@ namespace SnapMeasure
         }
         public bool HasTextStyle { get { return Kind == ShapeKind.Text || Kind == ShapeKind.Bubble; } }
         public bool IsLetterMarker { get { return Kind == ShapeKind.Counter && Mode == 1; } }
+        /// <summary>1.4.2: a marker showing any character the user typed (in Text); it does not count up.</summary>
+        public bool IsSymbolMarker { get { return Kind == ShapeKind.Counter && Mode == 2; } }
+        /// <summary>A marker that counts: numbers or letters (not a symbol marker).</summary>
+        public bool IsCountingMarker { get { return Kind == ShapeKind.Counter && Mode != 2; } }
 
         // render cache (pixelate); not serialized
         public Bitmap Cache;
@@ -260,6 +265,7 @@ namespace SnapMeasure
         public string NumberLabel = "", LetterLabel = "";   // what each marker series counts, e.g. "Blind panel"
         public int Rounding;          // 0 = nearest, 1 = always up (ceiling), 2 = always down (floor), at 'Decimals'
         public bool LetterReverse, MarkerReverse;   // marker series counting down (Z, Y, X … / 10, 9, 8 …)
+        public double OriginX, OriginY;             // 1.4.2: the origin's own coordinates (real units), e.g. 1250 ; 300 to match a drawing grid
 
         public ScaleInfo Clone() { return (ScaleInfo)MemberwiseClone(); }
         public bool Calibrated { get { return !(Unit == "px" && Math.Abs(Upp - 1.0) < 1e-12); } }
@@ -285,7 +291,10 @@ namespace SnapMeasure
         public string Num(double px) { return Fmt(px * Upp); }
 
         /// <summary>Coordinates of p from the origin o, Y up (like CAD).</summary>
-        public string Coord(PointF p, PointF o) { return "X " + Num(p.X - o.X) + "   Y " + Num(o.Y - p.Y) + (Unit == "px" ? " px" : " " + Unit); }
+        public string Coord(PointF p, PointF o) { return "X " + Fmt(CoordX(p, o)) + "   Y " + Fmt(CoordY(p, o)) + (Unit == "px" ? " px" : " " + Unit); }
+        /// <summary>Real X / Y of p: from the origin o (Y up, like CAD), plus the origin's own coordinates.</summary>
+        public double CoordX(PointF p, PointF o) { return (p.X - o.X) * Upp + OriginX; }
+        public double CoordY(PointF p, PointF o) { return (o.Y - p.Y) * Upp + OriginY; }
         public string Area(double px2) { return Fmt(px2 * Upp * Upp) + " " + Unit + "²"; }
         public string Describe()
         {
@@ -623,7 +632,7 @@ namespace SnapMeasure
         public static int Count(List<Shape> shapes, bool letters)
         {
             int n = 0;
-            foreach (Shape s in shapes) if (s.Kind == ShapeKind.Counter && s.IsLetterMarker == letters) n++;
+            foreach (Shape s in shapes) if (s.IsCountingMarker && s.IsLetterMarker == letters) n++;
             return n;
         }
 
@@ -726,8 +735,8 @@ namespace SnapMeasure
                             r.Type = "Point"; r.Unit = sc.Unit;
                             if (origin == null) { r.Display = "no origin"; break; }
                             PointF p = s.Pts[0], o = origin.Pts[0];
-                            r.X = (p.X - o.X) * u; r.Y = (o.Y - p.Y) * u;
-                            r.Display = sc.Num(p.X - o.X) + " ; " + sc.Num(o.Y - p.Y);
+                            r.X = sc.CoordX(p, o); r.Y = sc.CoordY(p, o);
+                            r.Display = sc.Fmt(r.X.Value) + " ; " + sc.Fmt(r.Y.Value);
                             r.Extra = "X ; Y";
                             break;
                         }
@@ -755,6 +764,26 @@ namespace SnapMeasure
                 r.Label = letters ? sc.LetterLabel : sc.NumberLabel;
                 r.Extra = letters ? sc.MarkerLabel(0, true) + "–" + sc.MarkerLabel(c - 1, true)
                                   : sc.MarkerLabel(0, false) + "–" + sc.MarkerLabel(c - 1, false);
+                rows.Add(r);
+            }
+            // 1.4.2 symbol markers: one row per symbol, with how many there are
+            Dictionary<string, int> sym = new Dictionary<string, int>();
+            List<string> order = new List<string>();
+            foreach (Shape s in shapes)
+                if (s.IsSymbolMarker)
+                {
+                    string k = string.IsNullOrEmpty(s.Text) ? "?" : s.Text;
+                    if (!sym.ContainsKey(k)) { sym[k] = 0; order.Add(k); }
+                    sym[k]++;
+                }
+            foreach (string k in order)
+            {
+                MeasureRow r = new MeasureRow();
+                r.Name = k;
+                r.Type = "Symbol marker"; r.Unit = "nr";
+                r.Value = sym[k];
+                r.Display = sym[k] + " nr";
+                r.Label = "";
                 rows.Add(r);
             }
             return rows;
@@ -1002,6 +1031,39 @@ namespace SnapMeasure
             }
         }
 
+        static readonly Bitmap measureBmp = new Bitmap(1, 1);
+        static readonly Graphics measureG = Graphics.FromImage(measureBmp);
+
+        /// <summary>A marker's radius (the disc's half height).</summary>
+        public static float MarkerRadius(Shape s) { return Math.Max(8f, s.FontSize * 0.9f); }
+
+        /// <summary>1.4.2: half the marker's width. Number and letter markers are discs; a symbol marker with a longer
+        /// text (more than 2 characters, or wider than the disc) becomes a pill that fits its text on one line.</summary>
+        public static float MarkerHalfWidth(Shape s)
+        {
+            float r = MarkerRadius(s);
+            if (!s.IsSymbolMarker || string.IsNullOrEmpty(s.Text) || s.Text.Length <= 2) return r;
+            SizeF tsz;
+            lock (measureG) tsz = measureG.MeasureString(s.Text, GetFont(r * 1.05f, true), PointF.Empty, StringFormat.GenericTypographic);
+            return Math.Max(r, tsz.Width / 2f + r * 0.55f);
+        }
+
+        /// <summary>The marker's outline: a circle, or a pill (round ends) for a wide symbol marker.</summary>
+        public static GraphicsPath MarkerPath(Shape s)
+        {
+            float r = MarkerRadius(s), hw = MarkerHalfWidth(s);
+            PointF c = s.Pts[0];
+            GraphicsPath gp = new GraphicsPath();
+            if (hw <= r + 0.01f) { gp.AddEllipse(c.X - r, c.Y - r, 2 * r, 2 * r); return gp; }
+            float l = c.X - hw, t = c.Y - r, d = 2 * r;
+            gp.AddArc(l, t, d, d, 90, 180);
+            gp.AddLine(l + r, t, c.X + hw - r, t);
+            gp.AddArc(c.X + hw - d, t, d, d, 270, 180);
+            gp.AddLine(c.X + hw - r, t + d, l + r, t + d);
+            gp.CloseFigure();
+            return gp;
+        }
+
         public static Font GetFont(float px, bool bold) { return GetFont(px, bold ? FontStyle.Bold : FontStyle.Regular); }
 
         public const string DefaultFont = "Segoe UI";
@@ -1129,6 +1191,7 @@ namespace SnapMeasure
                 else if (s.Kind == ShapeKind.Perimeter) d[s] = "P" + (++npm);
                 else if (s.Kind == ShapeKind.Coord) d[s] = "C" + (++nc);
                 else if (s.Kind == ShapeKind.Radius) d[s] = "R" + (++nr);
+                else if (s.IsSymbolMarker) d[s] = string.IsNullOrEmpty(s.Text) ? "?" : s.Text;
                 else if (s.Kind == ShapeKind.Counter) d[s] = s.IsLetterMarker ? sc.MarkerLabel(nl++, true) : sc.MarkerLabel(nm++, false);
             }
             return d;
@@ -1167,6 +1230,7 @@ namespace SnapMeasure
                 {
                     if (s.Shadow && s.CanShadow) DrawShadow(g, s, img, sc, n);
                     Draw(g, s, img, sc, n);
+                    if (!export) DrawGuideOutline(g, s);
                     if (UsesPicture(s) && !picsAt.IsEmpty && ShapeOps.Bounds(s).IntersectsWith(picsAt))
                     {
                         // where it covers pasted pictures: the effect once more, from the picture with them on it
@@ -1191,6 +1255,21 @@ namespace SnapMeasure
                     }
                 }
                 catch (Exception) { }
+            }
+        }
+
+        /// <summary>Editor only (never in a saved, copied, printed or pinned picture): a focus / highlight box with no
+        /// border gets a thin magenta line round it, so it can still be found and clicked.</summary>
+        public static readonly Color GuideMagenta = Color.FromArgb(230, 0, 200);
+        static void DrawGuideOutline(Graphics g, Shape s)
+        {
+            if (s.Kind != ShapeKind.Highlight || (s.Width > 0 && s.StrokeOpacity > 0)) return;
+            if (s.Pts.Count < (s.IsFocusPoly ? 3 : 2)) return;
+            using (GraphicsPath hp = HighlightPath(s))
+            using (Pen p = new Pen(GuideMagenta, 0f))         // 0 = one screen pixel at any zoom (the "0.5" hairline)
+            {
+                p.DashStyle = DashStyle.Solid;
+                g.DrawPath(p, hp);
             }
         }
 
@@ -1388,6 +1467,8 @@ namespace SnapMeasure
                         using (StringFormat sf = new StringFormat())
                         {
                             sf.Alignment = HAlign(s.Align);
+                            // 1.4.2: top, middle or bottom of a box dragged taller than its text
+                            sf.LineAlignment = s.VAlign == 1 ? StringAlignment.Center : s.VAlign == 2 ? StringAlignment.Far : StringAlignment.Near;
                             DrawStyledText(g, s.Text, s.FontSize, s.Style, b, new RectangleF(s.Pts[0].X, s.Pts[0].Y, sz.Width + 1f, sz.Height + 1f), sf, s.FontFamilyName);
                         }
                         break;
@@ -1527,7 +1608,8 @@ namespace SnapMeasure
                             Font f = GetFont(Math.Max(6f, s.FontSize * 0.8f), true);
                             g.DrawString("X", f, b, c.X + r * 2.5f, c.Y - f.Height * 0.55f);
                             g.DrawString("Y", f, b, c.X + r * 0.3f, c.Y - r * 2.6f - f.Height * 0.6f);
-                            g.DrawString("0,0", GetFont(Math.Max(6f, s.FontSize * 0.85f), false), b, c.X + r * 0.6f, c.Y + r * 0.5f);
+                            string ot = sc != null && (sc.OriginX != 0 || sc.OriginY != 0) ? sc.Fmt(sc.OriginX) + " ; " + sc.Fmt(sc.OriginY) : "0,0";
+                            g.DrawString(ot, GetFont(Math.Max(6f, s.FontSize * 0.85f), false), b, c.X + r * 0.6f, c.Y + r * 0.5f);
                         }
                         break;
                     }
@@ -1572,16 +1654,19 @@ namespace SnapMeasure
                     break;
                 case ShapeKind.Counter:
                     {
-                        float r = Math.Max(8f, s.FontSize * 0.9f);
+                        float r = MarkerRadius(s), hw = MarkerHalfWidth(s);
                         PointF c = s.Pts[0];
-                        RectangleF rr = new RectangleF(c.X - r, c.Y - r, 2 * r, 2 * r);
-                        if (fill) using (SolidBrush b = new SolidBrush(fCol)) g.FillEllipse(b, rr);
-                        if (stroke) using (Pen p = new Pen(sCol, Math.Max(1.5f, Math.Min(w, r / 4f)))) g.DrawEllipse(p, rr);
+                        RectangleF rr = new RectangleF(c.X - hw, c.Y - r, 2 * hw, 2 * r);
+                        using (GraphicsPath mp = MarkerPath(s))
+                        {
+                            if (fill) using (SolidBrush b = new SolidBrush(fCol)) g.FillPath(b, mp);
+                            if (stroke) using (Pen p = new Pen(sCol, Math.Max(1.5f, Math.Min(w, r / 4f)))) g.DrawPath(p, mp);
+                        }
                         string label = name ?? "?";
-                        // one line, always: the text shrinks to fit the circle (BM, 1012 … never wrap)
+                        // one line, always: the text shrinks to fit the circle (BM, 1012 … never wrap); a pill fits its text
                         float fs = r * 1.05f;
                         SizeF tsz = g.MeasureString(label, GetFont(fs, true), PointF.Empty, StringFormat.GenericTypographic);
-                        float maxW = r * 1.55f;
+                        float maxW = hw > r ? 2 * hw - r * 0.9f : r * 1.55f;
                         if (tsz.Width > maxW && tsz.Width > 0) fs = Math.Max(4f, fs * maxW / tsz.Width);
                         using (SolidBrush b = new SolidBrush(Color.FromArgb(Math.Max((int)sCol.A, (int)(s.StrokeOpacity * 2.55)), s.Stroke)))
                         using (StringFormat sf = new StringFormat(StringFormatFlags.NoWrap))
@@ -2460,7 +2545,9 @@ namespace SnapMeasure
                 // shaft between the heads, with a gap in the middle for the value when it fits
                 float s0 = HeadBack(s.HeadStart, w, hl, hw), s1 = L - HeadBack(s.HeadEnd, w, hl, hw);
                 float gapHalf = tsz.Width / 2f + 4f + w;
-                bool inline = s1 - s0 > 2f * gapHalf + 6f;
+                // 1.4.2 label position (Align): 0 = on the line (in a gap, above when it doesn't fit), 1 = above, 2 = below
+                int place = s.Align;
+                bool inline = place == 0 && s1 - s0 > 2f * gapHalf + 6f;
                 if (s1 > s0)
                 {
                     if (inline)
@@ -2474,12 +2561,17 @@ namespace SnapMeasure
                 DrawHead(g, a, new PointF(-u.X, -u.Y), s.HeadStart, col, w, hl, hw);
                 DrawHead(g, b, u, s.HeadEnd, col, w, hl, hw);
                 if (inline) DrawRotLabel(g, t, Geo.Mid(a, b), ang, f, tcol, 0f, true);
-                else DrawRotLabel(g, t, Geo.Mid(a, b), ang, f, tcol, hw + 2f, false);
+                else DrawRotLabel(g, t, Geo.Mid(a, b), ang, f, tcol, hw + 2f, false, place == 2);
             }
         }
 
-        /// <summary>Text along a line. centred = in the line's gap; otherwise just above the line, off = distance.</summary>
         static void DrawRotLabel(Graphics g, string t, PointF at, float ang, Font f, Color col, float off, bool centred)
+        {
+            DrawRotLabel(g, t, at, ang, f, col, off, centred, false);
+        }
+
+        /// <summary>Text along a line. centred = in the line's gap; otherwise just above (or below) the line, off = distance.</summary>
+        static void DrawRotLabel(Graphics g, string t, PointF at, float ang, Font f, Color col, float off, bool centred, bool below)
         {
             if (shadowPass) return;
             GraphicsState st = g.Save();
@@ -2488,6 +2580,7 @@ namespace SnapMeasure
             SizeF sz = g.MeasureString(t, f);
             RectangleF r = centred
                 ? new RectangleF(-sz.Width / 2f - 2f, -sz.Height / 2f, sz.Width + 4f, sz.Height)
+                : below ? new RectangleF(-sz.Width / 2f - 2f, off, sz.Width + 4f, sz.Height)
                 : new RectangleF(-sz.Width / 2f - 2f, -sz.Height - off, sz.Width + 4f, sz.Height);
             if (!centred) using (SolidBrush bg = new SolidBrush(Color.FromArgb(170, 255, 255, 255))) g.FillRectangle(bg, r);
             using (SolidBrush b = new SolidBrush(col))
@@ -2713,12 +2806,12 @@ namespace SnapMeasure
                 case ShapeKind.Counter:
                     {
                         // number / letter marker: drag a corner to make the disc (and its text) bigger or smaller
-                        float r = Math.Max(8f, s.FontSize * 0.9f);
+                        float r = Renderer.MarkerRadius(s), hw = Renderer.MarkerHalfWidth(s);
                         PointF c = s.Pts[0];
-                        h.Add(new Handle(new PointF(c.X - r, c.Y - r), HKind.Box, 0));
-                        h.Add(new Handle(new PointF(c.X + r, c.Y - r), HKind.Box, 2));
-                        h.Add(new Handle(new PointF(c.X + r, c.Y + r), HKind.Box, 4));
-                        h.Add(new Handle(new PointF(c.X - r, c.Y + r), HKind.Box, 6));
+                        h.Add(new Handle(new PointF(c.X - hw, c.Y - r), HKind.Box, 0));
+                        h.Add(new Handle(new PointF(c.X + hw, c.Y - r), HKind.Box, 2));
+                        h.Add(new Handle(new PointF(c.X + hw, c.Y + r), HKind.Box, 4));
+                        h.Add(new Handle(new PointF(c.X - hw, c.Y + r), HKind.Box, 6));
                         break;
                     }
                 case ShapeKind.Note:
@@ -2818,7 +2911,9 @@ namespace SnapMeasure
                         {
                             // marker: the corner's distance from the centre sets the disc's size (it stays round)
                             PointF c = orig.Pts[0];
-                            float half = Math.Max(Math.Abs(p.X - c.X), Math.Abs(p.Y - c.Y));
+                            // a pill: its width follows the text, so the corner's height (and the width scaled back) sets the size
+                            float r0 = Renderer.MarkerRadius(orig), hw0 = Renderer.MarkerHalfWidth(orig);
+                            float half = Math.Max(Math.Abs(p.X - c.X) * r0 / hw0, Math.Abs(p.Y - c.Y));
                             s.FontSize = Math.Max(6f, Math.Min(300f, half / 0.9f));
                             s.Cache = null;
                             break;
@@ -2878,8 +2973,8 @@ namespace SnapMeasure
             if (s.Pts.Count == 0) return RectangleF.Empty;
             if (s.Kind == ShapeKind.Counter)
             {
-                float r = Math.Max(8f, s.FontSize * 0.9f);
-                return new RectangleF(s.Pts[0].X - r, s.Pts[0].Y - r, 2 * r, 2 * r);
+                float r = Renderer.MarkerRadius(s), hw = Renderer.MarkerHalfWidth(s);
+                return new RectangleF(s.Pts[0].X - hw, s.Pts[0].Y - r, 2 * hw, 2 * r);
             }
             if (s.Kind == ShapeKind.Note) return Renderer.NoteRect(s);
             if ((s.Kind == ShapeKind.Arc || s.Kind == ShapeKind.Radius) && s.Pts.Count >= 3)
@@ -3234,6 +3329,7 @@ namespace SnapMeasure
             if (s.Strikeout) w.WriteAttributeString("strikeout", "1");
             if (!string.IsNullOrEmpty(s.FontName)) w.WriteAttributeString("fontName", s.FontName);
             w.WriteAttributeString("align", s.Align.ToString(Inv));
+            if (s.VAlign != 0) w.WriteAttributeString("valign", s.VAlign.ToString(Inv));
             if (s.Kind == ShapeKind.Freehand)
             {
                 // own names: older files stored a default "arrow at the end" on every shape, which must not turn into freehand arrows
@@ -3420,6 +3516,7 @@ namespace SnapMeasure
             s.Strikeout = e.GetAttribute("strikeout") == "1";
             { string fn = e.GetAttribute("fontName"); s.FontName = string.IsNullOrEmpty(fn) || fn.Length > 64 ? null : fn; }
             s.Align = PI(e.GetAttribute("align"), s.Kind == ShapeKind.Bubble ? 1 : 0);
+            s.VAlign = Math.Max(0, Math.Min(2, PI(e.GetAttribute("valign"), 0)));
             if (s.Kind == ShapeKind.Freehand)
             {
                 s.HeadStart = PI(e.GetAttribute("arrowStart"), 0);
@@ -3509,6 +3606,8 @@ namespace SnapMeasure
                 if (sc.Rounding != 0) w.WriteAttributeString("rounding", sc.Rounding.ToString(Inv));
                 if (sc.LetterReverse) w.WriteAttributeString("letterReverse", "1");
                 if (sc.MarkerReverse) w.WriteAttributeString("markerReverse", "1");
+                if (sc.OriginX != 0) w.WriteAttributeString("originX", F(sc.OriginX));
+                if (sc.OriginY != 0) w.WriteAttributeString("originY", F(sc.OriginY));
                 if (ex.Crop.HasValue)
                 {
                     Rectangle r = ex.Crop.Value;
@@ -3628,6 +3727,9 @@ namespace SnapMeasure
             sc.Rounding = Math.Max(0, Math.Min(2, PI(root.GetAttribute("rounding"), 0)));
             sc.LetterReverse = root.GetAttribute("letterReverse") == "1";
             sc.MarkerReverse = root.GetAttribute("markerReverse") == "1";
+            double ox, oy;
+            if (double.TryParse(root.GetAttribute("originX"), NumberStyles.Float, Inv, out ox) && !double.IsNaN(ox) && !double.IsInfinity(ox)) sc.OriginX = ox;
+            if (double.TryParse(root.GetAttribute("originY"), NumberStyles.Float, Inv, out oy) && !double.IsNaN(oy) && !double.IsInfinity(oy)) sc.OriginY = oy;
             bool oldLetters = root.GetAttribute("markerLetters") == "1";     // v2: one series, either numbers or letters
             if (oldLetters) { sc.LetterStart = Math.Max(1, sc.MarkerStart); sc.MarkerStart = 1; }
             string[] cp = root.GetAttribute("crop").Split(',');

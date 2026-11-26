@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -15,6 +15,7 @@ namespace SnapMeasure
         public List<Shape> Shapes;
         public ScaleInfo Scale;
         public Rectangle? Crop;
+        public int[] AddedRoom;
     }
 
     public class Canvas : Control
@@ -44,6 +45,7 @@ namespace SnapMeasure
 
         public Func<string, string, string> AskText;     // (title, initial) -> text, null = cancelled (used for dimension/area labels)
         public Func<string, string, string> AskNote;     // same, several lines (notes, stamps)
+        public Func<string, string, string> AskSymbol;   // 1.4.2: one short text with the symbol picker (symbol markers)
         public Func<double, bool> AskCalibration;        // (pixel length) -> true if scale was changed
         public Action<string> Message;                   // short status-bar message
         public Action<Rectangle> OcrArea;                // OCR tool: copy the text inside this image rectangle
@@ -156,8 +158,16 @@ namespace SnapMeasure
             Shape letter = St(ShapeKind.Counter, Icons.CountCol, 2.5f, Color.White, 100, 18);
             letter.Mode = 1;
             d[Tool.Letter] = letter;
+            // 1.4.2 symbol marker: dark purple character and ring on a light purple tint, like its button
+            Shape sym = St(ShapeKind.Counter, Icons.SymbolInk, 2f, Icons.SymbolFill, 100, 18);
+            sym.Mode = 2;
+            sym.Text = "Ø";
+            d[Tool.Symbol] = sym;
+            // fill (paint bucket): the fill colour, no outline
+            d[Tool.Fill] = St(ShapeKind.Polygon, Color.FromArgb(0, 120, 212), 0, Color.FromArgb(0, 120, 212), 60, 16);
             d[Tool.Pixelate] = St(ShapeKind.Pixelate, Color.Gray, 3, Color.Gray, 0, 16);
-            d[Tool.Highlight] = St(ShapeKind.Highlight, red, 1, Color.Yellow, 45, 16);    // a thin border in every mode
+            // 1.4.2: no border by default; the editor shows a thin magenta line round it that is never printed
+            d[Tool.Highlight] = St(ShapeKind.Highlight, red, 0, Color.Yellow, 45, 16);
             d[Tool.Highlight].Mode = (int)HighlightMode.Marker;        // Focus starts as the see-through highlight box
             d[Tool.Highlight].Strength = 2;                              // magnify ×2, pixelate 8 px (Strength slider)
             d[Tool.Pixelate].Strength = 3;
@@ -170,9 +180,17 @@ namespace SnapMeasure
         public static Tool ToolFor(Shape s)
         {
             if (s.Kind == ShapeKind.Counter && s.Mode == 1) return Tool.Letter;
+            if (s.IsSymbolMarker) return Tool.Symbol;
             if (s.IsMarkerPen) return Tool.Marker;
             if (s.Kind == ShapeKind.Polygon && s.IsOpenPath) return Tool.PolyDraw;
+            if (IsFillShape(s)) return Tool.Fill;
             return ToolFor(s.Kind);
+        }
+
+        /// <summary>1.4.2: an area made by the Fill tool (a closed polygon with no line).</summary>
+        public static bool IsFillShape(Shape s)
+        {
+            return s.Kind == ShapeKind.Polygon && !s.IsOpenPath && s.Width < 0.5f;
         }
 
         public static Tool ToolFor(ShapeKind k)
@@ -403,8 +421,13 @@ namespace SnapMeasure
             s.Shapes = Shapes.ConvertAll(x => x.Clone());
             s.Scale = Scale.Clone();
             s.Crop = CropRect;
+            s.AddedRoom = (int[])AddedRoom.Clone();
             return s;
         }
+
+        /// <summary>1.4.2: room added round the picture (left, top, right, bottom) by Ctrl+Plus or Extend canvas.
+        /// Ctrl+Minus only takes this room away again: it never cuts into the picture itself.</summary>
+        public int[] AddedRoom = new int[4];
 
         public void PushUndo(DocState s)
         {
@@ -464,6 +487,7 @@ namespace SnapMeasure
             foreach (Shape x in Sel) { idx.Add(Shapes.IndexOf(x)); kinds.Add(x.Kind); }
             bool cropChanged = s.Crop != CropRect;
             Image = s.Image; Shapes = s.Shapes; Scale = s.Scale; CropRect = s.Crop;
+            AddedRoom = s.AddedRoom != null ? (int[])s.AddedRoom.Clone() : new int[4];
             Sel.Clear();
             for (int i = 0; i < idx.Count; i++)
                 if (idx[i] >= 0 && idx[i] < Shapes.Count && Shapes[idx[i]].Kind == kinds[i]) Sel.Add(Shapes[idx[i]]);
@@ -842,6 +866,10 @@ namespace SnapMeasure
         {
             if (!CropRect.HasValue) return;
             Rectangle r = CropRect.Value;
+            // added room that the crop cut away is gone too
+            int[] m = AddedRoom;
+            AddedRoom = new int[] { Math.Max(0, m[0] - r.X), Math.Max(0, m[1] - r.Y),
+                                 Math.Max(0, m[2] - (Image.Width - r.Right)), Math.Max(0, m[3] - (Image.Height - r.Bottom)) };
             Bitmap b = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(b))
                 g.DrawImage(Image, new Rectangle(0, 0, r.Width, r.Height), r, GraphicsUnit.Pixel);
@@ -932,6 +960,13 @@ namespace SnapMeasure
             Image = nb;
             if (baked != null) ReleaseImage(baked);
             Shapes = ns;
+            // the added room turns with the picture; a border, shadow or torn edge makes it part of the picture
+            int[] m = AddedRoom;
+            if (op == "rotcw") AddedRoom = new int[] { m[3], m[0], m[1], m[2] };
+            else if (op == "rotccw") AddedRoom = new int[] { m[1], m[2], m[3], m[0] };
+            else if (op == "fliph") AddedRoom = new int[] { m[2], m[1], m[0], m[3] };
+            else if (op == "flipv") AddedRoom = new int[] { m[0], m[3], m[2], m[1] };
+            else if (op != "gray" && op != "invert") AddedRoom = new int[4];
             Sel.Clear();
             Fit(); FireDoc(); FireSel();
         }
@@ -969,6 +1004,7 @@ namespace SnapMeasure
             }
             for (int i = 0; i < HGuides.Count; i++) HGuides[i] += top;
             for (int i = 0; i < VGuides.Count; i++) VGuides[i] += left;
+            AddedRoom = new int[] { AddedRoom[0] + left, AddedRoom[1] + top, AddedRoom[2] + right, AddedRoom[3] + bottom };
             Image = nb;
             if (baked != null) ReleaseImage(baked);
             Shapes = ns;
@@ -976,35 +1012,44 @@ namespace SnapMeasure
             Fit(); FireDoc(); FireSel();
         }
 
-        /// <summary>Ctrl+Minus: takes 'px' off every side of the picture (the opposite of ExtendCanvas). Shapes, guides and
-        /// scale stay on the same spots of the picture. Returns false when the picture would get smaller than 16 × 16.</summary>
+        /// <summary>Ctrl+Minus: takes up to 'px' of the added room off each side (the opposite of ExtendCanvas). 1.4.2: it
+        /// stops at the original picture edge, so the picture itself is never cut. Shapes, guides and scale stay on the
+        /// same spots of the picture. Returns false when there is no added room left to take away.</summary>
         public bool ShrinkCanvas(int px)
         {
             if (Image == null || px <= 0) return false;
-            int baseW = CropRect.HasValue ? CropRect.Value.Width : Image.Width, baseH = CropRect.HasValue ? CropRect.Value.Height : Image.Height;
-            if (baseW - 2 * px < 16 || baseH - 2 * px < 16) return false;
+            // what is left of the added room once a crop is made permanent
+            int[] m = AddedRoom;
+            if (CropRect.HasValue)
+            {
+                Rectangle cr = CropRect.Value;
+                m = new int[] { Math.Max(0, m[0] - cr.X), Math.Max(0, m[1] - cr.Y), Math.Max(0, m[2] - (Image.Width - cr.Right)), Math.Max(0, m[3] - (Image.Height - cr.Bottom)) };
+            }
+            int l = Math.Min(px, m[0]), t = Math.Min(px, m[1]), r = Math.Min(px, m[2]), b = Math.Min(px, m[3]);
+            if (l + t + r + b == 0) return false;
             EndTextEdit(true);
             creating = null;
             PushUndo(Snapshot());
             Bitmap preBake = Image;
             BakeCrop();
             Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;
-            Bitmap nb = new Bitmap(Image.Width - 2 * px, Image.Height - 2 * px, PixelFormat.Format32bppArgb);
+            Bitmap nb = new Bitmap(Image.Width - l - r, Image.Height - t - b, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(nb))
             {
                 g.CompositingMode = CompositingMode.SourceCopy;
-                g.DrawImage(Image, new Rectangle(0, 0, nb.Width, nb.Height), px, px, nb.Width, nb.Height, GraphicsUnit.Pixel);
+                g.DrawImage(Image, new Rectangle(0, 0, nb.Width, nb.Height), l, t, nb.Width, nb.Height, GraphicsUnit.Pixel);
             }
             List<Shape> ns = new List<Shape>();
             foreach (Shape s in Shapes)
             {
                 Shape c = s.Clone();
                 c.Cache = null;
-                c.Offset(-px, -px);
+                c.Offset(-l, -t);
                 ns.Add(c);
             }
-            for (int i = 0; i < HGuides.Count; i++) HGuides[i] -= px;
-            for (int i = 0; i < VGuides.Count; i++) VGuides[i] -= px;
+            for (int i = 0; i < HGuides.Count; i++) HGuides[i] -= t;
+            for (int i = 0; i < VGuides.Count; i++) VGuides[i] -= l;
+            AddedRoom = new int[] { AddedRoom[0] - l, AddedRoom[1] - t, AddedRoom[2] - r, AddedRoom[3] - b };
             Image = nb;
             if (baked != null) ReleaseImage(baked);
             Shapes = ns;
@@ -1020,7 +1065,43 @@ namespace SnapMeasure
             {
                 return tool == Tool.Dimension || tool == Tool.Area || tool == Tool.Polygon || tool == Tool.PolyDraw || tool == Tool.Calibrate || tool == Tool.Line || tool == Tool.Arrow ||
                        tool == Tool.Select || tool == Tool.Angle || tool == Tool.Polyline || tool == Tool.Perimeter || tool == Tool.Cutout || tool == Tool.Coord || PolyAs != tool ||
-                       tool == Tool.Arc || tool == Tool.Radius;
+                       tool == Tool.Arc || tool == Tool.Radius || tool == Tool.Freehand;     // 1.4.2: freehand ends snap too
+            }
+        }
+
+        /// <summary>The lines of a shape that a freehand end can snap onto (closed outlines end where they start), or null.</summary>
+        static List<PointF> SnapOutline(Shape s)
+        {
+            if (s.Pts.Count < 2) return null;
+            switch (s.Kind)
+            {
+                case ShapeKind.Line: case ShapeKind.Arrow: case ShapeKind.Dimension: case ShapeKind.Freehand:
+                    return s.IsMarkerPen ? null : new List<PointF>(s.Pts);
+                case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Perimeter: case ShapeKind.Polyline:
+                    {
+                        List<PointF> e = new List<PointF>(s.Pts);
+                        if (!s.IsOpenPath && s.Pts.Count >= 3) e.Add(s.Pts[0]);
+                        return e;
+                    }
+                case ShapeKind.Rect: case ShapeKind.Cloud:
+                    {
+                        RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+                        if (Math.Abs(s.Angle) > 0.01f) return null;
+                        return new List<PointF> { new PointF(r.Left, r.Top), new PointF(r.Right, r.Top), new PointF(r.Right, r.Bottom), new PointF(r.Left, r.Bottom), new PointF(r.Left, r.Top) };
+                    }
+                case ShapeKind.Ellipse:
+                    {
+                        if (Math.Abs(s.Angle) > 0.01f) return null;
+                        RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
+                        List<PointF> e = new List<PointF>();
+                        for (int i = 0; i <= 120; i++)
+                        {
+                            double a = i * Math.PI * 2 / 120;
+                            e.Add(new PointF(r.X + r.Width / 2f + (float)Math.Cos(a) * r.Width / 2f, r.Y + r.Height / 2f + (float)Math.Sin(a) * r.Height / 2f));
+                        }
+                        return e;
+                    }
+                default: return null;
             }
         }
 
@@ -1062,6 +1143,30 @@ namespace SnapMeasure
                 {
                     float d = Geo.Dist(creating.Pts[0], ip);
                     if (d < best) { best = d; found = creating.Pts[0]; }
+                }
+                if (tool == Tool.Freehand)
+                {
+                    // 1.4.2: a freehand stroke closes onto its own start, and its ends snap onto other shapes' lines
+                    if (creating != null && creating.Pts.Count > 8)
+                    {
+                        float d = Geo.Dist(creating.Pts[0], ip);
+                        if (d < best) { best = d; found = creating.Pts[0]; }
+                    }
+                    if (!found.HasValue)
+                    {
+                        float bestL = best;
+                        foreach (Shape s in Shapes)
+                        {
+                            if (s == creating) continue;
+                            List<PointF> e = SnapOutline(s);
+                            if (e == null) continue;
+                            for (int i = 0; i + 1 < e.Count; i++)
+                            {
+                                float d = Geo.SegDist(ip, e[i], e[i + 1]);
+                                if (d < bestL) { bestL = d; found = Geo.Project(ip, e[i], e[i + 1]); }
+                            }
+                        }
+                    }
                 }
             }
             if (found.HasValue) { snapPt = found; return found.Value; }
@@ -1217,6 +1322,104 @@ namespace SnapMeasure
             if (Message != null) Message("Origin moved – all coordinates now count from this point");
         }
 
+        /// <summary>1.4.2 Fill tool: fills the closed area round 'ip' with the Fill tool's colour, like a paint bucket. The area is
+        /// bounded by annotation lines and by colour edges in the picture; gaps of a few pixels are closed. The fill is a
+        /// polygon (holes kept) placed under the annotations. Returns false (with a message) when nothing was filled.</summary>
+        public bool FillAt(PointF ip)
+        {
+            if (Image == null) return false;
+            List<KeyValuePair<List<PointF>, float>> lines = new List<KeyValuePair<List<PointF>, float>>();
+            foreach (Shape s in Shapes)
+            {
+                List<PointF> e = SnapOutline(s);
+                if (e != null) lines.Add(new KeyValuePair<List<PointF>, float>(e, s.Width));
+            }
+            string why;
+            List<List<PointF>> loops;
+            try { loops = Regions.FillOutline(Image, lines, ip, FillGap, FillTolerance, out why); }
+            catch (Exception ex) { loops = null; why = "Could not fill: " + ex.Message; }
+            if (loops == null) { if (Message != null) Message(why ?? "Nothing to fill there"); return false; }
+            Shape f = NewShape(Tool.Fill, ip);
+            f.Kind = ShapeKind.Polygon;
+            f.Mode = 0;
+            f.Pts = loops[0];
+            f.Holes = loops.Count > 1 ? loops.GetRange(1, loops.Count - 1) : null;
+            f.Cache = null;
+            PushUndo(Snapshot());
+            Shapes.Insert(0, f);      // under the lines that bound it
+            Selected = null; Sel.Clear();
+            FireDoc(); FireSel(); Invalidate();
+            if (Message != null) Message("Filled – change its colour with Fill, or Ctrl+Z to undo");
+            return true;
+        }
+
+        /// <summary>Fill tool: gaps up to about twice this many pixels in a line are closed; colour edges in the picture
+        /// count from this difference (0–255) to the clicked colour.</summary>
+        public int FillGap = 2, FillTolerance = 48;
+
+        /// <summary>1.4.2 Adjust → Remove background: the plain colour at the picture's edges becomes transparent.
+        /// Returns how many pixels were cleared (0 = no plain background found, nothing changed).</summary>
+        public int RemoveBackground()
+        {
+            if (Image == null) return 0;
+            EndTextEdit(true);
+            creating = null;
+            int removed;
+            Bitmap nb = Regions.RemoveBackground(Image, 40, out removed);
+            if (nb == null) return 0;
+            PushUndo(Snapshot());
+            Bitmap preBake = Image;
+            BakeCrop();
+            Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;
+            if (baked != null)
+            {
+                // the crop was made permanent: work on what is visible
+                nb.Dispose();
+                nb = Regions.RemoveBackground(Image, 40, out removed) ?? Effects.To32(Image);
+            }
+            Image = nb;
+            if (baked != null) ReleaseImage(baked);
+            Invalidate(); FireDoc();
+            return removed;
+        }
+
+        /// <summary>1.4.2: the origin's own coordinates (default 0 ; 0), e.g. 1250 ; 300 to match the drawing's grid.</summary>
+        public void SetOriginValue()
+        {
+            if (!HasOrigin) return;
+            string cur = Scale.Fmt(Scale.OriginX) + " ; " + Scale.Fmt(Scale.OriginY);
+            string t = AskText != null ? AskText("Origin coordinates X ; Y in " + Scale.Unit + " (e.g. 1250 ; 300)", cur) : null;
+            if (t == null) return;
+            double x, y;
+            if (!ParseXY(t, out x, out y)) { if (Message != null) Message("Type two numbers: X ; Y"); return; }
+            if (x == Scale.OriginX && y == Scale.OriginY) return;
+            PushUndo(Snapshot());
+            Scale.OriginX = x; Scale.OriginY = y;
+            FireDoc(); Invalidate();
+            if (Message != null) Message("Origin is now X " + Scale.Fmt(x) + " ; Y " + Scale.Fmt(y));
+        }
+
+        /// <summary>"1250 ; 300", "1250 300" or "1250, 300" (the current culture's numbers, or invariant ones).</summary>
+        public static bool ParseXY(string t, out double x, out double y)
+        {
+            x = y = 0;
+            if (t == null) return false;
+            t = t.Trim();
+            if (t.Length == 0 || t == "0") return t.Length > 0;
+            string[] p = t.Split(';');
+            if (p.Length != 2) p = t.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (p.Length != 2 && CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator != ",") p = t.Split(',');
+            if (p.Length != 2) return false;
+            return Num(p[0], out x) && Num(p[1], out y);
+        }
+
+        static bool Num(string s, out double v)
+        {
+            s = s.Trim();
+            if (double.TryParse(s, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out v) && !double.IsNaN(v) && !double.IsInfinity(v)) return true;
+            return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v) && !double.IsNaN(v) && !double.IsInfinity(v);
+        }
+
         /// <summary>Removes the cut-outs of the selected area.</summary>
         public void ClearCutouts()
         {
@@ -1252,6 +1455,13 @@ namespace SnapMeasure
         public void EditLabel(Shape s)
         {
             if (s == null) return;
+            if (s.IsSymbolMarker)
+            {
+                string cur = s.Text ?? "";
+                string t = AskSymbol != null ? AskSymbol("Symbol marker: a symbol or short text", cur) : null;
+                if (t != null && t.Length > 0 && t != cur) { PushUndo(Snapshot()); s.Text = t; s.Cache = null; Styles[Tool.Symbol].Text = t; FireDoc(); Invalidate(); }
+                return;
+            }
             if (s.Kind == ShapeKind.Counter)
             {
                 bool letters = s.IsLetterMarker;
@@ -1379,6 +1589,7 @@ namespace SnapMeasure
                 if (e.KeyCode == Keys.Escape || (e.KeyCode == Keys.Enter && e.Control)) { e.SuppressKeyPress = true; BeginInvoke((Action)(() => EndTextEdit(true))); }
             };
             tb.Leave += (o, e) => EndTextEdit(true);
+            tb.ContextMenuStrip = EditMenu(tb);       // 1.4.2: right-click = cut / copy / paste and the symbol picker
             LayoutEditBox();
             Controls.Add(tb);
             tb.Focus();
@@ -1387,6 +1598,49 @@ namespace SnapMeasure
             else tb.SelectionStart = tb.TextLength;
             Invalidate();
             FireState();
+        }
+
+        /// <summary>1.4.2: types 's' at the caret of the text being edited. Returns false when no text is being edited.</summary>
+        public bool InsertText(string s)
+        {
+            if (editBox == null || string.IsNullOrEmpty(s)) return false;
+            editBox.SelectedText = s;
+            editBox.Focus();
+            return true;
+        }
+
+        /// <summary>The symbols as a menu; clicking one types it into the text being edited.</summary>
+        public void AddSymbolItems(ToolStripItemCollection items)
+        {
+            ToolStripMenuItem more = null;
+            for (int i = 0; i < Dialogs.Symbols.Length; i++)
+            {
+                string sy = Dialogs.Symbols[i];
+                ToolStripMenuItem it = new ToolStripMenuItem(sy);
+                it.Click += (o, e) => InsertText(sy);
+                // the first row on the menu itself, the rest one level down so the menu stays short
+                if (i < 11) items.Add(it);
+                else
+                {
+                    if (more == null) { more = new ToolStripMenuItem(Lang.T("More symbols")); items.Add(more); }
+                    more.DropDownItems.Add(it);
+                }
+            }
+        }
+
+        ContextMenuStrip EditMenu(TextBox tb)
+        {
+            ContextMenuStrip m = new ContextMenuStrip();
+            m.Items.Add(Lang.T("Cut"), null, (o, e) => tb.Cut());
+            m.Items.Add(Lang.T("Copy"), null, (o, e) => tb.Copy());
+            m.Items.Add(Lang.T("Paste"), null, (o, e) => tb.Paste());
+            m.Items.Add(Lang.T("Select all"), null, (o, e) => tb.SelectAll());
+            m.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem sym = new ToolStripMenuItem(Lang.T("Insert symbol"));
+            AddSymbolItems(sym.DropDownItems);
+            m.Items.Add(sym);
+            tb.Disposed += (o, e) => m.Dispose();
+            return m;
         }
 
         /// <summary>Style panel changed bold/italic/alignment/size while typing: update the edit box.</summary>
@@ -1539,10 +1793,16 @@ namespace SnapMeasure
             if (one != null && (one.IsMeasure || one.Kind == ShapeKind.Counter || one.Kind == ShapeKind.Note || one.Kind == ShapeKind.Stamp))
             {
                 m.Items.Add(new ToolStripSeparator());
-                string what = one.Kind == ShapeKind.Counter ? (one.IsLetterMarker ? "Label the letter series…" : "Label the number series…")
+                string what = one.IsSymbolMarker ? "Change the symbol…" : one.Kind == ShapeKind.Counter ? (one.IsLetterMarker ? "Label the letter series…" : "Label the number series…")
                             : one.Kind == ShapeKind.Note ? "Edit note…" : one.Kind == ShapeKind.Stamp ? "Edit stamp text…" : "Label…";
                 add(what, "double-click", true, () => EditLabel(one));
                 if (one.Kind == ShapeKind.Coord) add("Make this point the origin (0,0)", "", HasOrigin, () => MakeOrigin(one));
+                if (one.Kind == ShapeKind.Coord) add("Origin coordinates…", "", HasOrigin, SetOriginValue);
+            }
+            if (one != null && one.Kind == ShapeKind.Origin)
+            {
+                m.Items.Add(new ToolStripSeparator());
+                add("Origin coordinates…", "double-click", true, SetOriginValue);
             }
             if (CanHaveHoles(one))
             {
@@ -1799,6 +2059,21 @@ namespace SnapMeasure
                             Message("Letters ran past A – starting again at Z");
                     }
                     break;
+                case Tool.Symbol:
+                    {
+                        // 1.4.2: any character; it never counts. The last one typed is offered again.
+                        string last = Styles[Tool.Symbol].Text;
+                        string t = AskSymbol != null ? AskSymbol("Symbol marker: a symbol or short text", string.IsNullOrEmpty(last) ? "Ø" : last) : last;
+                        if (string.IsNullOrEmpty(t)) break;
+                        Shape mk = NewShape(tool, ip);
+                        mk.Text = t;
+                        Styles[Tool.Symbol].Text = t;
+                        AddShape(mk);
+                    }
+                    break;
+                case Tool.Fill:
+                    FillAt(ip);
+                    break;
                 case Tool.Note:
                     {
                         Shape hit = HitShape(ip);
@@ -1884,7 +2159,7 @@ namespace SnapMeasure
                 case Tool.Freehand:
                 case Tool.Marker:
                     Sel.Clear(); FireSel();
-                    creating = NewShape(tool, ip);
+                    creating = NewShape(tool, tool == Tool.Freehand ? Snap(ip) : ip);     // 1.4.2: the stroke starts on a nearby shape
                     break;
                 default:
                     Sel.Clear(); FireSel();
@@ -1918,6 +2193,7 @@ namespace SnapMeasure
                     }
                 }
             }
+            if (s.Kind == ShapeKind.Origin) { SetOriginValue(); return; }
             if (s.IsMeasure || s.Kind == ShapeKind.Note || s.Kind == ShapeKind.Stamp || s.Kind == ShapeKind.Counter) EditLabel(s);
         }
 
@@ -2011,6 +2287,7 @@ namespace SnapMeasure
                         break;
                     case Tool.Freehand:
                         if (Geo.Dist(creating.Pts[n - 1], ip) > 1.2f / Zoom) creating.Pts.Add(ip);
+                        Snap(ip);       // shows where the end will snap when the button is let go
                         break;
                     case Tool.Polygon:
                     case Tool.PolyDraw:
@@ -2266,6 +2543,13 @@ namespace SnapMeasure
                         }
                     case Tool.Freehand:
                     case Tool.Marker:
+                        if (tool == Tool.Freehand && c.Pts.Count >= 2)
+                        {
+                            // 1.4.2: the end snaps onto a nearby point or line (or closes onto the start)
+                            PointF end = Snap(c.Pts[c.Pts.Count - 1]);
+                            if (snapPt.HasValue) c.Pts.Add(end);
+                            snapPt = null;
+                        }
                         if (c.Pts.Count >= 2) AddShape(c);
                         break;
                     case Tool.Bubble:
@@ -2448,18 +2732,20 @@ namespace SnapMeasure
                 case Keys.E: CurrentTool = Tool.Ellipse; break;
                 case Keys.L: CurrentTool = e.Shift ? Tool.Arc : Tool.Line; break;         // Shift+L = arc
                 case Keys.A: CurrentTool = Tool.Arrow; break;
-                case Keys.F: CurrentTool = Tool.Freehand; break;
+                case Keys.F: CurrentTool = e.Shift ? Tool.Fill : Tool.Freehand; break;     // 1.4.2: Shift+F = fill
                 case Keys.T: CurrentTool = e.Shift ? Tool.Ocr : Tool.Text; break;
                 case Keys.W: Styles[Tool.Perimeter].Mode = 1; CurrentTool = Tool.Perimeter; break;   // open path length
                 case Keys.I: CurrentTool = Tool.Coord; break;
                 case Keys.Q: Styles[Tool.Area].Mode = 2; CurrentTool = Tool.Area; break;   // closed perimeter = area tool showing the perimeter only
                 case Keys.X: CurrentTool = Tool.Cutout; break;
                 case Keys.U: CurrentTool = Tool.Cloud; break;
-                case Keys.Z: if (e.Shift) StartZoomBox(); else CurrentTool = Tool.Stamp; break;   // Shift+Z = zoom to area
+                case Keys.Z: if (e.Shift) CurrentTool = Tool.Stamp; else StartZoomBox(); break;   // 1.4.2: Z = zoom to area, Shift+Z = stamp
                 case Keys.O: CurrentTool = Tool.Note; break;
                 case Keys.P: CurrentTool = e.Shift ? Tool.PolyDraw : Tool.Polygon; break;   // Shift+P = polyline
                 case Keys.D: CurrentTool = Tool.Dimension; break;
-                case Keys.M: if (Styles[Tool.Area].Mode == 2) Styles[Tool.Area].Mode = 0; CurrentTool = Tool.Area; break;
+                case Keys.M:
+                    if (e.Shift) { CurrentTool = Tool.Symbol; break; }      // 1.4.2: Shift+M = symbol marker
+                    if (Styles[Tool.Area].Mode == 2) Styles[Tool.Area].Mode = 0; CurrentTool = Tool.Area; break;
                 case Keys.G: CurrentTool = Tool.Angle; break;
                 case Keys.K: CurrentTool = Tool.Calibrate; break;
                 case Keys.N: CurrentTool = e.Shift ? Tool.Letter : Tool.Counter; break;
@@ -2577,7 +2863,24 @@ namespace SnapMeasure
                     e.Graphics.FillRectangle(b, r);
                     e.Graphics.DrawRectangle(p, r);
                 }
+            if (FindMark.HasValue)
+            {
+                // 1.4.2 Find: the match in the picture (editor only, never saved)
+                RectangleF fr = FindMark.Value;
+                PointF a = ToScr(fr.Location), c = ToScr(new PointF(fr.Right, fr.Bottom));
+                RectangleF sr = RectangleF.FromLTRB(a.X - 3, a.Y - 3, c.X + 3, c.Y + 3);
+                using (Pen p = new Pen(Renderer.GuideMagenta, 2f))
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(40, Renderer.GuideMagenta)))
+                {
+                    e.Graphics.ResetTransform();
+                    e.Graphics.FillRectangle(b, sr);
+                    e.Graphics.DrawRectangle(p, sr.X, sr.Y, sr.Width, sr.Height);
+                }
+            }
         }
+
+        /// <summary>1.4.2 Find: a box round the current match (picture coordinates), shown until the next search.</summary>
+        public RectangleF? FindMark;
 
         // ---------- zoom to area (Shift+Z or the button next to Fit): drag a box, the view zooms to it ----------
         bool zoomBox;
@@ -2604,6 +2907,16 @@ namespace SnapMeasure
             Point a = zbStart.Value;
             return Rectangle.FromLTRB(Math.Min(a.X, zbEnd.X), Math.Min(a.Y, zbEnd.Y), Math.Max(a.X, zbEnd.X), Math.Max(a.Y, zbEnd.Y));
         }
+        /// <summary>1.4.2: zoom to z with picture point ip in the middle of the window.</summary>
+        public void ZoomCenterOn(PointF ip, float z)
+        {
+            if (Image == null) return;
+            float rs = RulerSize, aw = Width - rs, ah = Height - rs;
+            Zoom = Math.Max(0.05f, Math.Min(32f, z));
+            Pan = new PointF(rs + aw / 2f - ip.X * Zoom, rs + ah / 2f - ip.Y * Zoom);
+            ViewMoved();
+        }
+
         /// <summary>Zoom so that this part of the picture (image pixels) fills the window.</summary>
         public void ZoomToRect(RectangleF ir)
         {
@@ -2678,7 +2991,7 @@ namespace SnapMeasure
         /// colours, line, text style and shadow – and so do the next ones placed (the tool's default).</summary>
         public void MatchMarkerSeries(Shape src)
         {
-            if (src == null || src.Kind != ShapeKind.Counter) return;
+            if (src == null || !src.IsCountingMarker) return;      // a symbol marker has no series: only itself changes
             foreach (Shape m in Shapes)
                 if (m != src && m.Kind == ShapeKind.Counter && m.Mode == src.Mode) MatchProps(src, m);
             Shape tmpl;
