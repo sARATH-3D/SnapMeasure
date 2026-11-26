@@ -59,9 +59,9 @@ Also included: text recognition (OCR) to copy text from any picture, pinned pict
 No account, no telemetry, no ads. Your pictures stay on your PC.
 
 ## What's new in this version
-**1.4.2 (English):** New: a Fill tool (paint bucket) for outlines you draw, symbol markers, a search box for tools, find and replace, a symbol picker, your own coordinate origin, remove background, and text position options. If you update from 1.4.1: Z now zooms to an area and Shift+Z is the stamp; Ctrl+Minus only removes space you added.
+**1.4.2 (English):** New: a Fill tool (paint bucket) for outlines you draw, symbol markers, a search box for tools, find and replace, a symbol picker, your own coordinate origin, and text position options. If you update from 1.4.1: Z now zooms to an area and Shift+Z is the stamp; Ctrl+Minus only removes space you added.
 
-**1.4.2 (한국어):** 새 기능: 직접 그린 윤곽선을 채우는 채우기 도구(페인트 통), 기호 마커, 도구 검색 상자, 찾기 및 바꾸기, 기호 선택기, 좌표 원점 값 지정, 배경 제거, 텍스트 위치 옵션. 1.4.1에서 업데이트하는 경우: 이제 Z는 영역 확대, Shift+Z는 스탬프입니다. Ctrl+Minus는 추가한 여백만 제거합니다.
+**1.4.2 (한국어):** 새 기능: 직접 그린 윤곽선을 채우는 채우기 도구(페인트 통), 기호 마커, 도구 검색 상자, 찾기 및 바꾸기, 기호 선택기, 좌표 원점 값 지정, 텍스트 위치 옵션. 1.4.1에서 업데이트하는 경우: 이제 Z는 영역 확대, Shift+Z는 스탬프입니다. Ctrl+Minus는 추가한 여백만 제거합니다.
 
 **1.4.1 (English):** PDF pages now always open at the sharpness you pick, so the PDF page scale is exact on every PC. Scrolling capture no longer stops early in apps whose background shade changes while they scroll (such as Notepad on Windows 11). New quick user guide and trailer video.
 

@@ -451,8 +451,6 @@ The picture can't get any smaller.	그림을 더 작게 할 수 없습니다.
 Extend canvas…	캔버스 확장…
 Ctrl+Plus = 10 px more room · Ctrl+Minus = 10 px less (never cuts the picture)	Ctrl+Plus = 여백 10 px 추가 · Ctrl+Minus = 10 px 줄이기 (그림은 자르지 않음)
 No added room left – Ctrl+Minus stops at the picture's own edge.	추가한 여백이 없습니다 – Ctrl+Minus는 그림 가장자리에서 멈춥니다.
-Remove background	배경 제거
-Make the plain background round the subject transparent (the colour at the picture's edges)	대상 주변의 단색 배경을 투명하게 만들기 (그림 가장자리의 색)
 Colours inverted (Ctrl+Z undoes it)	색 반전됨 (Ctrl+Z로 되돌리기)
 Grayscale (Ctrl+Z undoes it)	회색조 (Ctrl+Z로 되돌리기)
 Save as…	다른 이름으로 저장…
@@ -521,8 +519,6 @@ Replace in every annotation text (one undo step)	모든 주석 텍스트에서 �
 Windows has no text-recognition language installed.	Windows에 텍스트 인식 언어가 설치되어 있지 않습니다.
 to undo	되돌리기
 Tool	도구
-No plain background found at the picture's edges.	그림 가장자리에서 단색 배경을 찾지 못했습니다.
-Background removed – save as PNG to keep it see-through (Ctrl+Z undoes it)	배경 제거됨 – 투명하게 유지하려면 PNG로 저장하세요 (Ctrl+Z로 되돌리기)
 Captures on this PC. Never sent anywhere.	이 PC의 캡처 수. 어디에도 전송되지 않습니다.
 Appearance	모양
 Light	밝게
@@ -564,3 +560,4 @@ Rounding	반올림
 Drag an area or click a window  ·  Esc = cancel	영역을 드래그하거나 창을 클릭  ·  Esc = 취소
 Picked colour	선택한 색
 Ctrl+Plus adds canvas in this colour	Ctrl+Plus로 늘리는 여백도 이 색
+Symbol markers need 1 to 12 characters – left unchanged	기호 마커는 1~12자여야 하므로 바꾸지 않았습니다

@@ -2,69 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
 
 namespace SnapMeasure
 {
-    /// <summary>1.4.2: paint-bucket fill and background removal. The fill is bounded by annotation outlines only; it
+    /// <summary>1.4.2: the paint-bucket fill. It is bounded by annotation outlines only; it
     /// closes small gaps and the result is an outline (with holes), so it stays a vector shape.</summary>
     internal static class Regions
     {
-        /// <summary>The picture's pixels as ARGB ints (row by row).</summary>
-        public static int[] Pixels(Bitmap img)
-        {
-            int w = img.Width, h = img.Height;
-            int[] px = new int[w * h];
-            BitmapData d = img.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-            try
-            {
-                for (int y = 0; y < h; y++) Marshal.Copy(IntPtr.Add(d.Scan0, y * d.Stride), px, y * w, w);
-            }
-            finally { img.UnlockBits(d); }
-            return px;
-        }
-
-        static int Diff(int a, int b)
-        {
-            int d = Math.Abs(((a >> 16) & 255) - ((b >> 16) & 255));
-            d = Math.Max(d, Math.Abs(((a >> 8) & 255) - ((b >> 8) & 255)));
-            d = Math.Max(d, Math.Abs((a & 255) - (b & 255)));
-            d = Math.Max(d, Math.Abs(((a >> 24) & 255) - ((b >> 24) & 255)));
-            return d;
-        }
-
-        /// <summary>4-connected flood fill over the cells that are not blocked, from the seeds.</summary>
-        static bool[] Flood(bool[] blocked, int w, int h, List<int> seeds)
-        {
-            bool[] reg = new bool[blocked.Length];
-            int[] stack = new int[Math.Max(16, Math.Min(blocked.Length, Math.Max(1 << 20, seeds.Count + 16)))];
-            int sp = 0;
-            foreach (int seed in seeds)
-            {
-                if (blocked[seed] || reg[seed]) continue;
-                reg[seed] = true;
-                if (sp == stack.Length) Array.Resize(ref stack, stack.Length * 2);
-                stack[sp++] = seed;
-            }
-            while (sp > 0)
-            {
-                int i = stack[--sp];
-                int x = i % w, y = i / w;
-                for (int k = 0; k < 4; k++)
-                {
-                    int nx = x + (k == 0 ? 1 : k == 1 ? -1 : 0), ny = y + (k == 2 ? 1 : k == 3 ? -1 : 0);
-                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-                    int j = ny * w + nx;
-                    if (reg[j] || blocked[j]) continue;
-                    reg[j] = true;
-                    if (sp == stack.Length) Array.Resize(ref stack, Math.Min(blocked.Length + 1, stack.Length * 2));
-                    stack[sp++] = j;
-                }
-            }
-            return reg;
-        }
-
         const string NotClosed = "Click inside a closed outline";
         const string OnLine = "Click inside an area, not on a line";
         const string TooComplex = "That area is too complicated to fill";
@@ -407,70 +351,6 @@ namespace SnapMeasure
                 }
             }
             return o;
-        }
-
-        /// <summary>
-        /// Remove background: the plain colour round the picture's edges (the commonest edge colour) and everything
-        /// joined to it within 'tol' becomes transparent; pixels at the boundary that are close to it fade out. The
-        /// subject in the middle stays. Returns a new picture (null when no plain background was found).
-        /// </summary>
-        public static Bitmap RemoveBackground(Bitmap img, int tol, out int removed)
-        {
-            removed = 0;
-            int w = img.Width, h = img.Height;
-            if (w < 3 || h < 3) return null;
-            int[] px = Pixels(img);
-            // the commonest colour along the edges (coarsely grouped), and how much of the edge it covers
-            Dictionary<int, int> votes = new Dictionary<int, int>();
-            List<int> edge = new List<int>();
-            for (int x = 0; x < w; x++) { edge.Add(x); edge.Add((h - 1) * w + x); }
-            for (int y = 1; y < h - 1; y++) { edge.Add(y * w); edge.Add(y * w + w - 1); }
-            foreach (int i in edge)
-            {
-                int c = px[i];
-                if (((c >> 24) & 255) < 16) continue;        // already transparent
-                int k = ((c >> 20) & 15) << 8 | ((c >> 12) & 15) << 4 | ((c >> 4) & 15);
-                int v; votes.TryGetValue(k, out v); votes[k] = v + 1;
-            }
-            int bestK = -1, bestV = 0;
-            foreach (KeyValuePair<int, int> kv in votes) if (kv.Value > bestV) { bestV = kv.Value; bestK = kv.Key; }
-            if (bestK < 0 || bestV < edge.Count / 4) return null;      // no plain background along the edges
-            // the background colour: the average of the edge pixels in that group
-            long sr = 0, sg = 0, sb = 0; int n = 0;
-            foreach (int i in edge)
-            {
-                int c = px[i];
-                int k = ((c >> 20) & 15) << 8 | ((c >> 12) & 15) << 4 | ((c >> 4) & 15);
-                if (k != bestK || ((c >> 24) & 255) < 16) continue;
-                sr += (c >> 16) & 255; sg += (c >> 8) & 255; sb += c & 255; n++;
-            }
-            int bg = unchecked((int)0xFF000000) | (int)(sr / n) << 16 | (int)(sg / n) << 8 | (int)(sb / n);
-            bool[] blocked = new bool[px.Length];
-            for (int i = 0; i < px.Length; i++) blocked[i] = Diff(px[i] | unchecked((int)0xFF000000), bg) > tol && ((px[i] >> 24) & 255) >= 16;
-            // grow from every edge pixel of the background colour
-            bool[] reg = Flood(blocked, w, h, edge);
-            Bitmap nb = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-            int[] o = (int[])px.Clone();
-            for (int i = 0; i < o.Length; i++)
-            {
-                if (reg[i]) { o[i] = 0; removed++; continue; }
-                // soft edge: a subject pixel touching the removed background and close to its colour fades partly
-                int x = i % w, y = i / w;
-                bool touch = (x > 0 && reg[i - 1]) || (x < w - 1 && reg[i + 1]) || (y > 0 && reg[i - w]) || (y < h - 1 && reg[i + w]);
-                if (!touch) continue;
-                int d = Diff(o[i] | unchecked((int)0xFF000000), bg);
-                if (d < tol * 3)
-                {
-                    int a = (o[i] >> 24) & 255;
-                    a = a * Math.Max(0, Math.Min(255, (d - tol) * 255 / Math.Max(1, tol * 2))) / 255;
-                    o[i] = (o[i] & 0xFFFFFF) | (a << 24);
-                }
-            }
-            if (removed == 0) { nb.Dispose(); return null; }
-            BitmapData bd = nb.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-            try { for (int y = 0; y < h; y++) Marshal.Copy(o, y * w, IntPtr.Add(bd.Scan0, y * bd.Stride), w); }
-            finally { nb.UnlockBits(bd); }
-            return nb;
         }
     }
 }

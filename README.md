@@ -37,7 +37,7 @@ space you added, never part of the picture. The appearance choice *Automatic* is
 * **Find and replace** (`Ctrl+F`, replace `Ctrl+H`): annotation text, labels, values and, if you tick *Picture text*, words in the picture itself (OCR). Results are on two tabs: *Texts* (picture words included) and *Measurements & counts*.
 * **Symbol picker** while typing text; text boxes can sit **Top, Middle or Bottom**; dimension values on, above or below the line.
 * **Coordinates origin** can have its own values, for example 1250 ; 300 to match a drawing grid.
-* **Remove background** (Adjust menu); `Ctrl+I` invert colours, `Ctrl+G` grayscale.
+* `Ctrl+I` invert colours, `Ctrl+G` grayscale.
 * Freehand ends **snap** onto shapes and onto their own start; the highlight box has no border by default.
 * A pass over every window: Find in dark mode, clearer wording, larger tick boxes at large text sizes.
 
@@ -322,7 +322,7 @@ Guides are magenta. Drag a guide to move it, or drag it back onto the ruler to d
 
 ## Image menus and view
 * **Rotate:** right / left 90°, mirror horizontal / vertical. Annotations, the crop and measurements follow.
-* **Effects:** border, drop shadow, torn edge, grayscale (`Ctrl+G`), invert (`Ctrl+I`) and **Remove background** (clears the plain colour at the edges); `Ctrl+Z` to undo.
+* **Effects:** border, drop shadow, torn edge, grayscale (`Ctrl+G`) and invert (`Ctrl+I`); `Ctrl+Z` to undo.
 * `Home` (or `0`, or double-click the middle mouse button) fits and centres the image. `Ctrl+wheel` zooms; `Space`+drag pans; `Z` zooms to a box; `Shift`+wheel or the side wheel scrolls sideways.
 
 **Scale:** set the unit and *1 pixel = …* in the right panel, calibrate from a known length (`K`), or use

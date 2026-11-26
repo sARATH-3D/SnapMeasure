@@ -133,6 +133,7 @@ namespace SnapMeasure
             d[Tool.Marker] = marker;
             d[Tool.Text] = St(ShapeKind.Text, red, 0, Color.White, 0, 20);   // line width 0 = no frame
             d[Tool.Polygon] = St(ShapeKind.Polygon, amber, 2, Color.Yellow, 35, 16);
+            d[Tool.Polygon].HeadEnd = 0;                      // or a hidden head would show up when it is opened
             d[Tool.PolyDraw] = St(ShapeKind.Polygon, red, 2, Color.Yellow, 0, 16);
             d[Tool.PolyDraw].Mode = 1;                        // open polyline; heads optional; tick Closed for a polygon
             d[Tool.PolyDraw].HeadEnd = 0;
@@ -165,6 +166,7 @@ namespace SnapMeasure
             d[Tool.Symbol] = sym;
             // fill (paint bucket): the fill colour, no outline
             d[Tool.Fill] = St(ShapeKind.Polygon, Color.FromArgb(0, 120, 212), 0, Color.FromArgb(0, 120, 212), 60, 16);
+            d[Tool.Fill].Form = 1;                                   // the mark of a fill
             d[Tool.Pixelate] = St(ShapeKind.Pixelate, Color.Gray, 3, Color.Gray, 0, 16);
             // 1.4.2: no border by default; the editor shows a thin magenta line round it that is never printed
             d[Tool.Highlight] = St(ShapeKind.Highlight, red, 0, Color.Yellow, 45, 16);
@@ -190,7 +192,7 @@ namespace SnapMeasure
         /// <summary>1.4.2: an area made by the Fill tool (a closed polygon with no line).</summary>
         public static bool IsFillShape(Shape s)
         {
-            return s.Kind == ShapeKind.Polygon && !s.IsOpenPath && s.Width < 0.5f;
+            return s.Kind == ShapeKind.Polygon && !s.IsOpenPath && s.Width < 0.5f && s.Form == 1;
         }
 
         public static Tool ToolFor(ShapeKind k)
@@ -1076,6 +1078,18 @@ namespace SnapMeasure
             }
         }
 
+        Shape outlinesFor;                              // the stroke being drawn
+        Dictionary<Shape, List<PointF>> outlines;       // the other shapes' lines: they don't change while it is drawn
+
+        List<PointF> StrokeOutline(Shape s)
+        {
+            if (creating == null) { outlines = null; outlinesFor = null; return SnapOutline(s); }
+            if (outlinesFor != creating) { outlines = new Dictionary<Shape, List<PointF>>(); outlinesFor = creating; }
+            List<PointF> e;
+            if (!outlines.TryGetValue(s, out e)) outlines[s] = e = SnapOutline(s);
+            return e;
+        }
+
         /// <summary>The lines of a shape that a freehand end can snap onto (closed outlines end where they start), or null.</summary>
         static List<PointF> SnapOutline(Shape s)
         {
@@ -1176,7 +1190,7 @@ namespace SnapMeasure
                         foreach (Shape s in Shapes)
                         {
                             if (s == creating) continue;
-                            List<PointF> e = SnapOutline(s);
+                            List<PointF> e = StrokeOutline(s);
                             if (e == null) continue;
                             for (int i = 0; i + 1 < e.Count; i++)
                             {
@@ -1413,36 +1427,12 @@ namespace SnapMeasure
         /// <summary>Fill tool: gaps up to about twice this many pixels in a line are closed.</summary>
         public int FillGap = 2;
 
-        /// <summary>1.4.2 Adjust → Remove background: the plain colour at the picture's edges becomes transparent.
-        /// Returns how many pixels were cleared (0 = no plain background found, nothing changed).</summary>
-        public int RemoveBackground()
-        {
-            if (Image == null) return 0;
-            EndTextEdit(true);
-            creating = null;
-            int removed;
-            Bitmap nb;
-            // a crop is not yet permanent: look at the visible part only
-            if (CropRect.HasValue)
-                using (Bitmap part = Image.Clone(CropRect.Value, PixelFormat.Format32bppArgb))
-                    nb = Regions.RemoveBackground(part, 40, out removed);
-            else nb = Regions.RemoveBackground(Image, 40, out removed);
-            if (nb == null) return 0;
-            PushUndo(Snapshot());
-            Bitmap preBake = Image;
-            BakeCrop();
-            Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;
-            Image = nb;
-            if (baked != null) ReleaseImage(baked);
-            Invalidate(); FireDoc();
-            return removed;
-        }
-
         /// <summary>1.4.2: the origin's own coordinates (default 0 ; 0), e.g. 1250 ; 300 to match the drawing's grid.</summary>
         public void SetOriginValue()
         {
             if (!HasOrigin) return;
-            string cur = Scale.Fmt(Scale.OriginX) + " ; " + Scale.Fmt(Scale.OriginY);
+            // no thousands separators and no rounding: OK on an unchanged box must change nothing
+            string cur = Scale.OriginX.ToString("R", CultureInfo.CurrentCulture) + " ; " + Scale.OriginY.ToString("R", CultureInfo.CurrentCulture);
             string t = AskText != null ? AskText(Lang.T("Origin coordinates X ; Y in") + " " + Scale.Unit + " (e.g. 1250 ; 300)", cur) : null;
             if (t == null) return;
             double x, y;
@@ -1462,8 +1452,13 @@ namespace SnapMeasure
             t = t.Trim();
             if (t.Length == 0 || t == "0") return t.Length > 0;
             string[] p = t.Split(';');
-            if (p.Length != 2) p = t.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            if (p.Length != 2 && CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator != ",") p = t.Split(',');
+            bool commaDecimals = CultureInfo.CurrentCulture.NumberFormat.NumberDecimalSeparator == ",";
+            if (p.Length != 2)
+            {
+                p = t.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                if (!commaDecimals) for (int i = 0; i < p.Length; i++) p[i] = p[i].Trim(',');     // "1250, 300"
+            }
+            if (p.Length != 2 && !commaDecimals) p = t.Split(',');
             if (p.Length != 2) return false;
             return Num(p[0], out x) && Num(p[1], out y);
         }

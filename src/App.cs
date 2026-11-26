@@ -305,6 +305,27 @@ namespace SnapMeasure
                 check("Find goes back to its width", ed.FindWidths("wall"), "True|True");
                 check("Replace leaves other texts alone when a picture word is chosen", said + "|" + txt.Text, Lang.T("Only text you typed can be replaced") + "|wall 1");
                 check("Replacing the last text stays on Texts, nothing to zoom to", ed.ReplaceThen("1", "9", false), "texts 0 -1");
+                // a symbol marker is never left empty, and SnapMeasure's own picture tag is not text you typed
+                Shape ptr = new Shape(); ptr.Kind = ShapeKind.Image; ptr.Text = "Mouse pointer"; ptr.Pts.Add(new PointF(5, 5)); ptr.Pts.Add(new PointF(15, 15));
+                cv.Shapes.Add(ptr);
+                sym.Text = "Ø"; txt.Text = "Ø 12";
+                ed.CloseFind();
+                ed.ReplaceThen("Ø", "", true);
+                check("Replace never empties a symbol marker", sym.Text + "|" + txt.Text, "Ø| 12");
+                ed.CloseFind();
+                ed.ReplaceThen("Mouse", "x", true);
+                check("Replace leaves the picture tag alone", ptr.Text, "Mouse pointer");
+                cv.Shapes.Remove(ptr);
+                sym.Text = "Ø"; txt.Text = "Ø 12";
+                ed.CloseFind();
+                ed.ReplaceThen("Ø", "", false);
+                check("Replace goes on past a symbol marker it can't empty", sym.Text + "|" + txt.Text, "Ø| 12");
+                int reads = 0;
+                Func<Bitmap, TextRecognition.Result> realRead = ed.ReadPicture;
+                ed.ReadPicture = b => { reads++; throw new TimeoutException("test"); };
+                ed.FindInPicture("a"); ed.FindInPicture("ab"); ed.FindInPicture("abc");
+                ed.ReadPicture = realRead;
+                check("Failed picture reading is not repeated", reads.ToString(), "1");
                 sym.Text = "1"; txt.Text = "wall 1";
                 ed.CloseFind();                                         // so that it searches the new texts
                 check("Replace all stays on the Texts tab", ed.ReplaceThen("1", "9", true) + "|" + sym.Text + "|" + txt.Text, "texts 0 -1|9|wall 9");
@@ -924,23 +945,52 @@ namespace SnapMeasure
                         List<Shape> vb = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { tvx }));
                         check("Text box middle", vb.Count + "|" + vb[0].VAlign, "1|1");
                     }
-                    // 1.4.2 remove background: the plain edge colour goes, the subject stays
-                    using (Bitmap bimg = Canvas.BlankImage(100, 100, Color.White))
-                    using (Canvas bc = new Canvas())
-                    {
-                        bc.Image = Effects.To32(bimg);
-                        using (Graphics g = Graphics.FromImage(bc.Image)) g.FillRectangle(Brushes.Black, 30, 30, 40, 40);
-                        int gone = bc.RemoveBackground();
-                        check("Remove background", gone + "|" + bc.Image.GetPixel(0, 0).A + "|" + bc.Image.GetPixel(50, 50).A + "|" + bc.Image.GetPixel(50, 50).R, "8400|0|255|0");
-                        bc.Undo();
-                        check("Remove background undo", bc.Image.GetPixel(0, 0).A + "|" + bc.RemoveBackground().ToString().Length, "255|4");
-                    }
                     // 1.4.2 origin with its own coordinates; X ; Y typed in several ways
                     ScaleInfo so = new ScaleInfo(); so.OriginX = 1250; so.OriginY = 300;
                     double ox, oy, px2, py2;
                     bool p1 = Canvas.ParseXY("1250 ; 300", out ox, out oy), p2 = Canvas.ParseXY("12.5 3", out px2, out py2), p3 = Canvas.ParseXY("abc", out px2, out py2);
                     check("Origin coordinates", so.CoordX(new PointF(110, 90), new PointF(100, 100)) + "|" + so.CoordY(new PointF(110, 90), new PointF(100, 100)) + "|" + p1 + "|" + ox + "," + oy + "|" + p2 + "|" + p3,
                           "1260|310|True|1250,300|True|False");
+                    // a polygon opened afterwards has no arrowhead nobody asked for
+                    using (Canvas pc0 = new Canvas())
+                    {
+                        Shape pg = pc0.Styles[Tool.Polygon].Clone(); pg.Mode = 1;
+                        check("Opened polygon has no arrowhead", pg.HeadStart + "|" + pg.HeadEnd + "|" + pg.HasHeads, "0|0|True");
+                    }
+                    // the Origin box: OK on what it offers changes nothing; a space after the comma is fine
+                    {
+                        System.Globalization.CultureInfo before = System.Threading.Thread.CurrentThread.CurrentCulture;
+                        string got = "";
+                        foreach (string name in new[] { "en-US", "de-DE" })
+                        {
+                            System.Threading.Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo(name);
+                            using (Canvas oc = new Canvas())
+                            {
+                                Shape pt = new Shape(); pt.Kind = ShapeKind.Origin; pt.Pts.Add(new PointF(1, 1)); oc.Shapes.Add(pt);
+                                oc.Scale.OriginX = 1250.125; oc.Scale.OriginY = 300;
+                                string offered = "";
+                                oc.AskText = (title, initial) => { offered = initial; return initial; };
+                                oc.SetOriginValue();
+                                got += offered + "|" + (oc.Scale.OriginX == 1250.125 && oc.Scale.OriginY == 300) + "|" + oc.CanUndo + "|";
+                                oc.Scale.Decimals = 0; oc.Scale.OriginX = 1250;
+                                oc.SetOriginValue();
+                                got += oc.Scale.OriginX.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + oc.CanUndo + "|";
+                            }
+                        }
+                        System.Threading.Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("en-US");
+                        double ax, ay;
+                        got += Canvas.ParseXY("1250, 300", out ax, out ay) + "|" + ax + "," + ay;
+                        System.Threading.Thread.CurrentThread.CurrentCulture = before;
+                        check("Origin box round-trip", got, "1250.125 ; 300|True|False|1250|False|1250,125 ; 300|True|False|1250|False|True|1250,300");
+                        // only the Fill tool's own areas are fills; a borderless polygon you drew stays a polygon
+                        Shape own = new Shape(); own.Kind = ShapeKind.Polygon; own.Width = 0;
+                        Shape made = own.Clone(); made.Form = 1;
+                        using (Canvas fc = new Canvas())
+                            check("Borderless polygon is not a fill", Canvas.IsFillShape(own) + "|" + Canvas.IsFillShape(made) + "|" + fc.Styles[Tool.Fill].Form, "False|True|1");
+                        List<Shape> marks = new List<Shape>();
+                        for (int i = 0; i < 3; i++) { Shape m = new Shape(); m.Kind = ShapeKind.Counter; m.Mode = 2; m.Text = "Ø"; m.Pts.Add(new PointF(10 * i, 10)); marks.Add(m); }
+                        check("Symbol count in Excel is whole", Measure.ExcelText(marks, new ScaleInfo()).Contains("\t3\t").ToString(), "True");
+                    }
                     // 1.4.2 review fixes
                     {
                         // dimension label position is its own value: text alignment does not move it
@@ -962,22 +1012,6 @@ namespace SnapMeasure
                             bool again = rcv.FillAt(new PointF(150, 150));
                             rcv.Styles[Tool.Fill].Fill = wasFill;
                             check("Fill turned shape, recolour", okR + "|" + (aR > 9000 && aR < 10600) + "|" + again + "|" + rcv.Shapes.Count + "|" + (rcv.Shapes[0].Fill.ToArgb() == Color.Red.ToArgb()), "True|True|True|2|True");
-                        }
-                        // remove background judges the cropped part, not the whole picture
-                        using (Bitmap cimg = Canvas.BlankImage(600, 100, Color.White))
-                        using (Canvas ccv = new Canvas())
-                        {
-                            ccv.Image = Effects.To32(cimg);
-                            using (Graphics g = Graphics.FromImage(ccv.Image))
-                            {
-                                for (int x = 100; x < 600; x++) using (Pen p = new Pen(Color.FromArgb(x % 256, x * 7 % 256, 40))) g.DrawLine(p, x, 0, x, 99);
-                                g.FillRectangle(Brushes.Black, 30, 30, 40, 40);
-                            }
-                            int whole = ccv.RemoveBackground();
-                            bool noUndo = !ccv.CanUndo;
-                            ccv.CropRect = new Rectangle(0, 0, 100, 100);
-                            int part = ccv.RemoveBackground();
-                            check("Remove background with crop", whole + "|" + noUndo + "|" + part + "|" + ccv.Image.Width, "0|True|8400|100");
                         }
                         // Ctrl+Minus after a crop that lies in added room stops, it never makes an empty picture
                         using (Bitmap simg = Canvas.BlankImage(100, 50, Color.White))
@@ -5051,20 +5085,6 @@ namespace SnapMeasure
                                 g.DrawLine(ap, 12.5f, 8, 15.2f, 8); g.DrawLine(ap, 13.8f, 6.5f, 15.2f, 8); g.DrawLine(ap, 13.8f, 9.5f, 15.2f, 8);
                             }
                             break;
-                        case "removebg":    // 1.4.2: a checkerboard (see-through) with a solid subject on it
-                            {
-                                using (SolidBrush lg = new SolidBrush(Color.FromArgb(200, 200, 205)))
-                                {
-                                    g.FillRectangle(Paper, 1, 1, 14, 14);
-                                    for (int yy = 0; yy < 4; yy++)
-                                        for (int xx = 0; xx < 4; xx++)
-                                            if ((xx + yy) % 2 == 0) g.FillRectangle(lg, 1 + xx * 3.5f, 1 + yy * 3.5f, 3.5f, 3.5f);
-                                }
-                                g.DrawRectangle(p, 1, 1, 14, 14);
-                                g.FillEllipse(bb, 4.5f, 3.5f, 7, 7);
-                                g.FillPie(bb, 2.5f, 9.5f, 11, 9, 180, 180);
-                                break;
-                            }
                         case "coffee":      // a cup of coffee with steam (Support SnapMeasure / Ko-fi)
                             {
                                 Color cup = Theme.Dark ? Color.FromArgb(214, 150, 96) : Color.FromArgb(170, 102, 52);

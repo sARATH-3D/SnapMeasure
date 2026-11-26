@@ -535,8 +535,6 @@ namespace SnapMeasure
             // 1.4.2: menus show names only; the shortcut is in the tooltip
             MenuItem(img, "Extend canvas…", "extend", (s, e) => ExtendCanvas()).ToolTipText =
                 Lang.T("Ctrl+Plus = 10 px more room · Ctrl+Minus = 10 px less (never cuts the picture)");
-            MenuItem(img, "Remove background", "removebg", (s, e) => RemoveBackground()).ToolTipText =
-                Lang.T("Make the plain background round the subject transparent (the colour at the picture's edges)");
             img.DropDownItems.Add(new ToolStripSeparator());
             MenuItem(img, "Grayscale", "gray", (s, e) => cv.ImageOp("gray")).ToolTipText = "Ctrl+G";
             MenuItem(img, "Invert colours", "invert", (s, e) => cv.ImageOp("invert")).ToolTipText = "Ctrl+I";
@@ -2764,6 +2762,8 @@ namespace SnapMeasure
         Action<bool> findMode;           // folds or unfolds Replace in the open window
         TextRecognition.Result findOcr;
         object findOcrImg;
+        internal Func<Bitmap, TextRecognition.Result> ReadPicture = b => TextRecognition.Read(b, null);   // replaced by the self-test
+        internal void FindInPicture(string q) { FindAll(q, true); }                                        // for the self-test
 
         class FindHit
         {
@@ -2984,7 +2984,7 @@ namespace SnapMeasure
                 if (q.Length == 0) return 0;
                 Regex rx = FindRegex(q);
                 int n = 0;
-                foreach (Shape x in cv.Shapes) if (!string.IsNullOrEmpty(x.Text)) n += rx.Matches(x.Text).Count;
+                foreach (Shape x in cv.Shapes) if (Typed(x)) n += rx.Matches(x.Text).Count;
                 return n;
             };
             string afterReplace = null;
@@ -3051,6 +3051,7 @@ namespace SnapMeasure
                 }
                 if (findPicture == bPic.Checked) return;
                 findPicture = bPic.Checked;
+                if (findOcr == null) findOcrImg = null;
                 search();
             };
             // the rarely used choices
@@ -3088,13 +3089,15 @@ namespace SnapMeasure
                 if (h != null && h.Shape == null) { note(Lang.T("Only text you typed can be replaced")); return; }
                 replacing = true; try { cv.EndTextEdit(true); } finally { replacing = false; }     // or the open text box would write the old text back
                 if (h == null)
-                    foreach (FindHit x in all) { if (x != null && x.Shape != null && FindRegex(q).IsMatch(x.Shape.Text ?? "")) { h = x; break; } }
+                    foreach (FindHit x in all) { if (x != null && x.Shape != null && Typed(x.Shape) && FindRegex(q).IsMatch(x.Shape.Text)) { h = x; break; } }
                 if (h == null || h.Shape == null || !cv.Shapes.Contains(h.Shape)) { note(Lang.T("Nothing to replace")); return; }
                 Regex rx = FindRegex(q);
                 string old = h.Shape.Text ?? "";
-                if (!rx.IsMatch(old)) { note(Lang.T("Only text you typed can be replaced")); return; }
+                if (!Typed(h.Shape) || !rx.IsMatch(old)) { note(Lang.T("Only text you typed can be replaced")); return; }
+                string changed = ReplacedText(h.Shape, rx, rep.Text, 1);
+                if (changed == null) { lb.SelectedIndex = lb.Items.IndexOf(h); step(1); note(Lang.T(SymbolKept)); return; }
                 cv.PushUndo(cv.Snapshot());
-                h.Shape.Text = rx.Replace(old, rep.Text.Replace("$", "$$"), 1);
+                h.Shape.Text = changed;
                 h.Shape.Cache = null;
                 int idx = lb.SelectedIndex;
                 replacing = true; try { cv.NotifyDocChanged(); } finally { replacing = false; }
@@ -3112,14 +3115,22 @@ namespace SnapMeasure
                 replacing = true; try { cv.EndTextEdit(true); } finally { replacing = false; }
                 Regex rx = FindRegex(q);
                 int n = 0;
-                foreach (Shape x in cv.Shapes) if (!string.IsNullOrEmpty(x.Text)) n += rx.Matches(x.Text).Count;
-                if (n == 0) { note(Lang.T("Nothing to replace")); return; }
-                cv.PushUndo(cv.Snapshot());
+                bool kept = false;
+                List<KeyValuePair<Shape, string>> changes = new List<KeyValuePair<Shape, string>>();
                 foreach (Shape x in cv.Shapes)
-                    if (!string.IsNullOrEmpty(x.Text) && rx.IsMatch(x.Text)) { x.Text = rx.Replace(x.Text, rep.Text.Replace("$", "$$")); x.Cache = null; }
+                {
+                    if (!Typed(x) || !rx.IsMatch(x.Text)) continue;
+                    string changed = ReplacedText(x, rx, rep.Text, -1);
+                    if (changed == null) { kept = true; continue; }
+                    n += rx.Matches(x.Text).Count;
+                    changes.Add(new KeyValuePair<Shape, string>(x, changed));
+                }
+                if (n == 0) { note(Lang.T(kept ? SymbolKept : "Nothing to replace")); return; }
+                cv.PushUndo(cv.Snapshot());
+                foreach (KeyValuePair<Shape, string> c in changes) { c.Key.Text = c.Value; c.Key.Cache = null; }
                 replacing = true; try { cv.NotifyDocChanged(); } finally { replacing = false; }
                 cv.Invalidate();
-                afterReplace = Lang.T("Replaced") + " " + n;
+                afterReplace = Lang.T("Replaced") + " " + n + (kept ? " · " + Lang.T(SymbolKept) : "");
                 stay = true; search(); stay = false;
                 Flash(Lang.T("Replaced") + " " + n + " – Ctrl+Z " + Lang.T("to undo"));
             };
@@ -3165,6 +3176,18 @@ namespace SnapMeasure
             t.HandleCreated += (s, e) => SendCue(t.Handle, 0x1501, (IntPtr)1, cue);     // EM_SETCUEBANNER
         }
 
+        const string SymbolKept = "Symbol markers need 1 to 12 characters – left unchanged";
+
+        /// <summary>Text you typed (a picture's "Mouse pointer" tag is SnapMeasure's own).</summary>
+        static bool Typed(Shape s) { return s.Kind != ShapeKind.Image && !string.IsNullOrEmpty(s.Text); }
+
+        /// <summary>The shape's text after replacing ('count' matches, -1 = all), or null when it may not become that.</summary>
+        static string ReplacedText(Shape s, Regex rx, string with, int count)
+        {
+            string t = rx.Replace(s.Text, with.Replace("$", "$$"), count);
+            return s.IsSymbolMarker && (t.Trim().Length == 0 || t.Length > 12) ? null : t;
+        }
+
         /// <summary>The matches for 'q' (with the Find options): typed texts and the picture's own text, then
         /// the measurements and counts.</summary>
         List<FindHit> FindAll(string q, bool ocr)
@@ -3180,7 +3203,7 @@ namespace SnapMeasure
                 string n; names.TryGetValue(s, out n);
                 MeasureRow r; rows.TryGetValue(s, out r);
                 string kind = Lang.T(KindName(s));
-                string text = (s.Text ?? "").Replace("\r", "").Replace("\n", " ");
+                string text = s.Kind == ShapeKind.Image ? "" : (s.Text ?? "").Replace("\r", "").Replace("\n", " ");
                 string val = r != null ? r.Display : "";
                 if (has(text) || (findLabels && (has(n) || has(val) || (r != null && has(r.Label)))))
                 {
@@ -3194,13 +3217,14 @@ namespace SnapMeasure
             {
                 try
                 {
-                    if (findOcr == null || !ReferenceEquals(findOcrImg, cv.Image))
+                    if (!ReferenceEquals(findOcrImg, cv.Image))
                     {
                         Cursor = Cursors.WaitCursor;
-                        findOcr = TextRecognition.Read(cv.Image, null);
-                        findOcrImg = cv.Image;
+                        findOcrImg = cv.Image;          // also when reading fails: ticking "Picture text" again retries
+                        findOcr = null;
+                        findOcr = ReadPicture(cv.Image);
                     }
-                    foreach (List<TextRecognition.Word> line in findOcr.Lines)
+                    if (findOcr != null) foreach (List<TextRecognition.Word> line in findOcr.Lines)
                     {
                         string lt = string.Join(" ", line.ConvertAll(w => w.Text).ToArray());
                         if (!has(lt)) continue;
@@ -3292,16 +3316,6 @@ namespace SnapMeasure
             cv.ZoomToRect(view);
             if (cv.Zoom > 2f) cv.ZoomCenterOn(new PointF(r.X + r.Width / 2f, r.Y + r.Height / 2f), 2f);
             cv.Invalidate();
-        }
-
-        void RemoveBackground()
-        {
-            cv.EndTextEdit(true);
-            int n;
-            try { n = cv.RemoveBackground(); }
-            catch (Exception ex) { MessageBox.Show(this, ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); return; }
-            if (n == 0) Flash(Lang.T("No plain background found at the picture's edges."));
-            else Flash(Lang.T("Background removed – save as PNG to keep it see-through (Ctrl+Z undoes it)"));
         }
 
         void LabelSeries(bool letters)

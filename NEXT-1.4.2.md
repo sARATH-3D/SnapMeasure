@@ -1,6 +1,6 @@
 # SnapMeasure 1.4.2: requested changes (noted 2026-11-26)
 
-Status: **built locally 2026-11-26.** Version 1.4.2.0. Three local commits on `release-1.4.2` (`0e0fa7e`, `677c084`, then the cloud review fixes and the later rounds below); 250/250 self-checks pass. Release files prepared in `Share` (MSIX not installed, WACK not run). Nothing pushed, tagged or uploaded.
+Status: **built locally 2026-11-26.** Version 1.4.2.0. Local commits on `release-1.4.2` (`0e0fa7e`, `677c084`, `523a2c8`, then the third cloud review fixes below); 255/255 self-checks pass. Release files prepared in `Share` (MSIX not installed, WACK not run). Nothing pushed, tagged or uploaded.
 
 Implementation choices made while building:
 - Stamp moved to **Shift+Z** (Z = zoom to area). Fill tool = **Shift+F**. Find = **Ctrl+F**. Symbol marker = **Shift+M**.
@@ -8,7 +8,7 @@ Implementation choices made while building:
 - Item 10 is done for **dimensions**: Text = On the line / Above / Below (stored in Align).
 - Origin coordinates: double-click the origin (or right-click a point → Origin coordinates…); saved in .snapm as originX / originY.
 - Fill makes a polygon (with holes) under the annotations; it stops at annotation lines and colour edges in the picture, closing gaps of about 4 px.
-- Remove background (Adjust menu) clears the plain colour joined to the picture's edges.
+- Remove background was built, then taken out before release (2026-11-27).
 - Symbol picker: Ω button in the text bar, and Insert symbol on a text's right-click menu.
 - Shortcut hints were taken out of menu labels (Save as, Extend canvas, pin menu) and moved into tooltips.
 
@@ -84,6 +84,16 @@ Also fixed (247/247): the Find window shrinks back after a wide title; a colour 
 
 Fixed after the on-screen test (250/250): Find stays on its tab after Replace and Replace all; a window opened light keeps its light search box after Appearance is switched to Dark.
 
+Third cloud review (2026-11-27), 255/255 self-checks pass:
+- Remove background taken out (the user's decision).
+- The Origin box offers its values without thousands separators or rounding, and accepts "1250, 300".
+- Replace changes only text you typed and never leaves a symbol marker empty or longer than 12 characters.
+- Only areas the Fill tool made count as fills; a borderless polygon you drew stays a polygon.
+- A picture whose text can't be read is not read again on every keystroke.
+- Excel copy shows symbol marker counts as whole numbers; freehand strokes are lighter on busy sheets.
+- Kept: Ctrl+Shift+T as the default key for Capture text (asked for by the user).
+- Opened polygons no longer show a hidden default arrowhead (255/255).
+
 Notes in *italics* are suggestions or findings from the current code, not decisions.
 
 ## Shortcuts
@@ -110,7 +120,7 @@ Notes in *italics* are suggestions or findings from the current code, not decisi
 10. **Text position on shapes.** Today the text can't be placed in the middle of a shape or below its border. Add positions: above, on the border line, middle (centred), and below.
 11. **Freehand tool snapping.** The freehand pen doesn't snap to existing annotations. Its start and end points should snap to nearby shape points and lines, as other tools do. This also lets it close shapes for the fill tool (item 12).
 12. **Fill tool.** Fill a closed area with colour. The area can be bounded by annotations, shapes or freehand sketches, like a paint bucket. *It needs a gap tolerance so small gaps in hand-drawn lines still fill.*
-13. **Remove background**, similar to the one in Paint. Make the picture background transparent, keeping the subject.
+13. **Remove background** (dropped on 2026-11-27, not in 1.4.2), similar to the one in Paint. Make the picture background transparent, keeping the subject.
 16. **Highlighter outline.** Set the highlighter's outline to 0 by default. In the editor, show a thin magenta 0.5 line around it so the user can find it. This line must never appear in a printed, copied or saved picture.
 
 ## About box wording (see screenshot)

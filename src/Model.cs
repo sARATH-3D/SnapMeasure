@@ -799,7 +799,7 @@ namespace SnapMeasure
             sb.AppendLine("Name\tType\tValue\tUnit\tPerimeter\tGross\tCut-outs\tLabel\tX\tY");
             foreach (MeasureRow r in Rows(shapes, sc, true))
             {
-                string val = r.Type == "Note" || r.Type == "Point" ? "" : (r.Type == "Count" ? r.Value.ToString("F0", cc) : sc.Rnd(r.Value).ToString(fmt, cc));
+                string val = r.Type == "Note" || r.Type == "Point" ? "" : (r.Type == "Count" || r.Type == "Symbol marker" ? r.Value.ToString("F0", cc) : sc.Rnd(r.Value).ToString(fmt, cc));
                 Func<double?, string> o = v => v.HasValue ? sc.Rnd(v.Value).ToString(fmt, cc) : "";
                 string label = (r.Label ?? "").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
                 sb.AppendLine(r.Name + "\t" + r.Type + "\t" + val + "\t" + r.Unit + "\t" + o(r.Perimeter) + "\t" + o(r.Gross) + "\t" + o(r.Cutouts) + "\t" + label +
@@ -1032,9 +1032,6 @@ namespace SnapMeasure
             }
         }
 
-        static readonly Bitmap measureBmp = new Bitmap(1, 1);
-        static readonly Graphics measureG = Graphics.FromImage(measureBmp);
-
         /// <summary>A marker's radius (the disc's half height).</summary>
         public static float MarkerRadius(Shape s) { return Math.Max(8f, s.FontSize * 0.9f); }
 
@@ -1045,7 +1042,8 @@ namespace SnapMeasure
             float r = MarkerRadius(s);
             if (!s.IsSymbolMarker || string.IsNullOrEmpty(s.Text) || s.Text.Length <= 2) return r;
             SizeF tsz;
-            lock (measureG) tsz = measureG.MeasureString(s.Text, GetFont(r * 1.05f, true), PointF.Empty, StringFormat.GenericTypographic);
+            Graphics g = MeasureG;
+            lock (g) tsz = g.MeasureString(s.Text, GetFont(r * 1.05f, true), PointF.Empty, StringFormat.GenericTypographic);
             return Math.Max(r, tsz.Width / 2f + r * 0.55f);
         }
 

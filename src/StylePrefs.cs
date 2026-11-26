@@ -97,6 +97,8 @@ namespace SnapMeasure
                     s.Pts.Clear();
                     // each marker tool keeps its own kind (the Symbol style has no character of its own)
                     if (s.Kind == ShapeKind.Counter) s.Mode = t == Tool.Symbol ? 2 : t == Tool.Letter ? 1 : 0;
+                    if (t == Tool.Fill) s.Form = 1;
+                    if (t == Tool.Polygon && s.Mode == 0) s.HeadStart = s.HeadEnd = 0;     // styles saved before 1.4.2 hid a head
                     cv.Styles[t] = s;
                 }
             }
