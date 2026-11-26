@@ -20,6 +20,14 @@ Round 2 (user's on-screen feedback, 2026-11-26), built locally, 208/208 self-che
 - Text box: Top / Middle / Bottom (saved as valign).
 - Find: toolbar button, ⋮ options (Case sensitive, Whole words, Ignore accents, Include labels and values / tool names / picture text), Replace and Replace all (one undo step).
 
+Design pass (full UI check of every window in light and dark, 2026-11-26), built locally, 208/208 self-checks pass:
+- Find and replace: dark mode; "Find" / "Replace with" labels; Aa (case) and ab| (whole words) switch buttons, the rest under ⋮; Replace buttons off when nothing can be replaced; "Replaced 1 – no more matches" instead of "Nothing found"; Find button moved next to Undo/Redo.
+- About: a long capture key gets its own line (the columns ran together).
+- Settings → General: one shared note under Language and Appearance ("Same as Windows" instead of "Automatic"); Output: the example file name ends in "…", and the whole JPEG quality row greys out for PNG; roomier tab names.
+- Same names for the same things: "Calibrate from a known length" and "Drawing scales" dialogs; "Copy all text" in the Copy menu; Extend canvas says "Add space around the picture" and "Background".
+- Symbol dialog: wider box for 12 characters, "or pick a symbol:". Save-changes question without the old "?" icon.
+- Tick boxes and option buttons drawn at the text's size when the text is enlarged (they stayed 13 px).
+
 Notes in *italics* are suggestions or findings from the current code, not decisions.
 
 ## Shortcuts

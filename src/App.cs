@@ -2620,7 +2620,12 @@ namespace SnapMeasure
             // one shortcut per line, keys in a column of their own: the box is narrow and must not wrap a line
             // in the middle (that broke the columns); grouped like the editor's tool column
             StringBuilder sb = new StringBuilder();
-            Action<string, string> row = (key, what) => sb.AppendLine("  " + key.PadRight(KeyCol) + what);
+            // keys too long for their column (two long capture keys) get a line of their own, so the columns never run together
+            Action<string, string> row = (key, what) =>
+            {
+                if (key.Length < KeyCol) sb.AppendLine("  " + key.PadRight(KeyCol) + what);
+                else { sb.AppendLine("  " + key); sb.AppendLine("  " + "".PadRight(KeyCol) + what); }
+            };
             sb.AppendLine("Capture – your keys, set in Settings → General");
             for (int i = 0; i < Hotkeys.Ids.Length; i++)
             {
@@ -3280,10 +3285,10 @@ namespace SnapMeasure
                 t.Text = initial ?? "";
                 t.MaxLength = 12;
                 t.Font = Native.UiFont("Segoe UI", 12f, k);
-                t.SetBounds(S(12), S(10), S(120), S(28));
+                t.SetBounds(S(12), S(10), S(210), S(28));         // room for 12 characters ("Ø125 mm", "Type B-3")
                 f.Controls.Add(t);
                 Label hint = new Label(); hint.AutoSize = true; hint.ForeColor = Color.FromArgb(100, 100, 100);
-                hint.Text = Lang.T("Any character – or pick one:"); hint.Location = new Point(S(140), S(16));
+                hint.Text = Lang.T("or pick a symbol:"); hint.Location = new Point(S(232), S(16));
                 f.Controls.Add(hint);
                 for (int i = 0; i < Symbols.Length; i++)
                 {
@@ -3314,7 +3319,7 @@ namespace SnapMeasure
             Func<float, int> S = v => (int)Math.Round(v * k);
             using (Form f = Base("Extend canvas", k, 330, 252))
             {
-                Label intro = new Label(); intro.Text = "Add room round the picture (pixels):"; intro.AutoSize = true; intro.Location = new Point(S(12), S(12));
+                Label intro = new Label(); intro.Text = "Add space around the picture (pixels):"; intro.AutoSize = true; intro.Location = new Point(S(12), S(12));
                 f.Controls.Add(intro);
                 string[] names = { "Top", "Bottom", "Left", "Right" };
                 NumericUpDown[] n = new NumericUpDown[4];
@@ -3339,11 +3344,11 @@ namespace SnapMeasure
                         sync = true; foreach (NumericUpDown o in n) if (o != me) o.Value = me.Value; sync = false;
                     };
                 }
-                Label lc = new Label(); lc.Text = "Colour"; lc.AutoSize = true; lc.Location = new Point(S(24), S(150));
+                Label lc = new Label(); lc.Text = "Background"; lc.AutoSize = true; lc.Location = new Point(S(24), S(150));     // same word as New blank canvas
                 ComboBox cc = new ComboBox(); cc.DropDownStyle = ComboBoxStyle.DropDownList;
                 cc.Items.AddRange(new object[] { "White", "Like the picture's edge", "Transparent", "Black" });
                 cc.SelectedIndex = Math.Max(0, Math.Min(3, SnapMeasure.Settings.GetInt("ExtendColour", 0)));
-                cc.SetBounds(S(84), S(146), S(200), S(26));
+                cc.SetBounds(S(110), S(146), S(190), S(26));
                 f.Controls.Add(lc); f.Controls.Add(cc);
                 Buttons(f, k);
                 if (f.ShowDialog(owner) != DialogResult.OK) return false;
@@ -3363,13 +3368,9 @@ namespace SnapMeasure
             using (Form f = Base(title, k, 400, 112))
             {
                 if (owner == null) f.StartPosition = FormStartPosition.CenterScreen;
-                PictureBox ic = new PictureBox();
-                ic.Image = SystemIcons.Question.ToBitmap();
-                f.FormClosed += (s, e) => { Image im = ic.Image; ic.Image = null; if (im != null) im.Dispose(); };
-                ic.SizeMode = PictureBoxSizeMode.Zoom;
-                ic.SetBounds(S(14), S(14), S(32), S(32));
-                Label l = new Label(); l.Text = message; l.AutoSize = true; l.MaximumSize = new Size(S(320), 0); l.Location = new Point(S(58), S(22));
-                f.Controls.Add(ic); f.Controls.Add(l);
+                // no "?" icon: Windows' own guidance is to leave it off questions; the buttons say what happens
+                Label l = new Label(); l.Text = message; l.AutoSize = true; l.MaximumSize = new Size(S(370), 0); l.Location = new Point(S(16), S(22));
+                f.Controls.Add(l);
                 int result = -1;
                 string[] texts = { b0, b1, b2 };
                 int x = S(388);
@@ -3410,6 +3411,7 @@ namespace SnapMeasure
                 f.ShowIcon = true;
                 TabControl tabs = new TabControl();
                 tabs.SetBounds(S(8), S(8), S(544), S(522));
+                tabs.Padding = new Point(S(12), S(4));          // room round each tab name (light mode packed them together)
                 TabPage tGen = new TabPage("General"), tCap = new TabPage("Capture"), tOut = new TabPage("Output"), tSty = new TabPage("Styles"), tAbout = new TabPage("About");
                 tabs.TabPages.Add(tGen); tabs.TabPages.Add(tCap); tabs.TabPages.Add(tOut); tabs.TabPages.Add(tSty); tabs.TabPages.Add(tAbout);
                 f.Controls.Add(tabs);
@@ -3449,32 +3451,30 @@ namespace SnapMeasure
                     int curIcon = SnapMeasure.Settings.GetInt("IconSize", 20);
                     iconSize.SelectedIndex = curIcon <= 16 ? 0 : (curIcon >= 24 ? 2 : 1);
                     iconSize.SetBounds(S(230), S(330), S(140), S(26));
-                    Label lin = new Label(); lin.Text = "(smaller when the window is too short)"; lin.MaximumSize = new Size(S(150), 0); lin.AutoSize = true;
+                    Label lin = new Label(); lin.Text = "(smaller in short windows)"; lin.MaximumSize = new Size(S(150), 0); lin.AutoSize = true;
                     lin.ForeColor = Color.FromArgb(90, 90, 90); lin.Location = new Point(S(378), S(334));
                     CheckBox cLock = new CheckBox(); cLock.Name = "lock"; cLock.AutoSize = true; cLock.Location = new Point(S(12), S(362));
                     cLock.Text = "Editor: start with \"Keep inside\" locked (Ctrl+L switches it in the editor)";
                     cLock.Checked = SnapMeasure.Settings.GetBool("LockInside", false);
-                    Label lLang = new Label(); lLang.Text = "Language"; lLang.AutoSize = true; lLang.Location = new Point(S(12), S(394));
+                    Label lLang = new Label(); lLang.Text = "Language"; lLang.AutoSize = true; lLang.Location = new Point(S(12), S(392));
                     ComboBox lang = new ComboBox(); lang.Name = "lang"; lang.DropDownStyle = ComboBoxStyle.DropDownList;
                     lang.Font = new Font("Malgun Gothic", f.Font.Size, GraphicsUnit.Pixel);     // shows 한국어 in English mode too
                     lang.Items.AddRange(Lang.Names);
                     lang.SelectedIndex = Math.Max(0, Array.IndexOf(Lang.Codes, Lang.Code));
-                    lang.SetBounds(S(230), S(390), S(140), S(26));
-                    Label lLangN = new Label(); lLangN.Text = "(new windows; restart for the tray menu)"; lLangN.AutoSize = true;
-                    lLangN.ForeColor = Color.FromArgb(90, 90, 90); lLangN.Location = new Point(S(378), S(394));
-                    lLangN.MaximumSize = new Size(S(150), 0);
-                    Label lTheme = new Label(); lTheme.Text = "Appearance"; lTheme.AutoSize = true; lTheme.Location = new Point(S(12), S(430));
+                    lang.SetBounds(S(230), S(388), S(140), S(26));
+                    Label lTheme = new Label(); lTheme.Text = "Appearance"; lTheme.AutoSize = true; lTheme.Location = new Point(S(12), S(420));
                     ComboBox theme = new ComboBox(); theme.Name = "theme"; theme.DropDownStyle = ComboBoxStyle.DropDownList;
-                    theme.Items.AddRange(new object[] { "Automatic", "Light", "Dark" });
+                    theme.Items.AddRange(new object[] { "Same as Windows", "Light", "Dark" });
                     theme.SelectedIndex = Theme.Mode == "Light" ? 1 : Theme.Mode == "Dark" ? 2 : 0;
-                    theme.SetBounds(S(230), S(426), S(140), S(26));
-                    Label lThemeN = new Label(); lThemeN.Text = "(Automatic follows Windows; new windows, restart for the tray menu)"; lThemeN.AutoSize = true;
-                    lThemeN.ForeColor = Color.FromArgb(90, 90, 90); lThemeN.Location = new Point(S(378), S(430));
-                    lThemeN.MaximumSize = new Size(S(150), 0);
-                    CheckBox cCount = new CheckBox(); cCount.Name = "count"; cCount.AutoSize = true; cCount.Location = new Point(S(12), S(470));
+                    theme.SetBounds(S(230), S(416), S(140), S(26));
+                    // one shared note under both lists (beside them it wrapped into the rows below)
+                    Label lLangN = new Label(); lLangN.Text = "Language and appearance apply to new windows; the tray menu changes after a restart.";
+                    lLangN.AutoSize = true; lLangN.MaximumSize = new Size(S(510), 0);
+                    lLangN.ForeColor = Color.FromArgb(90, 90, 90); lLangN.Location = new Point(S(12), S(446));
+                    CheckBox cCount = new CheckBox(); cCount.Name = "count"; cCount.AutoSize = true; cCount.Location = new Point(S(12), S(466));
                     cCount.Text = "Show the capture count in the editor's status bar";
                     cCount.Checked = Usage.ShowCount;
-                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock, lLang, lang, lLangN, lTheme, theme, lThemeN, cCount });
+                    tGen.Controls.AddRange(new Control[] { reset, sepG, li, iconSize, lin, cLock, lLang, lang, lLangN, lTheme, theme, cCount });
                 }
 
                 // ---------- Capture ----------
@@ -3538,7 +3538,8 @@ namespace SnapMeasure
                 {
                     Label l = new Label(); l.Text = t; l.AutoSize = true; l.Location = new Point(S(12), S(y + 4)); tp.Controls.Add(l); return l;
                 };
-                lab("Save folder", 14); lab("File name", 48); lab("Example", 80); lab("Image format", 112); lab("JPEG quality", 146);
+                lab("Save folder", 14); lab("File name", 48); lab("Example", 80); lab("Image format", 112);
+                Label lq = lab("JPEG quality", 146);
 
                 TextBox folder = new TextBox(); folder.Text = Settings.SaveFolder; folder.SetBounds(S(120), S(14), S(340), S(26));
                 Button browse = new Button(); browse.Text = "…"; browse.SetBounds(S(466), S(13), S(40), S(26));
@@ -3562,7 +3563,9 @@ namespace SnapMeasure
                     "${n}   running number 001, 002 … (${n:D4} = 0001)\n\n" +
                     "Characters that aren't allowed in file names become _ .",
                     "File name pattern", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                Label example = new Label(); example.AutoSize = true; example.ForeColor = Color.FromArgb(0, 90, 170); example.Location = new Point(S(120), S(84));
+                // one line, cut with "…" at the tab's edge (a long title ran off the window)
+                Label example = new Label(); example.AutoSize = false; example.AutoEllipsis = true; example.ForeColor = Color.FromArgb(0, 90, 170);
+                example.SetBounds(S(120), S(84), S(400), S(20));
                 ComboBox fmt = new ComboBox(); fmt.DropDownStyle = ComboBoxStyle.DropDownList;
                 fmt.Items.AddRange(Output.FormatNames);
                 fmt.SetBounds(S(120), S(112), S(340), S(26));
@@ -3589,7 +3592,7 @@ namespace SnapMeasure
                     string ext = fmt.SelectedIndex >= 0 ? Output.Formats[fmt.SelectedIndex] : "png";
                     string n = Output.MakeName(pattern.Text, DateTime.Now, "Autodesk AutoCAD LT 2026 - [plan.dwg]", 1);
                     example.Text = n + "." + ext + (proj.Checked ? "   +   " + n + ".snapm" : "");
-                    q.Enabled = ext == "jpg" || ext == "pdf";
+                    q.Enabled = lq.Enabled = ql.Enabled = ext == "jpg" || ext == "pdf";     // the whole row greys out for PNG
                 };
                 pattern.TextChanged += (s, e) => update();
                 fmt.SelectedIndexChanged += (s, e) => update();
@@ -3810,7 +3813,7 @@ namespace SnapMeasure
         public static bool Calibrate(IWin32Window owner, double px, ScaleInfo sc, string what = null)
         {
             float k = K(owner);
-            using (Form f = Base("Set scale", k, 440, 150))
+            using (Form f = Base("Calibrate from a known length", k, 440, 150))
             {
                 Label l = new Label();
                 l.Text = (what ?? "The line you drew") + " is " + px.ToString("N1") + " pixels long.\nWhat is its real length?";
@@ -3840,7 +3843,7 @@ namespace SnapMeasure
                         sc.Upp = v / px;
                         return true;
                     }
-                    MessageBox.Show(f, "Please enter a positive number, e.g. 1200", "Set scale");
+                    MessageBox.Show(f, "Enter a positive number, for example 1200", "Calibrate from a known length");
                 }
                 return false;
             }
@@ -3854,7 +3857,7 @@ namespace SnapMeasure
         {
             float k = K(owner);
             Func<float, int> S = v => (int)Math.Round(v * k);
-            using (Form f = Base("Drawing scale", k, 470, 330))
+            using (Form f = Base("Drawing scales", k, 470, 330))
             {
                 Func<string, int, int, Label> lab = (t, x, y) =>
                 {

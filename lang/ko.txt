@@ -461,3 +461,30 @@ Crop – drag the part to keep	자르기 – 남길 부분을 드래그
 Mirror left ↔ right	좌우 반전
 Flip upside down	상하 뒤집기
 Unpin – back to the editor	고정 해제 – 편집기로 돌아가기
+Find	찾기
+Replace with	바꿀 내용
+Replace	바꾸기
+Replace all	모두 바꾸기
+Find and replace	찾기 및 바꾸기
+Case sensitive	대/소문자 구분
+Whole words	단어 단위로
+More search options	추가 검색 옵션
+Ignore accents	악센트 무시
+Include labels and values	레이블 및 값 포함
+Include tool names	도구 이름 포함
+Include the picture's text (OCR)	그림 속 텍스트 포함 (OCR)
+Nothing found	찾을 수 없음
+No more matches for	더 이상 일치 항목 없음:
+Replaced 1	1개 바꿈
+Replaced	바꿈
+result	개 결과
+results	개 결과
+Nothing to replace	바꿀 항목 없음
+Only text you typed can be replaced	입력한 텍스트만 바꿀 수 있습니다
+or pick a symbol:	또는 기호 선택:
+Add space around the picture (pixels):	그림 둘레에 여백 추가 (픽셀):
+Background	배경
+Enter a positive number, for example 1200	양수를 입력하세요 (예: 1200)
+(smaller in short windows)	(창이 낮으면 더 작게 표시)
+Language and appearance apply to new windows; the tray menu changes after a restart.	언어와 모양은 새 창에 적용되며, 트레이 메뉴는 다시 시작한 후 바뀝니다.
+Same as Windows	Windows와 같게

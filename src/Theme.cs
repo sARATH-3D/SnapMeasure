@@ -160,7 +160,9 @@ namespace SnapMeasure
         /// <summary>Recolours a finished window and everything in it. Safe to call again after more controls were added.</summary>
         public static void Apply(Control root)
         {
-            if (!Dark || root == null) return;
+            if (root == null) return;
+            ScaleTicks(root);
+            if (!Dark) return;
             try
             {
                 Form f = root as Form;
@@ -175,6 +177,114 @@ namespace SnapMeasure
             }
             catch (Exception ex) { ErrorLog.Write("dark mode", ex); }
             finally { orig = null; itemFore = null; }
+        }
+
+        // ---------------- tick boxes at high display scaling ----------------
+        static readonly ConditionalWeakTable<object, object> ticked = new ConditionalWeakTable<object, object>();
+
+        /// <summary>.NET Framework draws the tick-box and option-button glyph 13 px square whatever the text size, so with
+        /// large text it is half the height of its words. When the text is over about 115 % of normal they are drawn
+        /// again at the matching size, over the small one (the text moves right by the difference, so nothing overlaps).</summary>
+        static void ScaleTicks(Control root)
+        {
+            foreach (Control c in AllControls(root))
+            {
+                ButtonBase bb = c as ButtonBase;
+                if (bb == null || !(c is CheckBox || c is RadioButton)) continue;
+                CheckBox cbx = c as CheckBox;
+                if (cbx != null && cbx.Appearance == Appearance.Button) continue;
+                RadioButton rb = c as RadioButton;
+                if (rb != null && rb.Appearance == Appearance.Button) continue;
+                object seen;
+                if (ticked.TryGetValue(c, out seen)) continue;
+                ticked.Add(c, c);
+                Control cc = c;
+                Action setUp = () =>
+                {
+                    // scale by the text, not the screen: SnapMeasure also enlarges its windows itself (large text, big
+                    // screens), and the 13 px glyph matches a 9 pt Segoe UI line of about 16 px
+                    float k = cc.Font.Height / 16f;
+                    if (k < 1.15f) return;
+                    int size = (int)Math.Round(13f * k), extra = size - 13;
+                    cc.Padding = new Padding(cc.Padding.Left + extra, cc.Padding.Top, cc.Padding.Right, cc.Padding.Bottom);
+                    cc.Paint += (s, e) => DrawTick(cc, e.Graphics, size, extra);
+                    cc.Invalidate();
+                };
+                if (c.IsHandleCreated) setUp(); else c.HandleCreated += (s, e) => setUp();
+            }
+        }
+
+        static IEnumerable<Control> AllControls(Control c)
+        {
+            foreach (Control k in c.Controls)
+            {
+                yield return k;
+                foreach (Control g in AllControls(k)) yield return g;
+            }
+        }
+
+        static void DrawTick(Control c, Graphics g, int size, int extra)
+        {
+            try
+            {
+                CheckBox cb = c as CheckBox;
+                bool radio = c is RadioButton;
+                bool on = cb != null ? cb.CheckState != CheckState.Unchecked : ((RadioButton)c).Checked;
+                bool mixed = cb != null && cb.CheckState == CheckState.Indeterminate;
+                ContentAlignment al = cb != null ? cb.CheckAlign : ((RadioButton)c).CheckAlign;
+                bool top = al == ContentAlignment.TopLeft;
+                int lineH = c.Font.Height;
+                int y = top ? c.Padding.Top + Math.Max(0, (lineH - size) / 2) : (c.Height - size) / 2;
+                Rectangle r = new Rectangle(0, y, size - 1, size - 1);
+                // cover the small glyph Windows drew (it sits 'extra' px further right, centred the same way)
+                Color bg = c.BackColor;
+                for (Control p = c; bg.A < 255 && p.Parent != null; p = p.Parent) bg = p.Parent.BackColor;
+                int sy = top ? c.Padding.Top + Math.Max(0, (lineH - 13) / 2) : (c.Height - 13) / 2;
+                using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, 0, Math.Min(y, sy) - 1, extra + 15, size + 2);
+
+                bool en = c.Enabled;
+                Color accent = Dark ? Accent : Color.FromArgb(0, 103, 192);
+                Color edge = !en ? (Dark ? Color.FromArgb(80, 80, 84) : Color.FromArgb(190, 190, 190))
+                           : (Dark ? Color.FromArgb(160, 160, 166) : Color.FromArgb(118, 118, 118));
+                Color box = Dark ? Field : Color.White;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                float pw = Math.Max(1f, size / 13f);
+                if (radio)
+                {
+                    using (SolidBrush b = new SolidBrush(box)) g.FillEllipse(b, r);
+                    using (Pen p = new Pen(on && en ? accent : edge, pw)) g.DrawEllipse(p, r.X + pw / 2, r.Y + pw / 2, r.Width - pw, r.Height - pw);
+                    if (on)
+                    {
+                        float d = size * 0.44f;
+                        using (SolidBrush b = new SolidBrush(en ? accent : edge))
+                            g.FillEllipse(b, r.X + (r.Width - d) / 2f, r.Y + (r.Height - d) / 2f, d, d);
+                    }
+                    return;
+                }
+                float rad = size / 5f;
+                using (System.Drawing.Drawing2D.GraphicsPath path = new System.Drawing.Drawing2D.GraphicsPath())
+                {
+                    RectangleF rf = new RectangleF(r.X + pw / 2, r.Y + pw / 2, r.Width - pw, r.Height - pw);
+                    path.AddArc(rf.X, rf.Y, rad * 2, rad * 2, 180, 90);
+                    path.AddArc(rf.Right - rad * 2, rf.Y, rad * 2, rad * 2, 270, 90);
+                    path.AddArc(rf.Right - rad * 2, rf.Bottom - rad * 2, rad * 2, rad * 2, 0, 90);
+                    path.AddArc(rf.X, rf.Bottom - rad * 2, rad * 2, rad * 2, 90, 90);
+                    path.CloseFigure();
+                    using (SolidBrush b = new SolidBrush(on ? (en ? accent : edge) : box)) g.FillPath(b, path);
+                    if (!on) using (Pen p = new Pen(edge, pw)) g.DrawPath(p, path);
+                }
+                if (on)
+                    using (Pen p = new Pen(Color.White, Math.Max(1.5f, size / 8f)))
+                    {
+                        p.StartCap = p.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                        if (mixed) g.DrawLine(p, r.X + size * 0.28f, r.Y + size * 0.5f, r.X + size * 0.72f, r.Y + size * 0.5f);
+                        else g.DrawLines(p, new PointF[] {
+                            new PointF(r.X + size * 0.25f, r.Y + size * 0.52f),
+                            new PointF(r.X + size * 0.43f, r.Y + size * 0.70f),
+                            new PointF(r.X + size * 0.76f, r.Y + size * 0.32f) });
+                    }
+            }
+            catch (Exception) { }
         }
 
         static void DarkTitleBar(Form f)
@@ -343,7 +453,7 @@ namespace SnapMeasure
                     {
                         // a tick box: its text ends at the right edge when it sizes itself, else it follows the tick
                         Size ts = TextRenderer.MeasureText(c.Text, c.Font);
-                        int x = c.AutoSize ? Math.Max(0, c.Width - ts.Width) : (int)Math.Round(c.Font.Height * 1.25f);
+                        int x = c.AutoSize ? Math.Max(0, c.Width - ts.Width) : c.Padding.Left + (int)Math.Round(c.Font.Height * 1.25f);
                         r = new Rectangle(x, 0, c.Width - x, c.Height);
                         using (SolidBrush b = new SolidBrush(bg)) e.Graphics.FillRectangle(b, x - 1, 0, c.Width - x + 1, c.Height);
                     }
