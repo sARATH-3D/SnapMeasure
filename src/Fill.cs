@@ -7,9 +7,8 @@ using System.Runtime.InteropServices;
 
 namespace SnapMeasure
 {
-    /// <summary>1.4.2: paint-bucket fill and background removal. Both work on a pixel grid of the picture:
-    /// the fill grows from the clicked pixel and stops at annotation lines and at clear colour edges in the picture,
-    /// closing small gaps; the result is traced into an outline (with holes) so it stays a vector shape.</summary>
+    /// <summary>1.4.2: paint-bucket fill and background removal. The fill is bounded by annotation outlines only; it
+    /// closes small gaps and the result is an outline (with holes), so it stays a vector shape.</summary>
     internal static class Regions
     {
         /// <summary>The picture's pixels as ARGB ints (row by row).</summary>
@@ -35,34 +34,7 @@ namespace SnapMeasure
             return d;
         }
 
-        /// <summary>Square dilation by r (a pixel is set when any pixel within r of it is set), in two passes.</summary>
-        static bool[] Dilate(bool[] m, int w, int h, int r)
-        {
-            if (r <= 0) return (bool[])m.Clone();
-            bool[] t = new bool[m.Length], o = new bool[m.Length];
-            for (int y = 0; y < h; y++)
-            {
-                int row = y * w, last = -1000000;
-                for (int x = 0; x < w; x++) { if (m[row + x]) last = x; t[row + x] = x - last <= r; }
-                last = 1000000;
-                for (int x = w - 1; x >= 0; x--) { if (m[row + x]) last = x; if (last - x <= r) t[row + x] = true; }
-            }
-            for (int x = 0; x < w; x++)
-            {
-                int last = -1000000;
-                for (int y = 0; y < h; y++) { if (t[y * w + x]) last = y; o[y * w + x] = y - last <= r; }
-                last = 1000000;
-                for (int y = h - 1; y >= 0; y--) { if (t[y * w + x]) last = y; if (last - y <= r) o[y * w + x] = true; }
-            }
-            return o;
-        }
-
-        /// <summary>4-connected flood fill over the cells that are not blocked, from 'seed'.</summary>
-        static bool[] Flood(bool[] blocked, int w, int h, int seed)
-        {
-            return Flood(blocked, w, h, new List<int> { seed });
-        }
-
+        /// <summary>4-connected flood fill over the cells that are not blocked, from the seeds.</summary>
         static bool[] Flood(bool[] blocked, int w, int h, List<int> seeds)
         {
             bool[] reg = new bool[blocked.Length];
@@ -93,222 +65,169 @@ namespace SnapMeasure
             return reg;
         }
 
+        const string NotClosed = "Click inside a closed outline";
+        const string OnLine = "Click inside an area, not on a line";
+        const string TooComplex = "That area is too complicated to fill";
+
+        static bool IsClosed(List<PointF> p) { return p.Count >= 4 && Geo.Dist(p[0], p[p.Count - 1]) < 0.5f; }
+
+        static bool Inside(List<PointF> p, PointF q)
+        {
+            bool inside = false;
+            for (int i = 0, j = p.Count - 1; i < p.Count; j = i++)
+                if ((p[i].Y > q.Y) != (p[j].Y > q.Y) && q.X < (p[j].X - p[i].X) * (q.Y - p[i].Y) / (p[j].Y - p[i].Y) + p[i].X) inside = !inside;
+            return inside;
+        }
+
+        static double Area(List<PointF> p)
+        {
+            double a = 0;
+            for (int i = 0, j = p.Count - 1; i < p.Count; j = i++) a += (double)p[j].X * p[i].Y - (double)p[i].X * p[j].Y;
+            return a / 2;
+        }
+
+        /// <summary>One straight piece of an outline: which line it came from, its place in it, where it is cut.</summary>
+        class Seg
+        {
+            public PointF A, B;
+            public float Width;
+            public int Line, At;
+            public List<double> Cuts = new List<double>();
+            public float Left { get { return Math.Min(A.X, B.X); } }
+            public float Right { get { return Math.Max(A.X, B.X); } }
+            public float Top { get { return Math.Min(A.Y, B.Y); } }
+            public float Bottom { get { return Math.Max(A.Y, B.Y); } }
+        }
+
         /// <summary>
-        /// The area to fill round 'seed': bounded by the given annotation outlines (each with its line width) and by
-        /// colour edges in the picture (more than 'tol' away from the clicked colour). Gaps up to about 2 × gap pixels
-        /// are closed. Returns the outer outline first, then the holes; null with 'why' when there is nothing to fill.
+        /// The area to fill round 'seed', bounded by the annotation outlines only (each with its line width); the
+        /// picture does not count. It is worked out from the lines themselves: they are cut where they meet, ends that
+        /// fall short by a few pixels are joined, lines that divide nothing (loose ends) are left out, and the smallest
+        /// area round the click is taken. Returns the outer outline first, then the holes; null with 'why' when there
+        /// is nothing to fill.
         /// </summary>
-        public static List<List<PointF>> FillOutline(Bitmap img, List<KeyValuePair<List<PointF>, float>> lines, PointF seedW, int gap, int tol, out string why)
+        public static List<List<PointF>> FillOutline(List<KeyValuePair<List<PointF>, float>> lines, PointF seed, int gap, out string why)
         {
             why = null;
-            int iw = img.Width, ih = img.Height;
-            // the grid: the picture plus every annotation outline round it, so areas drawn outside the picture fill too
-            RectangleF all = new RectangleF(0, 0, iw, ih);
-            float maxW = 1.5f;
-            foreach (KeyValuePair<List<PointF>, float> l in lines)
+            lines = new List<KeyValuePair<List<PointF>, float>>(lines);
+            List<Seg> segs = new List<Seg>();
+            for (int l = 0; l < lines.Count; l++)
             {
-                maxW = Math.Max(maxW, l.Value);
-                foreach (PointF p in l.Key)
-                {
-                    float x0 = Math.Min(all.Left, p.X), y0 = Math.Min(all.Top, p.Y), x1 = Math.Max(all.Right, p.X), y1 = Math.Max(all.Bottom, p.Y);
-                    all = RectangleF.FromLTRB(x0, y0, x1, y1);
-                }
+                // curves and sketches carry far more points than their shape needs: thinned, a sheet full of
+                // revision clouds stays quick
+                List<PointF> p = Thin(lines[l].Key, 0.25f);
+                lines[l] = new KeyValuePair<List<PointF>, float>(p, lines[l].Value);
+                for (int i = 1; i < p.Count; i++)
+                    if (Geo.Dist(p[i - 1], p[i]) > 0.01f) segs.Add(new Seg { A = p[i - 1], B = p[i], Width = lines[l].Value, Line = l, At = i });
             }
-            float pad = Math.Min(64f, maxW) + 4f;
-            all.Inflate(pad, pad);
-            // keep it sane: at most about 12000 px a side round the picture
-            all = RectangleF.Intersect(all, new RectangleF(-6000, -6000, iw + 12000, ih + 12000));
-            int ox = (int)Math.Floor(all.X), oy = (int)Math.Floor(all.Y);
-            int w = (int)Math.Ceiling(all.Right) - ox, h = (int)Math.Ceiling(all.Bottom) - oy;
-            Point seed = new Point((int)Math.Floor(seedW.X) - ox, (int)Math.Floor(seedW.Y) - oy);
-            if (seed.X < 0 || seed.Y < 0 || seed.X >= w || seed.Y >= h) { why = "Click inside a closed outline or on the picture"; return null; }
-            bool onPicture = seedW.X >= 0 && seedW.Y >= 0 && seedW.X < iw && seedW.Y < ih;
-            bool[] bar = new bool[w * h], lineMask = new bool[w * h];
-            // annotation lines, drawn into a mask
-            if (lines.Count > 0)
-            {
-                using (Bitmap mk = new Bitmap(w, h, PixelFormat.Format32bppArgb))
-                {
-                    using (Graphics g = Graphics.FromImage(mk))
-                    {
-                        g.Clear(Color.Transparent);
-                        g.SmoothingMode = SmoothingMode.None;
-                        g.TranslateTransform(-ox, -oy);
-                        foreach (KeyValuePair<List<PointF>, float> l in lines)
-                        {
-                            if (l.Key.Count < 2) continue;
-                            using (Pen p = new Pen(Color.Black, Math.Max(1.5f, l.Value)))
-                            {
-                                p.LineJoin = LineJoin.Round; p.StartCap = p.EndCap = LineCap.Round;
-                                g.DrawLines(p, l.Key.ToArray());
-                            }
-                        }
-                    }
-                    int[] mp = Pixels(mk);
-                    for (int i = 0; i < mp.Length; i++) if (((mp[i] >> 24) & 255) > 40) bar[i] = lineMask[i] = true;
-                }
-            }
-            int si = seed.Y * w + seed.X;
-            if (bar[si]) { why = "Click inside an area, not on a line"; return null; }
-            // colour edges in the picture (outside the picture counts as one plain "nothing" colour)
-            int[] ipx = Pixels(img);
-            int[] px = new int[w * h];
-            for (int y = 0; y < ih; y++)
-            {
-                int gy = y - oy;
-                if (gy < 0 || gy >= h) continue;
-                for (int x = 0; x < iw; x++)
-                {
-                    int gx = x - ox;
-                    if (gx >= 0 && gx < w) px[gy * w + gx] = ipx[y * iw + x];
-                }
-            }
-            int sc = px[si];
-            for (int i = 0; i < px.Length; i++) if (!bar[i] && Diff(px[i], sc) > tol) bar[i] = true;
-            // close small gaps: grow the lines, fill, then grow the area back by the same amount (not into a line)
-            bool[] grown = Dilate(bar, w, h, gap);
-            int r = gap;
-            if (grown[si]) { grown = bar; r = 0; }          // clicked right next to a line: no gap closing here
-            bool[] reg = Flood(grown, w, h, si);
-            if (r > 0)
-            {
-                bool[] back = Dilate(reg, w, h, r);
-                for (int i = 0; i < reg.Length; i++) reg[i] = back[i] && !bar[i] || reg[i];
-            }
-            // off the picture, an area that runs to the edge of the grid is not closed
-            if (!onPicture)
-            {
-                for (int x = 0; x < w; x++) if (reg[x] || reg[(h - 1) * w + x]) { why = "That area isn't closed – click inside a closed outline"; return null; }
-                for (int y = 0; y < h; y++) if (reg[y * w] || reg[y * w + w - 1]) { why = "That area isn't closed – click inside a closed outline"; return null; }
-            }
-            IgnoreText(reg, lineMask, w, h);
-            // like Paint: the fill reaches right up to the lines – into the soft (anti-aliased) edge of picture lines, and
-            // under annotation lines (they are drawn on top of it), never past them
-            bool[] one = Dilate(reg, w, h, 1);
-            int ext = Math.Min(16, (int)Math.Ceiling(maxW / 2f) + 1);
-            bool[] under = Dilate(reg, w, h, ext);
-            for (int i = 0; i < reg.Length; i++)
-                if (!reg[i] && ((one[i] && bar[i]) || (under[i] && lineMask[i]))) reg[i] = true;
-            List<List<PointF>> loops = Trace(reg, w, h, out why);
-            if (loops != null)
-                foreach (List<PointF> lp in loops)
-                    for (int i = 0; i < lp.Count; i++) lp[i] = new PointF(lp[i].X + ox, lp[i].Y + oy);
-            return loops;
-        }
+            if (segs.Count == 0) { why = NotClosed; return null; }
+            if (segs.Count > 150000) { why = TooComplex; return null; }
+            foreach (Seg s in segs)
+                if (Geo.SegDist(seed, s.A, s.B) <= Math.Max(1.5f, s.Width) / 2f) { why = OnLine; return null; }
+            segs.AddRange(Bridges(lines, segs, gap));
+            if (!Cut(segs)) { why = TooComplex; return null; }
 
-        /// <summary>Text and small marks in the picture don't stop a fill: islands inside the area that hold no annotation
-        /// line and are text-sized (at most about 40 px high or wide, or a few % of the area) are filled over.</summary>
-        static void IgnoreText(bool[] reg, bool[] lineMask, int w, int h)
-        {
-            int area = 0;
-            for (int i = 0; i < reg.Length; i++) if (reg[i]) area++;
-            if (area == 0) return;
-            bool[] seen = new bool[reg.Length];
-            List<int> comp = new List<int>();
-            Stack<int> st = new Stack<int>();
-            for (int s = 0; s < reg.Length; s++)
+            // the pieces between the cuts, as a net of points and edges
+            List<PointF> node = new List<PointF>();
+            List<List<int>> next = new List<List<int>>();
+            Dictionary<long, List<int>> grid = new Dictionary<long, List<int>>();
+            Func<PointF, int> id = p =>
             {
-                if (reg[s] || seen[s]) continue;
-                comp.Clear(); st.Push(s); seen[s] = true;
-                bool border = false, hasLine = false;
-                int x0 = int.MaxValue, y0 = int.MaxValue, x1 = -1, y1 = -1;
-                while (st.Count > 0)
-                {
-                    int i = st.Pop(); comp.Add(i);
-                    int x = i % w, y = i / w;
-                    if (x == 0 || y == 0 || x == w - 1 || y == h - 1) border = true;
-                    if (lineMask[i]) hasLine = true;
-                    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-                    if (x > 0 && !reg[i - 1] && !seen[i - 1]) { seen[i - 1] = true; st.Push(i - 1); }
-                    if (x < w - 1 && !reg[i + 1] && !seen[i + 1]) { seen[i + 1] = true; st.Push(i + 1); }
-                    if (y > 0 && !reg[i - w] && !seen[i - w]) { seen[i - w] = true; st.Push(i - w); }
-                    if (y < h - 1 && !reg[i + w] && !seen[i + w]) { seen[i + w] = true; st.Push(i + w); }
-                }
-                if (border || hasLine) continue;
-                int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-                bool textSized = (Math.Min(bw, bh) <= 40 && comp.Count < area / 4) || comp.Count < area * 3 / 100;
-                if (textSized) foreach (int i in comp) reg[i] = true;
-            }
-        }
-
-        /// <summary>Outlines of the set cells (pixel corners), simplified: the largest first (the outside), then the holes.</summary>
-        public static List<List<PointF>> Trace(bool[] reg, int w, int h, out string why)
-        {
-            why = null;
-            long W1 = w + 1;
-            Dictionary<long, long> first = new Dictionary<long, long>(), second = new Dictionary<long, long>();
-            List<long> starts = new List<long>();
-            Action<long, long> edge = (a, b) =>
-            {
-                if (first.ContainsKey(a)) second[a] = b; else { first[a] = b; starts.Add(a); }
+                long gx = (long)Math.Floor(p.X * 5), gy = (long)Math.Floor(p.Y * 5);     // cells of 0.2 pixel
+                List<int> at;
+                for (long x = gx - 1; x <= gx + 1; x++)
+                    for (long y = gy - 1; y <= gy + 1; y++)
+                        if (grid.TryGetValue(x * 4000037L + y, out at))
+                            foreach (int n in at) if (Geo.Dist(node[n], p) < 0.15f) return n;
+                if (!grid.TryGetValue(gx * 4000037L + gy, out at)) grid[gx * 4000037L + gy] = at = new List<int>();
+                at.Add(node.Count);
+                node.Add(p);
+                next.Add(new List<int>());
+                return node.Count - 1;
             };
-            for (int y = 0; y < h; y++)
-                for (int x = 0; x < w; x++)
-                {
-                    if (!reg[y * w + x]) continue;
-                    long tl = y * W1 + x, tr = tl + 1, bl = tl + W1, br = bl + 1;
-                    if (y == 0 || !reg[(y - 1) * w + x]) edge(tl, tr);
-                    if (x == w - 1 || !reg[y * w + x + 1]) edge(tr, br);
-                    if (y == h - 1 || !reg[(y + 1) * w + x]) edge(br, bl);
-                    if (x == 0 || !reg[y * w + x - 1]) edge(bl, tl);
-                    if (starts.Count > 4000000) { why = "That area is too complicated to fill"; return null; }
-                }
-            if (starts.Count == 0) { why = "Nothing to fill there"; return null; }
-            List<List<PointF>> loops = new List<List<PointF>>();
-            foreach (long st in starts)
+            foreach (Seg s in segs)
             {
-                while (first.ContainsKey(st))
+                s.Cuts.Add(0); s.Cuts.Add(1);
+                s.Cuts.Sort();
+                int last = -1;
+                foreach (double t in s.Cuts)
                 {
-                    List<PointF> loop = new List<PointF>();
-                    long cur = st;
-                    int guard = 0;
-                    while (true)
-                    {
-                        long nxt, n2;
-                        if (!first.TryGetValue(cur, out nxt)) break;
-                        if (second.TryGetValue(cur, out n2)) { first[cur] = n2; second.Remove(cur); }
-                        else first.Remove(cur);
-                        loop.Add(new PointF((float)(cur % W1), (float)(cur / W1)));
-                        cur = nxt;
-                        if (cur == st || ++guard > 50000000) break;
-                    }
-                    if (loop.Count >= 4) loops.Add(Simplify(loop, 0.8f));
+                    int n = id(new PointF((float)(s.A.X + (s.B.X - s.A.X) * t), (float)(s.A.Y + (s.B.Y - s.A.Y) * t)));
+                    if (last >= 0 && last != n && !next[last].Contains(n)) { next[last].Add(n); next[n].Add(last); }
+                    last = n;
                 }
             }
-            loops.RemoveAll(l => l.Count < 3 || Math.Abs(Geo.SignedArea(l)) < 2f);
-            if (loops.Count == 0) { why = "Nothing to fill there"; return null; }
-            loops.Sort((a, b) => Math.Abs(Geo.SignedArea(b)).CompareTo(Math.Abs(Geo.SignedArea(a))));
+            DropBridges(next);
+
+            // which points hang together
+            int[] part = new int[node.Count];
+            for (int i = 0; i < part.Length; i++) part[i] = -1;
+            int parts = 0;
+            for (int i = 0; i < node.Count; i++)
+            {
+                if (part[i] >= 0 || next[i].Count == 0) continue;
+                Stack<int> st = new Stack<int>();
+                st.Push(i); part[i] = parts;
+                while (st.Count > 0) foreach (int n in next[st.Pop()]) if (part[n] < 0) { part[n] = parts; st.Push(n); }
+                parts++;
+            }
+            if (parts == 0) { why = NotClosed; return null; }
+
+            // walk round every face: neighbours in order of direction, always the one just before the way we came
+            for (int i = 0; i < node.Count; i++)
+            {
+                PointF c = node[i];
+                next[i].Sort((a, b) => Math.Atan2(node[a].Y - c.Y, node[a].X - c.X).CompareTo(Math.Atan2(node[b].Y - c.Y, node[b].X - c.X)));
+            }
+            HashSet<long> done = new HashSet<long>();
+            List<PointF> best = null;
+            double bestArea = double.MaxValue;
+            int bestPart = -1;
+            List<PointF>[] outline = new List<PointF>[parts];      // each group's outer boundary (walked the other way round)
+            double[] outlineArea = new double[parts];
+            for (int i = 0; i < node.Count; i++)
+                foreach (int first in next[i])
+                {
+                    if (done.Contains((long)i * node.Count + first)) continue;
+                    List<PointF> face = new List<PointF>();
+                    int u = i, v = first;
+                    while (done.Add((long)u * node.Count + v))
+                    {
+                        face.Add(node[u]);
+                        List<int> at = next[v];
+                        int w = at[(at.IndexOf(u) + at.Count - 1) % at.Count];
+                        u = v; v = w;
+                    }
+                    double a = Area(face);
+                    if (a > 0)
+                    {
+                        if (a < bestArea && Inside(face, seed)) { best = face; bestArea = a; bestPart = part[i]; }
+                    }
+                    else if (outline[part[i]] == null || -a > outlineArea[part[i]]) { outline[part[i]] = face; outlineArea[part[i]] = -a; }
+                }
+            if (best == null) { why = NotClosed; return null; }
+
+            // outlines lying inside the area are holes (only the outermost of nested ones)
+            List<int> inside = new List<int>();
+            for (int k = 0; k < parts; k++)
+                if (k != bestPart && outline[k] != null && outlineArea[k] > 2 && outlineArea[k] < bestArea && Inside(best, outline[k][0])) inside.Add(k);
+            List<List<PointF>> loops = new List<List<PointF>> { Clean(best) };
+            foreach (int k in inside)
+            {
+                bool nested = false;
+                foreach (int m in inside) if (m != k && outlineArea[m] > outlineArea[k] && Inside(outline[m], outline[k][0])) nested = true;
+                if (!nested) loops.Add(Clean(outline[k]));
+            }
+            loops.RemoveAll(l => l.Count < 3 || Math.Abs(Area(l)) < 2);
+            if (loops.Count == 0 || bestArea < 4) { why = "Nothing to fill there"; return null; }
             return loops;
         }
 
-        /// <summary>Closed outline: drop points on straight runs, then Douglas–Peucker with tolerance eps.</summary>
-        static List<PointF> Simplify(List<PointF> loop, float eps)
+        /// <summary>The same line with the points that move it by less than 'eps' left out (Douglas–Peucker); both ends stay.</summary>
+        static List<PointF> Thin(List<PointF> p, float eps)
         {
-            List<PointF> p = new List<PointF>();
-            int n = loop.Count;
-            for (int i = 0; i < n; i++)
-            {
-                PointF a = loop[(i + n - 1) % n], b = loop[i], c = loop[(i + 1) % n];
-                if (Math.Abs((b.X - a.X) * (c.Y - b.Y) - (b.Y - a.Y) * (c.X - b.X)) > 1e-6f) p.Add(b);
-            }
-            if (p.Count < 4) return p;
-            // split at the point farthest from the first, then simplify both halves as open runs
-            int far = 0; float fd = -1;
-            for (int i = 1; i < p.Count; i++) { float d = Geo.Dist(p[0], p[i]); if (d > fd) { fd = d; far = i; } }
-            List<PointF> a1 = p.GetRange(0, far + 1), a2 = p.GetRange(far, p.Count - far);
-            a2.Add(p[0]);
-            List<PointF> r = Dp(a1, eps);
-            List<PointF> r2 = Dp(a2, eps);
-            r.RemoveAt(r.Count - 1);
-            r2.RemoveAt(r2.Count - 1);
-            r.AddRange(r2);
-            return r;
-        }
-
-        static List<PointF> Dp(List<PointF> pts, float eps)
-        {
-            int n = pts.Count;
-            if (n < 3) return new List<PointF>(pts);
+            int n = p.Count;
+            if (n < 3) return p;
             bool[] keep = new bool[n];
             keep[0] = keep[n - 1] = true;
             Stack<int[]> st = new Stack<int[]>();
@@ -316,18 +235,178 @@ namespace SnapMeasure
             while (st.Count > 0)
             {
                 int[] s = st.Pop();
-                int a = s[0], b = s[1];
-                float best = -1; int bi = -1;
-                for (int i = a + 1; i < b; i++)
+                float far = -1; int at = -1;
+                for (int i = s[0] + 1; i < s[1]; i++)
                 {
-                    float d = Geo.SegDist(pts[i], pts[a], pts[b]);
-                    if (d > best) { best = d; bi = i; }
+                    float d = Geo.SegDist(p[i], p[s[0]], p[s[1]]);
+                    if (d > far) { far = d; at = i; }
                 }
-                if (bi >= 0 && best > eps) { keep[bi] = true; st.Push(new[] { a, bi }); st.Push(new[] { bi, b }); }
+                if (at >= 0 && far > eps) { keep[at] = true; st.Push(new[] { s[0], at }); st.Push(new[] { at, s[1] }); }
             }
             List<PointF> r = new List<PointF>();
-            for (int i = 0; i < n; i++) if (keep[i]) r.Add(pts[i]);
+            for (int i = 0; i < n; i++) if (keep[i]) r.Add(p[i]);
             return r;
+        }
+
+        /// <summary>Ends that stop a few pixels short of another line (twice 'gap', plus the line widths) are joined
+        /// to it. An end whose last bit already meets a line is left alone.</summary>
+        static List<Seg> Bridges(List<KeyValuePair<List<PointF>, float>> lines, List<Seg> segs, int gap)
+        {
+            List<Seg> add = new List<Seg>();
+            float widest = 0;
+            foreach (Seg s in segs) widest = Math.Max(widest, s.Width);
+            for (int l = 0; l < lines.Count; l++)
+            {
+                List<PointF> p = lines[l].Key;
+                if (p.Count < 2 || IsClosed(p)) continue;
+                for (int end = 0; end < 2; end++)
+                {
+                    PointF tip = end == 0 ? p[0] : p[p.Count - 1];
+                    float width = lines[l].Value, reach = gap * 2 + (width + widest) / 2f + 0.5f;
+                    // the pieces of this line next to the tip (as far as 'reach' along it): not join targets
+                    HashSet<int> own = new HashSet<int>();
+                    float run = 0;
+                    for (int k = 0; k + 1 < p.Count && run <= reach * 2; k++)
+                    {
+                        int at = end == 0 ? k + 1 : p.Count - 1 - k;
+                        own.Add(at);
+                        run += Geo.Dist(p[at - 1], p[at]);
+                    }
+                    bool met = false;
+                    run = 0;
+                    for (int k = 0; k + 1 < p.Count && run < reach && !met; k++)
+                    {
+                        int at = end == 0 ? k + 1 : p.Count - 1 - k;
+                        PointF a = end == 0 ? p[at - 1] : p[at], b = end == 0 ? p[at] : p[at - 1];      // from the tip's side
+                        float len = Geo.Dist(a, b);
+                        if (len <= 0) continue;
+                        float take = Math.Min(len, reach - run) / len;      // only the last bit counts, however long the piece
+                        PointF stop = new PointF(a.X + (b.X - a.X) * take, a.Y + (b.Y - a.Y) * take);
+                        foreach (Seg o in segs)
+                        {
+                            if (o.Line == l && (own.Contains(o.At) || Math.Abs(o.At - at) <= 1)) continue;
+                            double t, u;
+                            if (Meet(a, stop, o.A, o.B, out t, out u) || Geo.SegDist(tip, o.A, o.B) < 0.15f) { met = true; break; }
+                        }
+                        run += len;
+                    }
+                    if (met) continue;
+                    float near = float.MaxValue;
+                    PointF to = tip;
+                    foreach (Seg o in segs)
+                    {
+                        if (o.Line == l && own.Contains(o.At)) continue;
+                        float d = Geo.SegDist(tip, o.A, o.B);
+                        if (d < near && d <= gap * 2 + (width + o.Width) / 2f + 0.5f)
+                        {
+                            near = d; to = Geo.Project(tip, o.A, o.B);
+                            // a corner within reach: join to the corner itself
+                            if (Geo.Dist(tip, o.A) <= d + 1.5f) to = o.A;
+                            else if (Geo.Dist(tip, o.B) <= d + 1.5f) to = o.B;
+                        }
+                    }
+                    if (near < float.MaxValue && Geo.Dist(tip, to) > 0.01f)
+                        add.Add(new Seg { A = tip, B = to, Width = width, Line = -1, At = 0 });
+                }
+            }
+            return add;
+        }
+
+        /// <summary>Whether a-b and c-d cross or touch end-on, and how far along each (0 to 1).</summary>
+        static bool Meet(PointF a, PointF b, PointF c, PointF d, out double t, out double u)
+        {
+            double rx = (double)b.X - a.X, ry = (double)b.Y - a.Y, sx = (double)d.X - c.X, sy = (double)d.Y - c.Y;
+            double cross = rx * sy - ry * sx, lr = Math.Sqrt(rx * rx + ry * ry), ls = Math.Sqrt(sx * sx + sy * sy);
+            t = u = 0;
+            if (lr == 0 || ls == 0 || Math.Abs(cross) < 1e-7 * lr * ls) return false;      // parallel: the ends decide
+            t = ((c.X - (double)a.X) * sy - (c.Y - (double)a.Y) * sx) / cross;
+            u = ((c.X - (double)a.X) * ry - (c.Y - (double)a.Y) * rx) / cross;
+            double et = 0.1 / lr, eu = 0.1 / ls;
+            if (t < -et || t > 1 + et || u < -eu || u > 1 + eu) return false;
+            t = Math.Max(0, Math.Min(1, t)); u = Math.Max(0, Math.Min(1, u));
+            return true;
+        }
+
+        /// <summary>Marks on every piece where others cross it or end on it. False: far too many crossings.</summary>
+        static bool Cut(List<Seg> segs)
+        {
+            List<Seg> by = new List<Seg>(segs);
+            by.Sort((a, b) => a.Left.CompareTo(b.Left));
+            int cuts = 0;
+            for (int i = 0; i < by.Count; i++)
+            {
+                Seg a = by[i];
+                float right = a.Right + 0.2f;
+                for (int j = i + 1; j < by.Count && by[j].Left <= right; j++)
+                {
+                    Seg b = by[j];
+                    if (b.Top > a.Bottom + 0.2f || b.Bottom < a.Top - 0.2f) continue;
+                    double t, u;
+                    if (Meet(a.A, a.B, b.A, b.B, out t, out u)) { a.Cuts.Add(t); b.Cuts.Add(u); cuts += 2; }
+                    cuts += OnPiece(a, b.A) + OnPiece(a, b.B) + OnPiece(b, a.A) + OnPiece(b, a.B);
+                    if (cuts > 400000) return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>An end of another piece lying on this one (also where two lines run along each other).</summary>
+        static int OnPiece(Seg s, PointF p)
+        {
+            if (Geo.SegDist(p, s.A, s.B) >= 0.15f || Geo.Dist(p, s.A) < 0.15f || Geo.Dist(p, s.B) < 0.15f) return 0;
+            s.Cuts.Add(Geo.Dist(s.A, Geo.Project(p, s.A, s.B)) / Geo.Dist(s.A, s.B));
+            return 1;
+        }
+
+        /// <summary>Removes the edges that are the only way between two points: loose ends, and links from one
+        /// outline to another. They divide no area.</summary>
+        static void DropBridges(List<List<int>> next)
+        {
+            int n = next.Count, clock = 0;
+            int[] seen = new int[n], low = new int[n], from = new int[n], at = new int[n];
+            List<KeyValuePair<int, int>> drop = new List<KeyValuePair<int, int>>();
+            Stack<int> st = new Stack<int>();
+            for (int root = 0; root < n; root++)
+            {
+                if (seen[root] != 0) continue;
+                seen[root] = low[root] = ++clock; from[root] = -1;
+                st.Push(root);
+                while (st.Count > 0)
+                {
+                    int u = st.Peek();
+                    if (at[u] < next[u].Count)
+                    {
+                        int v = next[u][at[u]++];
+                        if (seen[v] == 0) { seen[v] = low[v] = ++clock; from[v] = u; st.Push(v); }
+                        else if (v != from[u]) low[u] = Math.Min(low[u], seen[v]);
+                    }
+                    else
+                    {
+                        st.Pop();
+                        int p = from[u];
+                        if (p < 0) continue;
+                        low[p] = Math.Min(low[p], low[u]);
+                        if (low[u] > seen[p]) drop.Add(new KeyValuePair<int, int>(p, u));
+                    }
+                }
+            }
+            foreach (KeyValuePair<int, int> e in drop) { next[e.Key].Remove(e.Value); next[e.Value].Remove(e.Key); }
+        }
+
+        /// <summary>The corners only: points in the middle of a straight run go.</summary>
+        static List<PointF> Clean(List<PointF> loop)
+        {
+            List<PointF> o = new List<PointF>(loop);
+            for (bool cut = true; cut && o.Count > 3; )
+            {
+                cut = false;
+                for (int i = 0; i < o.Count && o.Count > 3; i++)
+                {
+                    PointF a = o[(i + o.Count - 1) % o.Count], b = o[(i + 1) % o.Count];
+                    if (Geo.SegDist(o[i], a, b) < 0.05f) { o.RemoveAt(i); cut = true; }
+                }
+            }
+            return o;
         }
 
         /// <summary>

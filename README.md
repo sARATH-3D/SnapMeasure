@@ -1,11 +1,11 @@
 <img src="docs/icon.png" alt="SnapMeasure icon: a capture frame with an amber measuring arrow" width="96" align="right">
 
-# SnapMeasure 1.4.1
+# SnapMeasure 1.4.2
 
 Portable screenshot and **quantity takeoff** tool: **dimensions, areas with cut-outs, path lengths, perimeters, angles, counts,
 drawing scales**, mark-up (clouds, stamps, text markup, notes), **PDF pages**, **OCR** and **scrolling capture**,
 plus an **on-screen ruler and protractor** that float over any app. In English and 한국어 (Korean).
-One file, `SnapMeasure.exe` (~520 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
+One file, `SnapMeasure.exe` (~700 KB). No installer, no admin rights. It runs on any Windows 10/11 PC
 (it uses the .NET Framework 4.x, the PDF reader and the text recognition that are built into Windows).
 **Download:** install it from the [Microsoft Store](https://apps.microsoft.com/detail/9pgk12tn6wqj?mode=direct) (signed, updates
 itself, no "Windows protected your PC" warning), take `SnapMeasure.exe` (or the portable zip) from the [Releases](../../releases)
@@ -20,11 +20,26 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Measure anything you can see on screen:** a PDF in any viewer, a drawing in AutoCAD or Revit, a web map, a photo. No import, no file conversion.
 * **A real takeoff, not just a ruler:** calibrated scales (1:50 on A1, or from a known length), areas with cut-outs (gross, openings, net),
   lengths, perimeters, angles, radius and arc length, counts. **Every value goes to Excel in one click.**
-* **Free and light:** no subscription, no account, no ads, no telemetry. One ~520 KB exe that runs without installing,
+* **Free and light:** no subscription, no account, no ads, no telemetry. One ~700 KB exe that runs without installing,
   or the signed Microsoft Store version that updates itself. Paid takeoff software is great for full projects; SnapMeasure is
   for the quick check, the markup for a colleague, and the takeoff from a screenshot.
 
 **See it in 40 seconds:** [the trailer](docs/SnapMeasure-trailer.mp4) · **New to SnapMeasure?** Read the [Quick user guide](docs/USER-GUIDE.md).
+
+**What's new in 1.4.2:**
+
+*If you update from 1.4.1:* `Z` and `Shift+Z` have swapped (`Z` = zoom to area, `Shift+Z` = stamp). `Ctrl+Minus` now removes only
+space you added, never part of the picture. The appearance choice *Automatic* is now *Same as Windows*.
+
+* **Fill** (`Shift+F`): click inside an outline drawn with your shapes and lines to fill it. Small gaps are closed; lines in the picture itself don't count.
+* **Symbol marker** (`Shift+M`): any symbol or short text, such as Ø, ★ or "Type B-3". It doesn't count up.
+* **Search tools** (`Ctrl+K`): type in the box in the top bar to pick any tool or command, like "cloud" or "grayscale"; the tool is selected and shown in the tool column.
+* **Find and replace** (`Ctrl+F`, replace `Ctrl+H`): annotation text, labels, values and, if you tick *Picture text*, words in the picture itself (OCR). Results are on two tabs: *Texts* (picture words included) and *Measurements & counts*.
+* **Symbol picker** while typing text; text boxes can sit **Top, Middle or Bottom**; dimension values on, above or below the line.
+* **Coordinates origin** can have its own values, for example 1250 ; 300 to match a drawing grid.
+* **Remove background** (Adjust menu); `Ctrl+I` invert colours, `Ctrl+G` grayscale.
+* Freehand ends **snap** onto shapes and onto their own start; the highlight box has no border by default.
+* A pass over every window: Find in dark mode, clearer wording, larger tick boxes at large text sizes.
 
 **What's new in 1.4.1:**
 * **PDF pages at the right size:** a PDF page now opens at exactly the sharpness you pick (it could come out larger or smaller on some
@@ -55,7 +70,8 @@ Free and open source under the [MIT licence](LICENSE). Made by **sARATH**.
 * **Every Focus mode has a border** (thin by default) in the line colour; Magnify keeps its magenta one.
 * **Radius → Show**: Diameter, Radius, Arc length, the pairs, and **All** (R, Ø and arc length).
 * **Open the clipboard picture in the editor** from anywhere: `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` (change them in Settings → General).
-  Clicking the tray icon does the same: a new editor with the clipboard picture, or a blank canvas. The clipboard is only read, never changed.
+  With no picture on the clipboard, a message says so. The clipboard is only read, never changed.
+  A click on the tray icon opened a new editor with the clipboard picture, or a blank canvas (since 1.4 it captures a region).
   The tray menu is plainer: no key texts (they are in Settings → General and About).
 * Top bar: *Keep inside*, *Rulers* and *Add-ons* sit on the right with *Panel*, *Pin* and *Settings*; the style row no longer
   jumps sideways when you pick another tool. The style row is always **one line**: on a narrow window the quick colours fold
@@ -84,7 +100,7 @@ pan and zoom on large drawings, a Stop button for scrolling capture and hollow p
   perimeter only (P1, P2 …); cut-outs still work. `W` stays for open lengths. Files from 1.2 open unchanged.
 * **Match properties** (`Ctrl+Shift+M`, brush under TOOLS): select a shape, then click other shapes to give them its colours,
   opacity, line width and style, text size and style, line ends and shadow (never its text or points). `Esc` or right-click ends it.
-* **Zoom to area** (`Shift+Z`, button next to *Fit*): drag a box and the view zooms to it.
+* **Zoom to area** (`Shift+Z` then, `Z` since 1.4.2; button next to *Fit*): drag a box and the view zooms to it.
 * **Add-ons ▾** in the top bar opens the on-screen ruler and protractor straight from the editor.
 * **Side scrolling:** the tilt / thumb wheel (e.g. Logitech MX) and `Shift`+wheel pan left and right.
 * **Arc** (`Shift+L`): a drawing tool – start, a point on the arc, end.
@@ -164,7 +180,7 @@ pan and zoom on large drawings, a Stop button for scrolling capture and hollow p
 * **Mark-up:** 10 line ends for arrows, lines and dimensions (right-click), **revision cloud**, **stamps**
   (Approved / Revise / For information / Rejected / custom, with date), **text markup** (underline, strike out, highlight –
   snaps to the words), and **notes** that are shown in the editor but never printed.
-* **OCR:** copy text out of a picture or straight off the screen (`Ctrl+Shift+6`).
+* **OCR:** copy text out of a picture or straight off the screen (`Ctrl+Shift+T` or `Ctrl+Shift+6`).
 * **Scrolling capture** of long pages (`Ctrl+Shift+5`).
 * **Check for updates** in the About window (only when you click it).
 * Fixes from 1.0.1: right-sized icons, text and menus on every monitor (mixed 100 % / 200 % screens);
@@ -194,8 +210,10 @@ In the Store version Windows asks once; you can also switch it in *Windows Setti
 | Screen under mouse | `Ctrl+PrtSc` or `Ctrl+Shift+3` |
 | Last region again | `Shift+PrtSc` or `Ctrl+Shift+4` |
 | **Scrolling capture** (long page): pick the area, SnapMeasure scrolls it and joins the pieces. Move the mouse to pause; **Stop** (bar under the area) or `Esc` finishes | `Ctrl+Shift+5` |
-| **Capture text (OCR)**: pick an area, its text goes to the clipboard | `Ctrl+Shift+6` |
-| **Open the clipboard picture** in a new editor (blank canvas if there is none) | `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` |
+| **Capture text (OCR)**: pick an area, its text goes to the clipboard | `Ctrl+Shift+T` or `Ctrl+Shift+6` |
+| **Open the clipboard picture** in a new editor (a message if there is none) | `Ctrl+Shift+PrtSc` or `Ctrl+Shift+7` |
+
+While picking a region: the arrow keys move the pointer 1 px (`Shift` = 10 px), `Enter` takes all screens, `Esc` or right-click cancels.
 
 These are the default keys. Choose your own in **Settings → General** (click a box and press the keys; two per capture).
 
@@ -242,7 +260,11 @@ Open them from the tray menu or **Add-ons ▾ → On-screen ruler / On-screen pr
 | Arc | `Shift+L` | 3 points: start, a point on the arc, end |
 | Text | `T` | Click and type, or **drag a box** (the text wraps; the **8 handles** resize the box). Bold, italic, underline, strike out and alignment on the style bar; **line width = frame** (0 = none). `Esc` keeps the text. Every text is also listed under **Texts** on the right, where you can edit it. |
 | Speech bubble | `S` | Drag or click, then type. Bold / italic / alignment as for Text. Drag the yellow handle to point the tail. |
-| Stamp | `Z` | Click to place APPROVED, REVISE, FOR INFORMATION, REJECTED, DRAFT, FINAL, FOR COMMENT, FOR CONSTRUCTION, NOT APPROVED, CHECKED, AS BUILT, CONFIDENTIAL, VOID, EXPIRED, SOLD, TOP SECRET … or your own words, with the date in the format you pick on the style bar. **Double-click and type straight onto it.** |
+| Stamp | `Shift+Z` | Click to place APPROVED, REVISE, FOR INFORMATION, REJECTED, DRAFT, FINAL, FOR COMMENT, FOR CONSTRUCTION, NOT APPROVED, CHECKED, AS BUILT, CONFIDENTIAL, VOID, EXPIRED, SOLD, TOP SECRET … or your own words, with the date in the format you pick on the style bar. **Double-click and type straight onto it.** |
+| Symbol marker | `Shift+M` | Click, then type or pick a symbol or short text (up to 12 characters). A circle for 1–2 characters, a pill for more. It doesn't count up. |
+| Fill | `Shift+F` | Click inside an outline drawn with your shapes and lines to fill it, on or off the picture. Only annotations bound the fill; lines in the picture don't count. Cut-outs stay open, a revision cloud is filled to its scallops, loose line ends are ignored and small gaps are closed. |
+| Search tools and commands | `Ctrl+K` | Type part of a name in the top-bar box, pick with `↑` `↓` and `Enter`. The last row searches the drawing's text instead. In a narrow window the box is behind the magnifier button. |
+| Find and replace | `Ctrl+F`, `Ctrl+H` | `Ctrl+F` finds, `Ctrl+H` opens with Replace unfolded. Tick **Match case**, **Whole words** or **Picture text** (words inside the picture, by OCR); matches are on two tabs, *Texts* (picture words included) and *Measurements & counts*; `<` `>` step through them; *More options* has accents, and labels and values. **Replace all** is one undo step. |
 | Note | `O` | A sticky note shown in the editor only – **left out of saved, copied and pinned pictures** (listed in the Excel export) |
 | Copy text (OCR) | `Shift+T` | Drag over text to copy it; a click copies all the text. The **Copy text** button copies the whole picture. |
 | Pixelate | `B` | Hide sensitive information |
@@ -259,7 +281,7 @@ including the marker counts and the notes.
 **Markers:** *Start at* (style bar) continues a series. Changing the colour, size or shadow of one marker – on the style bar,
 by dragging its corner or with *Match properties* – changes **every marker in that series**, and new markers look the same.
 
-**Style bar** (right above the canvas): line colour, opacity and width; fill colour and opacity; text size; B / I / alignment;
+**Style bar** (right above the canvas): line colour, opacity and width; fill colour and opacity; text size; B / I; alignment buttons (left / centre / right, and top / middle / bottom for text boxes);
 start / end line ends; highlight, text-markup and stamp type; marker *Start at*; shadow; and a quick palette.
 In the palette, click a colour for the line and right-click it for the fill.
 **View ▾ → Scale & measurements panel** (or `F4`) shows or hides the panel on the right: scale, measurements & counts, and texts.
@@ -300,8 +322,8 @@ Guides are magenta. Drag a guide to move it, or drag it back onto the ruler to d
 
 ## Image menus and view
 * **Rotate:** right / left 90°, mirror horizontal / vertical. Annotations, the crop and measurements follow.
-* **Effects:** border, drop shadow, torn edge, grayscale, invert (`Ctrl+Z` to undo).
-* `Home` (or `0`, or double-click the middle mouse button) fits and centres the image. `Ctrl+wheel` zooms; `Space`+drag pans; `Shift+Z` zooms to a box; `Shift`+wheel or the side wheel scrolls sideways.
+* **Effects:** border, drop shadow, torn edge, grayscale (`Ctrl+G`), invert (`Ctrl+I`) and **Remove background** (clears the plain colour at the edges); `Ctrl+Z` to undo.
+* `Home` (or `0`, or double-click the middle mouse button) fits and centres the image. `Ctrl+wheel` zooms; `Space`+drag pans; `Z` zooms to a box; `Shift`+wheel or the side wheel scrolls sideways.
 
 **Scale:** set the unit and *1 pixel = …* in the right panel, calibrate from a known length (`K`), or use
 **Drawing scale…**: 1:N with the picture's resolution (e.g. 1:100 at 300 dpi), the sheet it shows (e.g. 1:50 on A1 landscape),
@@ -346,7 +368,7 @@ Not included (yet): upload plugins.
 ## Build from source
 Run `build.cmd`. It uses `csc.exe` from `C:\Windows\Microsoft.NET\Framework64\v4.0.30319` and the Windows metadata in
 `C:\Windows\System32\WinMetadata`, so nothing needs installing.
-`SnapMeasure.exe --selftest <folder>` runs the 142 built-in checks.
+`SnapMeasure.exe --selftest <folder>` runs the 218 built-in checks.
 The icon is drawn in code (`AppIcon.Render` in `src/App.cs`). After changing it, delete `app.ico` and run `build.cmd`:
 it writes a new multi-size `app.ico` (16–256 px) and builds it into the exe. `docs/icon.png` is the 256 px picture used above.
 

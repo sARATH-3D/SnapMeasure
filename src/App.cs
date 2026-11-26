@@ -157,6 +157,228 @@ namespace SnapMeasure
 
         /// <summary>Checks for the 1.2 features: coordinates, line styles, cloud callouts, highlight shapes / pixelate,
         /// text boxes and frames, open / closed perimeter, freehand arrows, saving captures without the editor.</summary>
+        /// <summary>1.4.2: fill is bounded by annotations only, with few corners; texts and measurements apart in Find.</summary>
+        static void V142Fill(Action<string, string, string> check)
+        {
+            Func<ShapeKind, float[], Shape> make = (kind, xy) =>
+            {
+                Shape s = new Shape(); s.Kind = kind; s.Width = 3;
+                for (int i = 0; i + 1 < xy.Length; i += 2) s.Pts.Add(new PointF(xy[i], xy[i + 1]));
+                return s;
+            };
+            using (Bitmap pic = Canvas.BlankImage(600, 400, Color.White))
+            {
+                using (Graphics g = Graphics.FromImage(pic)) using (Pen wall = new Pen(Color.Black, 3)) g.DrawLine(wall, 200, 0, 200, 400);
+                using (Canvas cv = new Canvas())
+                {
+                    cv.Image = Effects.To32(pic);
+                    bool nothing = cv.FillAt(new PointF(100, 100));
+                    cv.Shapes.Add(make(ShapeKind.Rect, new float[] { 100, 100, 300, 300 }));
+                    bool ok = cv.FillAt(new PointF(150, 150));
+                    Shape f = cv.Shapes[0];
+                    check("Fill: only annotations bound it", nothing + "|" + ok + "|" + f.Pts.Count + "|" + Math.Round(Math.Abs(Geo.SignedArea(f.Pts))), "False|True|4|40000");
+                    check("Fill: a small fill keeps its corner handles", ShapeOps.Handles(f, 20f).FindAll(h => h.Kind == HKind.Point).Count.ToString(), "4");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    // four separate lines, overshooting at the corners
+                    cv.Image = Effects.To32(pic);
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 80, 100, 320, 100 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 300, 80, 300, 320 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 320, 300, 80, 300 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 100, 320, 100, 80 }));
+                    bool ok = cv.FillAt(new PointF(200, 200));
+                    Shape f = cv.Shapes[0];
+                    double a = ok ? Math.Abs(Geo.SignedArea(f.Pts)) : 0;
+                    check("Fill: lines give clean corners", ok + "|" + f.Pts.Count + "|" + (Math.Abs(a - 40000) < 800), "True|4|True");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    // slanted lines, and a loose stub into the area: no staircase, no spike
+                    cv.Image = Effects.To32(pic);
+                    cv.Shapes.Add(make(ShapeKind.Polygon, new float[] { 100, 300, 250, 60, 460, 340 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 90, 200, 200, 220 }));
+                    bool ok = cv.FillAt(new PointF(300, 260));
+                    check("Fill: slanted edges stay straight", ok + "|" + (cv.Shapes[0].Pts.Count <= 8), "True|True");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    // no extra point beside a corner or half way along an edge
+                    cv.Image = Effects.To32(pic);
+                    cv.Shapes.Add(make(ShapeKind.Polygon, new float[] { 120, 420, 330, 80, 560, 440 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 100, 260, 300, 300 }));
+                    bool ok = cv.FillAt(new PointF(380, 360));
+                    check("Fill: a triangle has three corners", ok + "|" + cv.Shapes[0].Pts.Count, "True|3");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    cv.Image = Effects.To32(pic);
+                    cv.Shapes.Add(make(ShapeKind.Ellipse, new float[] { 100, 100, 300, 300 }));
+                    bool ok = cv.FillAt(new PointF(200, 200));
+                    Shape f = cv.Shapes[0];
+                    double a = ok ? Math.Abs(Geo.SignedArea(f.Pts)) : 0;
+                    check("Fill: ellipse, no corner handles", ok + "|" + (Math.Abs(a / (Math.PI * 10000) - 1) < 0.02) + "|" + ShapeOps.Handles(f, 20f).FindAll(h => h.Kind == HKind.Point).Count, "True|True|0");
+                }
+            }
+            using (Bitmap pic = Canvas.BlankImage(600, 400, Color.White))
+            {
+                using (Canvas cv = new Canvas())
+                {
+                    // a polygon with a cut-out: the ring keeps the opening, the opening fills on its own
+                    cv.Image = Effects.To32(pic);
+                    Shape outer = make(ShapeKind.Polygon, new float[] { 100, 100, 400, 100, 400, 350, 100, 350 });
+                    outer.Holes = new List<List<PointF>> { new List<PointF> { new PointF(200, 180), new PointF(300, 180), new PointF(300, 260), new PointF(200, 260) } };
+                    cv.Shapes.Add(outer);
+                    bool ring = cv.FillAt(new PointF(150, 150));
+                    Shape f = cv.Shapes[0];
+                    string a = ring + "|" + (f.Holes == null ? 0 : f.Holes.Count) + "|" + Math.Round(Math.Abs(Geo.SignedArea(f.Pts)));
+                    bool open = cv.FillAt(new PointF(250, 220));
+                    Shape h = cv.Shapes.FindAll(x => Canvas.IsFillShape(x) && x != f)[0];
+                    check("Fill keeps cut-outs open", a + "|" + open + "|" + Math.Round(Math.Abs(Geo.SignedArea(h.Pts))), "True|1|75000|True|8000");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    // lines poking into the area from outside, two of them close together: the outline ignores the loose ends
+                    cv.Image = Effects.To32(pic);
+                    cv.Shapes.Add(make(ShapeKind.Rect, new float[] { 100, 100, 300, 300 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 360, 150, 200, 180 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 360, 190, 215, 186 }));
+                    cv.Shapes.Add(make(ShapeKind.Line, new float[] { 150, 360, 180, 270 }));
+                    bool ok = cv.FillAt(new PointF(150, 200));
+                    Shape f = cv.Shapes[0];
+                    check("Fill: loose ends leave no jagged edge", ok + "|" + f.Pts.Count + "|" + Math.Round(Math.Abs(Geo.SignedArea(f.Pts))), "True|4|40000");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    // a sheet full of revision clouds still fills
+                    cv.Image = Effects.To32(pic);
+                    for (int i = 0; i < 150; i++) cv.Shapes.Add(make(ShapeKind.Cloud, new float[] { (i % 10) * 420, (i / 10) * 300, (i % 10) * 420 + 300, (i / 10) * 300 + 200 }));
+                    System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+                    bool ok = cv.FillAt(new PointF(150, 100));
+                    check("Fill on a sheet of 150 clouds", ok + "|" + (sw.ElapsedMilliseconds < 3000), "True|True");
+                }
+                using (Canvas cv = new Canvas())
+                {
+                    // a revision cloud: the fill follows the scallops, and each can be picked without the other
+                    cv.Image = Effects.To32(pic);
+                    Shape cloud = make(ShapeKind.Cloud, new float[] { 100, 100, 400, 250 });
+                    cv.Shapes.Add(cloud);
+                    bool ok = cv.FillAt(new PointF(250, 170));
+                    Shape f = cv.Shapes[0];
+                    check("Fill follows a cloud's scallops", ok + "|" + (Math.Abs(Geo.SignedArea(f.Pts)) > 300 * 150 * 1.05) + "|" + (f.Pts.Count > 40), "True|True|True");
+                    List<PointF> o = Renderer.CloudOutline(cloud);
+                    check("Cloud and its fill picked apart", ShapeOps.Hit(cloud, new PointF(250, 170), 4f) + "|" + ShapeOps.Hit(f, new PointF(250, 170), 4f) + "|" + ShapeOps.Hit(cloud, o[5], 4f), "False|True|True");
+                }
+            }
+            using (Bitmap pic = Canvas.BlankImage(400, 300, Color.White))
+            using (EditorForm ed = new EditorForm(pic, "fill name"))
+            {
+                Canvas cv = ed.CanvasControl;
+                cv.Shapes.Add(make(ShapeKind.Rect, new float[] { 50, 50, 200, 200 }));
+                cv.FillAt(new PointF(100, 100));
+                cv.CurrentTool = Tool.Select;
+                cv.SelectShape(cv.Shapes[0]);
+                ed.RefreshAll();
+                check("A selected fill is called Fill", ed.StyleHeader, Lang.T("Fill") + " " + Lang.T("(selected)"));
+                string was = ed.Lineless.ToString();
+                cv.Shapes.Add(make(ShapeKind.Polygon, new float[] { 220, 50, 380, 50, 300, 200 }));
+                cv.SelectShape(cv.Shapes[cv.Shapes.Count - 1]);
+                ed.RefreshAll();
+                check("A fill offers no line or Closed, a polygon does", was + "|" + ed.Lineless, "True|False");
+                cv.SelectShape(null);
+                ed.RefreshAll();
+                check("Colour picker usable with nothing selected", ed.PickerReady.ToString(), "True");
+            }
+            using (Bitmap pic = Canvas.BlankImage(400, 300, Color.White))
+            using (EditorForm ed = new EditorForm(pic, "find"))
+            {
+                Canvas cv = ed.CanvasControl;
+                Shape num = cv.Styles[Tool.Counter].Clone(); num.Pts.Clear(); num.Pts.Add(new PointF(50, 50));
+                Shape sym = cv.Styles[Tool.Symbol].Clone(); sym.Pts.Clear(); sym.Pts.Add(new PointF(90, 50)); sym.Text = "1";
+                Shape txt = cv.Styles[Tool.Text].Clone(); txt.Pts.Clear(); txt.Pts.Add(new PointF(50, 100)); txt.Pts.Add(new PointF(200, 130)); txt.Text = "wall 1";
+                cv.Shapes.Add(num); cv.Shapes.Add(sym); cv.Shapes.Add(txt);
+                string tabs = " " + Lang.T("Texts") + " (2) " + Lang.T("Measurements & counts") + " (1)|";
+                check("Find: the Texts tab", ed.FindTab("1", null), "texts" + tabs + "1  Symbol marker|Text – wall 1");
+                check("Find: the Measurements & counts tab", ed.FindTab("1", true), "counts" + tabs + "1  Number marker");
+                check("Find: never an empty tab beside matches", ed.FindTab("wall", null).Split(' ')[0], "texts");
+                string said = ed.ReplaceOnPictureRow("wall", "door");
+                check("Find goes back to its width", ed.FindWidths("wall"), "True|True");
+                check("Replace leaves other texts alone when a picture word is chosen", said + "|" + txt.Text, Lang.T("Only text you typed can be replaced") + "|wall 1");
+                check("Replacing the last text stays on Texts, nothing to zoom to", ed.ReplaceThen("1", "9", false), "texts 0 -1");
+                sym.Text = "1"; txt.Text = "wall 1";
+                ed.CloseFind();                                         // so that it searches the new texts
+                check("Replace all stays on the Texts tab", ed.ReplaceThen("1", "9", true) + "|" + sym.Text + "|" + txt.Text, "texts 0 -1|9|wall 9");
+                ed.CloseFind();
+                string wasLook = Settings.Get("Theme", "Auto");
+                Settings.Set("Theme", "Light"); Theme.Reset();
+                using (EditorForm light = new EditorForm(Canvas.BlankImage(200, 150, Color.White), "light"))
+                {
+                    string before = light.SearchFill().Name;
+                    Settings.Set("Theme", "Dark"); Theme.Reset();
+                    check("An open light window keeps its light search box", light.SearchFill().Name, before);
+                }
+                Settings.Set("Theme", wasLook); Theme.Reset();
+                string wasPick = Settings.Get("PickedColor", null), wasExt = Settings.Get("ExtendColour", null);
+                Settings.Set("ExtendColour", "0");
+                ed.RememberPicked(Color.FromArgb(51, 102, 153));
+                ed.StepCanvas(true);
+                Color corner = ((Bitmap)cv.Image).GetPixel(0, 0);
+                check("Ctrl+Plus adds canvas in the picked colour", corner.R + "," + corner.G + "," + corner.B, "51,102,153");
+                Settings.Set("PickedColor", wasPick ?? "-1"); Settings.Set("ExtendColour", wasExt ?? "0");
+            }
+            using (Bitmap shot = Canvas.BlankImage(800, 600, Color.White))
+            using (RegionSelector rs = new RegionSelector(shot, new Rectangle(0, 0, 800, 600), new List<Rectangle>()))
+            {
+                Rectangle at = rs.HintArea;
+                string was = rs.HintShown.ToString();
+                rs.PointerAt(new Point(at.X + at.Width / 2, at.Bottom + 300));
+                was += "|" + rs.HintShown;
+                rs.PointerAt(new Point(at.X + at.Width / 2, at.Bottom + 10));
+                check("Capture hint leaves as the pointer comes near", was + "|" + rs.HintShown, "True|True|False");
+            }
+        }
+
+        /// <summary>1.4.2: the search box for tools and commands, and the Fill icon in its group's colour.</summary>
+        static void V142Search(Action<string, string, string> check)
+        {
+            using (Bitmap icon = Icons.Make(Tool.Fill, 64))
+            {
+                int red = 0, blue = 0;
+                for (int y = 0; y < icon.Height; y++)
+                    for (int x = 0; x < icon.Width; x++)
+                    {
+                        Color c = icon.GetPixel(x, y);
+                        if (c.A < 200) continue;
+                        if (c.R > c.B + 80 && c.R > c.G + 80) red++;
+                        if (c.B > c.R + 60) blue++;
+                    }
+                check("Fill icon in the draw colour", (red > 200) + "|" + blue, "True|0");
+            }
+            check("Shortcut read from tooltips", ToolSearch.KeyOf("Rectangle (R)") + "|" + ToolSearch.KeyOf("Fill: click … (Shift+F)") + "|" +
+                  ToolSearch.KeyOf("Focus: box (H, B = pixelate)") + "|" + ToolSearch.KeyOf("Ctrl+G") + "|" + ToolSearch.KeyOf("Open an image (or a page)"),
+                  "R|Shift+F|H|Ctrl+G|");
+            using (Bitmap pic = Canvas.BlankImage(400, 300, Color.White))
+            using (EditorForm f = new EditorForm(pic, "search"))
+            {
+                f.StartPosition = FormStartPosition.Manual; f.Location = new Point(0, -20000); f.Size = new Size(1700, 900); f.ShowInTaskbar = false;
+                f.Show(); Application.DoEvents();
+                List<ToolSearch.Entry> all = f.SearchEntries();
+                Func<string, string> first = q => { List<ToolSearch.Entry> m = ToolSearch.Match(all, q, 9); return m.Count > 0 ? m[0].Name : "-"; };
+                check("Search finds tools", first("clo") + "|" + first("rect") + "|" + first("bucket") + "|" + first("rev cl") + "|" + first("qqq"),
+                      "Revision cloud|Rectangle|Fill|Revision cloud|-");
+                check("Search finds menu commands", first("gray") + "|" + first("rotate right") + "|" + first("save as") + "|" + first("replace"),
+                      "Grayscale|Rotate right 90°|Save as|Find and replace");
+                check("Search leaves out what is switched off", all.Exists(x => x.Name == "Undo") + "|" + all.Exists(x => x.Name == "Find"), "False|False");
+                string got = f.TrySearch("clo");
+                check("Search picks the tool", got + "|" + f.CanvasControl.CurrentTool, "Revision cloud|Cloud");
+                f.CanvasControl.CurrentTool = Tool.Select;
+                f.Size = new Size(f.MinimumSize.Width, f.Height); Application.DoEvents();
+                got = f.TrySearch("ellipse");
+                check("Search in a narrow window", got + "|" + f.CanvasControl.CurrentTool, "Ellipse|Ellipse");
+                f.Hide();
+            }
+        }
+
         /// <summary>Checks for 1.3: highlighter pen, text frame = line width, 8-handle text box, text list edits, capture key names.</summary>
         static void V13(Canvas cv, string dir, Action<string, string, string> check)
         {
@@ -371,6 +593,8 @@ namespace SnapMeasure
                 check("Radius label: all", Renderer.RadiusText(7, ra, 10f, 31.4159).Replace("\n", " | "),
                       Renderer.RadiusText(1, ra, 10f, 0) + " | " + Renderer.RadiusText(2, ra, 10f, 0) + " | " + Renderer.RadiusText(6, ra, 10f, 31.4159));
                 int ci = Array.IndexOf(Hotkeys.Ids, "Clipboard");
+                int ti = Array.IndexOf(Hotkeys.Ids, "Text");
+                check("Capture text keys", Hotkeys.Text(Hotkeys.Default(ti, 0)) + "|" + Hotkeys.Text(Hotkeys.Default(ti, 1)), "Ctrl+Shift+T|Ctrl+Shift+6");
                 check("Clipboard key", ci + "|" + Hotkeys.Text(Hotkeys.Default(ci, 1)) + "|" + Hotkeys.Labels.Length, "6|Ctrl+Shift+7|7");
             }
 
@@ -717,6 +941,122 @@ namespace SnapMeasure
                     bool p1 = Canvas.ParseXY("1250 ; 300", out ox, out oy), p2 = Canvas.ParseXY("12.5 3", out px2, out py2), p3 = Canvas.ParseXY("abc", out px2, out py2);
                     check("Origin coordinates", so.CoordX(new PointF(110, 90), new PointF(100, 100)) + "|" + so.CoordY(new PointF(110, 90), new PointF(100, 100)) + "|" + p1 + "|" + ox + "," + oy + "|" + p2 + "|" + p3,
                           "1260|310|True|1250,300|True|False");
+                    // 1.4.2 review fixes
+                    {
+                        // dimension label position is its own value: text alignment does not move it
+                        Shape d1 = new Shape(); d1.Kind = ShapeKind.Dimension; d1.Align = 2; d1.Pts.Add(new PointF(0, 0)); d1.Pts.Add(new PointF(50, 0));
+                        Shape d2 = d1.Clone(); d2.Align = 0; d2.LabelAt = 2;
+                        List<Shape> db = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { d1, d2 }));
+                        check("Dimension label position", db[0].LabelAt + "|" + db[1].LabelAt + "|" + d2.Clone().LabelAt, "0|2|2");
+                        // a turned rectangle bounds a fill; filling it again changes the colour, no second fill
+                        using (Bitmap rimg = Canvas.BlankImage(300, 300, Color.White))
+                        using (Canvas rcv = new Canvas())
+                        {
+                            rcv.Image = Effects.To32(rimg);
+                            Shape rr = new Shape(); rr.Kind = ShapeKind.Rect; rr.Width = 2; rr.Angle = 45; rr.Pts.Add(new PointF(100, 100)); rr.Pts.Add(new PointF(200, 200));
+                            rcv.Shapes.Add(rr);
+                            bool okR = rcv.FillAt(new PointF(150, 88));
+                            double aR = okR ? Math.Abs(Geo.SignedArea(rcv.Shapes[0].Pts)) : 0;
+                            Color wasFill = rcv.Styles[Tool.Fill].Fill;
+                            rcv.Styles[Tool.Fill].Fill = Color.Red;
+                            bool again = rcv.FillAt(new PointF(150, 150));
+                            rcv.Styles[Tool.Fill].Fill = wasFill;
+                            check("Fill turned shape, recolour", okR + "|" + (aR > 9000 && aR < 10600) + "|" + again + "|" + rcv.Shapes.Count + "|" + (rcv.Shapes[0].Fill.ToArgb() == Color.Red.ToArgb()), "True|True|True|2|True");
+                        }
+                        // remove background judges the cropped part, not the whole picture
+                        using (Bitmap cimg = Canvas.BlankImage(600, 100, Color.White))
+                        using (Canvas ccv = new Canvas())
+                        {
+                            ccv.Image = Effects.To32(cimg);
+                            using (Graphics g = Graphics.FromImage(ccv.Image))
+                            {
+                                for (int x = 100; x < 600; x++) using (Pen p = new Pen(Color.FromArgb(x % 256, x * 7 % 256, 40))) g.DrawLine(p, x, 0, x, 99);
+                                g.FillRectangle(Brushes.Black, 30, 30, 40, 40);
+                            }
+                            int whole = ccv.RemoveBackground();
+                            bool noUndo = !ccv.CanUndo;
+                            ccv.CropRect = new Rectangle(0, 0, 100, 100);
+                            int part = ccv.RemoveBackground();
+                            check("Remove background with crop", whole + "|" + noUndo + "|" + part + "|" + ccv.Image.Width, "0|True|8400|100");
+                        }
+                        // Ctrl+Minus after a crop that lies in added room stops, it never makes an empty picture
+                        using (Bitmap simg = Canvas.BlankImage(100, 50, Color.White))
+                        using (Canvas sc2 = new Canvas())
+                        {
+                            sc2.Image = Effects.To32(simg);
+                            sc2.ExtendCanvas(200, 0, 0, 0, Color.White);
+                            sc2.CropRect = new Rectangle(0, 0, 150, 50);
+                            for (int i = 0; i < 30; i++) sc2.ShrinkCanvas(10);
+                            check("Shrink canvas after crop", (sc2.Image.Width >= 16) + "|" + sc2.Image.Height, "True|50");
+                            // the added room is still there after saving and opening the project
+                            string pr = Path.Combine(dir, "selftest_room.snapm");
+                            ProjectExtras px = new ProjectExtras(); px.AddedRoom = new int[] { 3, 4, 5, 6 };
+                            ProjectFile.Save(pr, sc2.Image, sc2.Shapes, sc2.Scale, px);
+                            ProjectExtras back;
+                            using (ProjectFile.Load(pr, new List<Shape>(), new ScaleInfo(), out back)) { }
+                            check("Added room saved", back.AddedRoom == null ? "none" : string.Join(",", Array.ConvertAll(back.AddedRoom, v => v.ToString())), "3,4,5,6");
+                        }
+                        // origin typed with a decimal point on a decimal-comma Windows
+                        System.Globalization.CultureInfo was = System.Threading.Thread.CurrentThread.CurrentCulture;
+                        try
+                        {
+                            System.Threading.Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+                            double a1, a2, b1x, b2x;
+                            bool q1 = Canvas.ParseXY("1250.5 ; 300.25", out a1, out a2), q2 = Canvas.ParseXY("1250,5 ; 300", out b1x, out b2x);
+                            check("Origin decimal comma", q1 + "|" + (a1 == 1250.5 && a2 == 300.25) + "|" + q2 + "|" + (b1x == 1250.5 && b2x == 300), "True|True|True|True");
+                        }
+                        finally { System.Threading.Thread.CurrentThread.CurrentCulture = was; }
+                    }
+                    {
+                        // a marker saved as "symbol" without a character (1.4.1 slip) opens as a number marker
+                        Shape k1 = new Shape(); k1.Kind = ShapeKind.Counter; k1.Mode = 2; k1.Text = ""; k1.Pts.Add(new PointF(5, 5));
+                        Shape k2 = k1.Clone(); k2.Text = "Ø";
+                        List<Shape> kb = ProjectFile.ShapesFromXml(ProjectFile.ShapesToXml(new Shape[] { k1, k2 }));
+                        check("Old marker mode", kb[0].Mode + "|" + kb[1].Mode, "0|2");
+                        // a line and an arc over it bound a fill
+                        using (Bitmap aimg = Canvas.BlankImage(400, 300, Color.White))
+                        using (Canvas acv = new Canvas())
+                        {
+                            acv.Image = Effects.To32(aimg);
+                            Shape ln = new Shape(); ln.Kind = ShapeKind.Line; ln.Width = 2; ln.Pts.Add(new PointF(100, 200)); ln.Pts.Add(new PointF(300, 200));
+                            Shape arcS = new Shape(); arcS.Kind = ShapeKind.Arc; arcS.Width = 2; arcS.Pts.Add(new PointF(100, 200)); arcS.Pts.Add(new PointF(200, 100)); arcS.Pts.Add(new PointF(300, 200));
+                            acv.Shapes.Add(ln); acv.Shapes.Add(arcS);
+                            bool okA = acv.FillAt(new PointF(200, 160));
+                            double aA = okA ? Math.Abs(Geo.SignedArea(acv.Shapes[0].Pts)) : 0;
+                            check("Fill bounded by an arc", okA + "|" + (aA > 14500 && aA < 16200), "True|True");
+                        }
+                    }
+                    {
+                        // fill: a far annotation changes nothing; a huge outline beside the picture is refused at once
+                        using (Bitmap bimg2 = Canvas.BlankImage(400, 300, Color.White))
+                        using (Canvas lim = new Canvas())
+                        {
+                            lim.Image = Effects.To32(bimg2);
+                            Shape box = new Shape(); box.Kind = ShapeKind.Rect; box.Width = 2; box.Pts.Add(new PointF(50, 50)); box.Pts.Add(new PointF(250, 200));
+                            lim.Shapes.Add(box);
+                            lim.FillAt(new PointF(150, 120));
+                            double near = Math.Abs(Geo.SignedArea(lim.Shapes[0].Pts)); int nearN = lim.Shapes[0].Pts.Count;
+                            lim.Undo();
+                            Shape stray = new Shape(); stray.Kind = ShapeKind.Line; stray.Width = 2; stray.Pts.Add(new PointF(-5000, -5000)); stray.Pts.Add(new PointF(-4900, -5000));
+                            lim.Shapes.Add(stray);
+                            bool okFar = lim.FillAt(new PointF(150, 120));
+                            check("Fill ignores far annotations", okFar + "|" + (Math.Abs(Math.Abs(Geo.SignedArea(lim.Shapes[0].Pts)) - near) < 1) + "|" + (lim.Shapes[0].Pts.Count == nearN), "True|True|True");
+                        }
+                        using (Bitmap bimg3 = Canvas.BlankImage(1920, 1080, Color.White))
+                        using (Canvas huge = new Canvas())
+                        {
+                            // a very large outline with a line across it: worked on at a smaller size, quickly
+                            huge.Image = Effects.To32(bimg3);
+                            Shape big = new Shape(); big.Kind = ShapeKind.Rect; big.Width = 2; big.Pts.Add(new PointF(-5900, -5900)); big.Pts.Add(new PointF(5900, 5900));
+                            Shape cut = new Shape(); cut.Kind = ShapeKind.Line; cut.Width = 2; cut.Pts.Add(new PointF(0, -5900)); cut.Pts.Add(new PointF(0, 5900));
+                            huge.Shapes.Add(big); huge.Shapes.Add(cut);
+                            System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
+                            bool filled = huge.FillAt(new PointF(3000, 3000));
+                            sw.Stop();
+                            double got = filled ? Math.Abs(Geo.SignedArea(huge.Shapes[0].Pts)) : 0;
+                            check("Fill very large area", filled + "|" + (sw.ElapsedMilliseconds < 3000) + "|" + (Math.Abs(got / (5900.0 * 11800) - 1) < 0.01) + "|" + (filled && huge.Shapes[0].Pts.Count <= 8), "True|True|True|True");
+                        }
+                    }
                     // 1.4.2 highlight box: no border by default; the magenta guide shows in the editor only, never in a saved picture
                     using (Bitmap himg = Canvas.BlankImage(60, 60, Color.White))
                     using (Canvas hc = new Canvas())
@@ -910,7 +1250,7 @@ namespace SnapMeasure
             string err = "ok";
             try { using (Bitmap f3 = cv.Flatten(null)) f3.Save(Path.Combine(dir, "selftest_v11.png"), ImageFormat.Png); } catch (Exception ex) { err = ex.Message; }
             check("Cloud / stamp / markup / path draw", err, "ok");
-            check("Stamp and cloud hit test", ShapeOps.Hit(stp, new PointF(700, 520), 2) + "|" + ShapeOps.Hit(cl, new PointF(700, 380), 2), "True|True");
+            check("Stamp and cloud hit test", ShapeOps.Hit(stp, new PointF(700, 520), 2) + "|" + ShapeOps.Hit(cl, new PointF(700, 380), 2) + "|" + ShapeOps.Hit(cl, Renderer.CloudOutline(cl)[5], 2), "True|False|True");
 
             // drawing-scale presets
             check("1:50, A1 landscape across 841 px", ScalePresets.Upp(ScalePresets.SheetWidthMm(1, true) / 841.0, 50, "m").ToString("G6", inv), "0.05");
@@ -1633,6 +1973,8 @@ namespace SnapMeasure
             }
             catch (Exception ex) { log.AppendLine("dark snapshot: " + ex.Message); }
             finally { Theme.ForceDark = false; Theme.Init(); }
+            V142Search(check);
+            V142Fill(check);
             File.WriteAllText(Path.Combine(dir, "selftest.txt"), log.ToString());
         }
     }
@@ -2304,7 +2646,7 @@ namespace SnapMeasure
                                                    "Capture last region again", "Scrolling capture (long page)", "Capture text (OCR)",
                                                    "Open clipboard picture in the editor" };
         const Keys CS = Keys.Control | Keys.Shift;
-        static readonly Keys[] DefMain = { Keys.PrintScreen, Keys.Alt | Keys.PrintScreen, Keys.Control | Keys.PrintScreen, Keys.Shift | Keys.PrintScreen, Keys.None, Keys.None, CS | Keys.PrintScreen };
+        static readonly Keys[] DefMain = { Keys.PrintScreen, Keys.Alt | Keys.PrintScreen, Keys.Control | Keys.PrintScreen, Keys.Shift | Keys.PrintScreen, Keys.None, CS | Keys.T, CS | Keys.PrintScreen };
         // Ctrl+Shift+7, not Ctrl+Shift+V: a capture key works in every app, and Ctrl+Shift+V is "paste as plain text" there
         static readonly Keys[] DefAlt = { CS | Keys.D1, CS | Keys.D2, CS | Keys.D3, CS | Keys.D4, CS | Keys.D5, CS | Keys.D6, CS | Keys.D7 };
 
@@ -2677,7 +3019,7 @@ namespace SnapMeasure
             row("C", "crop (Delete = remove the crop)");
             row("Ctrl+Plus / Minus", "extend / shrink the added room by 10 px a side");
             row("Ctrl+I / Ctrl+G", "invert colours / grayscale");
-            row("Ctrl+F", "find text, labels and tools");
+            row("Ctrl+F / Ctrl+H", "find / replace text, labels and tools");
             row("Ctrl+A", "select all");
             row("Ctrl+C / X / V", "copy, cut, paste shapes");
             row("Ctrl+D", "duplicate");
@@ -3310,6 +3652,20 @@ namespace SnapMeasure
             }
         }
 
+        /// <summary>The background for new canvas: 0 white, 1 like the edge, 2 transparent, 3 black, 4 the picked colour.
+        /// Never chosen: the picked colour if there is one.</summary>
+        internal static int ExtendChoice()
+        {
+            bool picked = SnapMeasure.Settings.GetInt("PickedColor", -1) >= 0;
+            int ci = SnapMeasure.Settings.GetInt("ExtendColour", picked ? 4 : 0);
+            return ci < 0 || ci > 4 || (ci == 4 && !picked) ? 0 : ci;
+        }
+        internal static Color ExtendBack(int ci, Color edge)
+        {
+            return ci == 1 ? edge : ci == 2 ? Color.Transparent : ci == 3 ? Color.Black
+                : ci == 4 ? Color.FromArgb(255, Color.FromArgb(SnapMeasure.Settings.GetInt("PickedColor", 0xFFFFFF))) : Color.White;
+        }
+
         /// <summary>Adjust → Extend canvas: pixels to add on each side and the colour of the new room.
         /// 'edge' = the colour at the picture's corner (offered as "Like the picture's edge").</summary>
         public static bool ExtendCanvas(IWin32Window owner, Color edge, out int left, out int top, out int right, out int bottom, out Color back)
@@ -3347,13 +3703,14 @@ namespace SnapMeasure
                 Label lc = new Label(); lc.Text = "Background"; lc.AutoSize = true; lc.Location = new Point(S(24), S(150));     // same word as New blank canvas
                 ComboBox cc = new ComboBox(); cc.DropDownStyle = ComboBoxStyle.DropDownList;
                 cc.Items.AddRange(new object[] { "White", "Like the picture's edge", "Transparent", "Black" });
-                cc.SelectedIndex = Math.Max(0, Math.Min(3, SnapMeasure.Settings.GetInt("ExtendColour", 0)));
+                if (SnapMeasure.Settings.GetInt("PickedColor", -1) >= 0) cc.Items.Add("Picked colour");
+                cc.SelectedIndex = Math.Min(cc.Items.Count - 1, ExtendChoice());
                 cc.SetBounds(S(110), S(146), S(190), S(26));
                 f.Controls.Add(lc); f.Controls.Add(cc);
                 Buttons(f, k);
                 if (f.ShowDialog(owner) != DialogResult.OK) return false;
                 top = (int)n[0].Value; bottom = (int)n[1].Value; left = (int)n[2].Value; right = (int)n[3].Value;
-                back = cc.SelectedIndex == 1 ? edge : cc.SelectedIndex == 2 ? Color.Transparent : cc.SelectedIndex == 3 ? Color.Black : Color.White;
+                back = ExtendBack(cc.SelectedIndex, edge);
                 SnapMeasure.Settings.Set("ExtendBy", ((int)n[0].Value).ToString(CultureInfo.InvariantCulture));
                 SnapMeasure.Settings.Set("ExtendColour", cc.SelectedIndex.ToString(CultureInfo.InvariantCulture));
                 return top + bottom + left + right > 0;
@@ -4235,19 +4592,23 @@ namespace SnapMeasure
                             break;
                         case Tool.Fill:
                             {
-                                // a paint bucket pouring
-                                Color acc2 = Theme.Dark ? Color.FromArgb(120, 200, 255) : Color.FromArgb(0, 120, 212);
-                                GraphicsState st = g.Save();
-                                g.TranslateTransform(14, 17); g.RotateTransform(-35);
-                                RectangleF bk = new RectangleF(-8, -7, 16, 14);
-                                g.FillRectangle(Paper, bk);
-                                using (Pen pp = new Pen(ink, 1.8f)) { g.DrawRectangle(pp, bk.X, bk.Y, bk.Width, bk.Height); g.DrawArc(pp, -8, -14, 16, 12, 180, 180); }
-                                using (SolidBrush f = new SolidBrush(acc2)) g.FillRectangle(f, -7, -1, 15, 7);
-                                g.Restore(st);
-                                using (SolidBrush f = new SolidBrush(acc2))
+                                // a tipped paint bucket drawn like the other drawing tools: outline and drop in the group's colour
+                                PointF[] bk = { new PointF(13, 5), new PointF(24, 16), new PointF(13, 27), new PointF(2, 16) };
+                                using (SolidBrush f = new SolidBrush(Color.FromArgb(120, acc)))
+                                    g.FillPolygon(f, new PointF[] { new PointF(3, 16), new PointF(23, 16), new PointF(13, 26) });
+                                using (Pen pp = new Pen(acc, 2.6f))
                                 {
-                                    g.FillEllipse(f, 23, 18, 7, 9);
-                                    g.FillPolygon(f, new PointF[] { new PointF(23.3f, 21.5f), new PointF(26.5f, 14), new PointF(29.7f, 21.5f) });
+                                    pp.LineJoin = LineJoin.Round; pp.StartCap = pp.EndCap = LineCap.Round;
+                                    g.DrawPolygon(pp, bk);
+                                    g.DrawLine(pp, 13, 5, 9, 1.5f);     // the handle
+                                }
+                                using (GraphicsPath drop = new GraphicsPath())
+                                using (SolidBrush f = new SolidBrush(acc))
+                                {
+                                    drop.AddBezier(27, 18, 31, 24, 32, 26, 31, 27.5f);
+                                    drop.AddBezier(31, 27.5f, 29.5f, 31, 24.5f, 31, 23, 27.5f);
+                                    drop.AddBezier(23, 27.5f, 22, 26, 23, 24, 27, 18);
+                                    g.FillPath(f, drop);
                                 }
                                 break;
                             }
@@ -4505,6 +4866,9 @@ namespace SnapMeasure
                             g.FillPie(bi, 1.5f, 1.5f, 13, 13, -90, 180);
                             g.DrawEllipse(p, 1.5f, 1.5f, 13, 13);
                             break;
+                        case "search":      // 1.4.2: the tool search button of a narrow window
+                            using (Pen pp = new Pen(ink, 1.6f)) { g.DrawEllipse(pp, 2, 2, 9, 9); pp.StartCap = pp.EndCap = LineCap.Round; pp.Width = 2.2f; g.DrawLine(pp, 10, 10, 14.5f, 14.5f); }
+                            break;
                         case "find":        // 1.4.2: lines of text with a magnifier on them
                             using (Pen tl = new Pen(Color.FromArgb(150, ink), 1.4f))
                             {
@@ -4753,6 +5117,15 @@ namespace SnapMeasure
                             g.FillRectangle(Paper, 1.5f, 2.5f, 13, 11); g.DrawRectangle(p, 1.5f, 2.5f, 13, 11);
                             using (SolidBrush pb2 = new SolidBrush(Color.FromArgb(180, 0, 110, 210))) g.FillRectangle(pb2, 10, 3, 4, 10);
                             break;
+                        case "alignt":      // lines at the top, middle or bottom of the box, as in Excel
+                        case "alignm":
+                        case "alignb":
+                            {
+                                float y0 = name == "alignt" ? 2f : name == "alignm" ? 5f : 8f;
+                                float[] w = { 12, 8, 12 };
+                                for (int i = 0; i < 3; i++) g.FillRectangle(bi, 8 - w[i] / 2f, y0 + i * 3.2f, w[i], 1.6f);
+                                break;
+                            }
                         case "alignl":
                         case "alignc":
                         case "alignr":

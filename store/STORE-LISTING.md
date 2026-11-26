@@ -33,7 +33,7 @@ Later: take Korean screenshots with Settings → General → Language = 한국�
 
 Text to paste into Partner Center → the submission's *Store listings* (English).
 
-**Package to upload:** `Share\Store\SnapMeasure-1.3.0.0-x64.msix` (build it with `store\build-store.cmd`).
+**Package to upload:** `Share\Store\SnapMeasure-1.4.2.0-x64.msix` (build it with `store\build-store.cmd`).
 It is not signed; the Store signs it.
 
 ## Product name
@@ -59,6 +59,10 @@ Also included: text recognition (OCR) to copy text from any picture, pinned pict
 No account, no telemetry, no ads. Your pictures stay on your PC.
 
 ## What's new in this version
+**1.4.2 (English):** New: a Fill tool (paint bucket) for outlines you draw, symbol markers, a search box for tools, find and replace, a symbol picker, your own coordinate origin, remove background, and text position options. If you update from 1.4.1: Z now zooms to an area and Shift+Z is the stamp; Ctrl+Minus only removes space you added.
+
+**1.4.2 (한국어):** 새 기능: 직접 그린 윤곽선을 채우는 채우기 도구(페인트 통), 기호 마커, 도구 검색 상자, 찾기 및 바꾸기, 기호 선택기, 좌표 원점 값 지정, 배경 제거, 텍스트 위치 옵션. 1.4.1에서 업데이트하는 경우: 이제 Z는 영역 확대, Shift+Z는 스탬프입니다. Ctrl+Minus는 추가한 여백만 제거합니다.
+
 **1.4.1 (English):** PDF pages now always open at the sharpness you pick, so the PDF page scale is exact on every PC. Scrolling capture no longer stops early in apps whose background shade changes while they scroll (such as Notepad on Windows 11). New quick user guide and trailer video.
 
 **1.4.1 (한국어):** PDF 페이지가 선택한 해상도 그대로 열려 어느 PC에서나 PDF 축척이 정확합니다. 스크롤하는 동안 배경 색조가 바뀌는 앱(Windows 11 메모장 등)에서 스크롤 캡처가 일찍 멈추던 문제를 고쳤습니다. 빠른 사용자 가이드와 소개 영상이 추가되었습니다.

@@ -182,7 +182,6 @@ Radius / diameter	반지름 / 지름
 Radius / diameter – 3 points on a curve or circle (Shift+R)	반지름 / 지름 – 곡선이나 원 위의 3점 (Shift+R)
 Radius / diameter: click the start.	반지름 / 지름: 시작점을 클릭하세요.
 Coordinate point	좌표점
-Coordinates: first click = origin 0,0, then points show X / Y (I)	좌표: 첫 클릭 = 원점 0,0, 이후 점은 X / Y 표시 (I)
 Coordinates: click the origin (0,0).	좌표: 원점 (0,0)을 클릭하세요.
 Number marker	숫자 마커
 Number marker 1, 2, 3 … – counts (N)	숫자 마커 1, 2, 3 … – 개수 세기 (N)
@@ -471,7 +470,6 @@ Whole words	단어 단위로
 More search options	추가 검색 옵션
 Ignore accents	악센트 무시
 Include labels and values	레이블 및 값 포함
-Include tool names	도구 이름 포함
 Include the picture's text (OCR)	그림 속 텍스트 포함 (OCR)
 Nothing found	찾을 수 없음
 No more matches for	더 이상 일치 항목 없음:
@@ -488,3 +486,81 @@ Enter a positive number, for example 1200	양수를 입력하세요 (예: 1200)
 (smaller in short windows)	(창이 낮으면 더 작게 표시)
 Language and appearance apply to new windows; the tray menu changes after a restart.	언어와 모양은 새 창에 적용되며, 트레이 메뉴는 다시 시작한 후 바뀝니다.
 Same as Windows	Windows와 같게
+Fill colour changed – Ctrl+Z to undo	채우기 색을 바꿨습니다 – Ctrl+Z로 되돌리기
+Coordinates: first click = origin 0,0 (double-click it to give it other coordinates), then points show X / Y (I)	좌표: 첫 클릭 = 원점 0,0 (더블클릭하면 다른 좌표 지정), 이후 점은 X / Y 표시 (I)
+Could not fill:	채울 수 없습니다:
+Nothing to fill there	채울 곳이 없습니다
+Filled – change its colour with Fill, or Ctrl+Z to undo	채웠습니다 – 채우기에서 색 변경, Ctrl+Z로 되돌리기
+Click inside an area, not on a line	선이 아니라 영역 안을 클릭하세요
+That area is too complicated to fill	채우기에는 너무 복잡한 영역입니다
+Origin coordinates X ; Y in	원점 좌표 X ; Y, 단위
+Type two numbers: X ; Y	숫자 두 개를 입력하세요: X ; Y
+Origin is now X	원점 설정: X
+Origin coordinates…	원점 좌표…
+Symbol marker: a symbol or short text	기호 마커: 기호 또는 짧은 글자
+More symbols	기호 더 보기
+Cut	잘라내기
+Paste	붙여넣기
+Select all	모두 선택
+Insert symbol	기호 삽입
+Change the symbol…	기호 바꾸기…
+Label the letter series…	문자 시리즈 이름 지정…
+Label the number series…	번호 시리즈 이름 지정…
+Symbol: click where it goes, then type its character.	기호: 놓을 위치를 클릭한 뒤 글자를 입력하세요.
+Symbol marker (Shift+M) — type any character, like Ø, ±, ★ or a fixed 3. It doesn't count up.	기호 마커 (Shift+M) — Ø, ±, ★ 또는 고정된 3처럼 원하는 글자를 입력합니다. 번호가 늘어나지 않습니다.
+Insert a symbol: Ø ° ± × ≈ ≤ ≥ √ Δ π µ ² ³ ½ … (also on the text's right-click menu)	기호 삽입: Ø ° ± × ≈ ≤ ≥ √ Δ π µ ² ³ ½ … (텍스트의 오른쪽 클릭 메뉴에도 있음)
+Click into a text first, then pick a symbol	먼저 텍스트를 클릭한 뒤 기호를 선택하세요
+Middle	가운데
+On the line	선 위에 겹쳐
+Above	위쪽
+Below	아래쪽
+Where the value sits: on the dimension line, above it or below it	값의 위치: 치수선에 겹쳐, 위쪽 또는 아래쪽
+Symbol markers	기호 마커
+Replace in the chosen result, then go to the next one	선택한 결과를 바꾸고 다음으로 이동
+Replace in every annotation text (one undo step)	모든 주석 텍스트에서 바꾸기 (한 번에 되돌리기)
+Windows has no text-recognition language installed.	Windows에 텍스트 인식 언어가 설치되어 있지 않습니다.
+to undo	되돌리기
+Tool	도구
+No plain background found at the picture's edges.	그림 가장자리에서 단색 배경을 찾지 못했습니다.
+Background removed – save as PNG to keep it see-through (Ctrl+Z undoes it)	배경 제거됨 – 투명하게 유지하려면 PNG로 저장하세요 (Ctrl+Z로 되돌리기)
+Captures on this PC. Never sent anywhere.	이 PC의 캡처 수. 어디에도 전송되지 않습니다.
+Appearance	모양
+Light	밝게
+Dark	어둡게
+Find and replace text (Ctrl+F, Ctrl+H)	텍스트 찾기 및 바꾸기 (Ctrl+F, Ctrl+H)
+Type to find	찾을 내용 입력
+Previous (Shift+Enter)	이전 (Shift+Enter)
+Next (Enter)	다음 (Enter)
+Match case	대/소문자 구분
+Picture text	그림 속 글자
+Search words inside the picture too (OCR): found and zoomed to, not replaced	그림 속 글자도 검색(OCR): 찾아서 확대만 하며 바꾸지는 않습니다
+More options	추가 옵션
+{0} found	{0}개 찾음
+{0} of {1}	{0} / {1}
+Replace with…	바꿀 내용…
+Picture	그림
+Select	선택
+Calibrate scale	축척 보정
+Length / perimeter	길이 / 둘레
+Cut-out	개구부 빼기
+Coordinates	좌표
+Symbol marker	기호 마커
+Polyline	폴리라인
+Focus	강조
+Note	메모
+Copy text from an area	영역의 글자 복사
+Match properties	속성 일치
+Search tools	도구 검색
+Search tools (Ctrl+K)	도구 검색 (Ctrl+K)
+Search tools and commands (Ctrl+K)	도구 및 명령 검색 (Ctrl+K)
+Find "{0}" in the drawing's text	도면 글자에서 "{0}" 찾기
+Align top	위쪽 맞춤
+Align middle	가운데 맞춤
+Align bottom	아래쪽 맞춤
+Click inside a closed outline	닫힌 윤곽선 안을 클릭하세요
+Fill, the paint bucket: click inside an outline drawn with your shapes and lines to fill it – small gaps are closed; lines in the picture don't count (Shift+F)	채우기: 도형과 선으로 그린 윤곽선 안을 클릭하면 채워집니다 – 작은 틈은 메워지며, 그림 속의 선은 경계가 되지 않습니다 (Shift+F)
+Fill: click inside a closed outline to fill it.	채우기: 닫힌 윤곽선 안을 클릭하면 채워집니다.
+Rounding	반올림
+Drag an area or click a window  ·  Esc = cancel	영역을 드래그하거나 창을 클릭  ·  Esc = 취소
+Picked colour	선택한 색
+Ctrl+Plus adds canvas in this colour	Ctrl+Plus로 늘리는 여백도 이 색

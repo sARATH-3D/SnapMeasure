@@ -23,7 +23,7 @@ namespace SnapMeasure
         }
     }
 
-    public class EditorForm : Form
+    public partial class EditorForm : Form
     {
         readonly Canvas cv;
         float k;                         // UI scale of the monitor the window is on (1 = 100 %)
@@ -53,6 +53,9 @@ namespace SnapMeasure
             if (lUppNote == null || uppBox == null) return;
             string unit = cv.Scale.Calibrated ? cv.Scale.Unit : "px", nice = cv.Scale.PixelSize();
             string full = !cv.Scale.Calibrated || nice.EndsWith(" " + unit) ? unit : unit + "  = " + nice;
+            int box = Math.Max(S(60), Math.Min(S(110), uppBox.Width - S(5) - TextRenderer.MeasureText(unit, lUppNote.Font).Width - S(2)));
+            tUpp.Width = box;
+            lUppNote.Left = box + S(5);
             int room = uppBox.Width - lUppNote.Left;
             lUppNote.Text = TextRenderer.MeasureText(full, lUppNote.Font).Width <= room ? full : unit;
         }
@@ -64,8 +67,9 @@ namespace SnapMeasure
         public double? PaperMmPerPx;     // set when the picture is a PDF page: exact paper size per pixel
         FlowLayoutPanel styleBar;
         CheckBox cBold, cItalic, cUnder, cStrike, cAlignL, cAlignC, cAlignR;
-        ComboBox cFontName, cAlign;      // text bar (like Greenshot): font, B, I, U, one alignment list
-        ComboBox cVAlign;                // 1.4.2: top / middle / bottom inside a text box
+        ComboBox cFontName;             // text bar: font, B, I, U, then alignment as in Excel
+        CheckBox cTop, cMid, cBot;       // 1.4.2: top / middle / bottom inside a text box
+        Control[] textRow;               // the text style row, left to right
         ToolStripButton bRulers;
         ToolStripButton bPanel;
         readonly ToolTip tip = new ToolTip();
@@ -94,7 +98,7 @@ namespace SnapMeasure
             { Tool.Counter, "Numbers: click each item to count it." },
             { Tool.Letter, "Letters: click each item to count it." },
             { Tool.Symbol, "Symbol: click where it goes, then type its character." },
-            { Tool.Fill, "Fill: click inside a closed area to fill it." },
+            { Tool.Fill, "Fill: click inside a closed outline to fill it." },
             { Tool.Angle, "Angle: click arm, corner, arm." },
             { Tool.Arc, "Arc: click start, a point on the arc, end." },
             { Tool.Radius, "Radius: click 3 points on the curve." },
@@ -245,6 +249,10 @@ namespace SnapMeasure
             Lang.Apply(this, tip);       // other languages: the finished window, all at once
             Theme.Apply(this);           // dark mode: recolour the finished window
             Step("filled");
+            Shown += (s, e) => FitSearch();                  // translated texts have their final widths
+            cv.MouseDown += (s, e) => CloseSearch();
+            Deactivate += (s, e) => CloseSearch();
+            SizeChanged += (s, e) => CloseSearch();
             Shown +=(s, e) => { Step("shown"); BeginInvoke((Action)(() => { Step("painted"); OpenTiming = openSteps.ToString(); })); };
         }
 
@@ -389,6 +397,7 @@ namespace SnapMeasure
             SuspendLayout();
             try
             {
+                DropSearch();
                 foreach (Control c in old) { c.Visible = false; Controls.Remove(c); }
                 toolButtons.Clear();
                 MinimumSize = Size.Empty;
@@ -415,12 +424,14 @@ namespace SnapMeasure
                 Controls.Add(bar);
                 Controls.Add(status);
                 LoadStyle();               // shows the rows for the current tool: needs the bars on the window
+                Lang.Apply(this, tip);
                 Theme.Apply(this);         // the rebuilt bars: dark mode
             }
             finally
             {
                 ResumeLayout(true);
                 FitToolBar();
+                FitSearch();
                 if (wholeVisible)
                 {
                     cv.Fit();
@@ -464,6 +475,7 @@ namespace SnapMeasure
             }
             f.cv.HGuides.AddRange(ex.HGuides);
             f.cv.VGuides.AddRange(ex.VGuides);
+            if (ex.AddedRoom != null) f.cv.AddedRoom = ex.AddedRoom;
             f.lastSaved = path;
             f.RefreshAll();
             return f;
@@ -505,7 +517,6 @@ namespace SnapMeasure
             bar.Items.Add(new ToolStripSeparator());
             bUndo = IconOnly(AddBtn(bar, "Undo", "Undo (Ctrl+Z)", (s, e) => cv.Undo()), "undo");
             bRedo = IconOnly(AddBtn(bar, "Redo", "Redo (Ctrl+Y)", (s, e) => cv.Redo()), "redo");
-            IconOnly(AddBtn(bar, "Find", "Find and replace text (Ctrl+F)", (s, e) => ShowFind()), "find");     // edits text: with Undo/Redo, away from the zoom magnifiers
             bar.Items.Add(new ToolStripSeparator());
 
             ToolStripDropDownButton img = new ToolStripDropDownButton("Adjust");     // rotate, mirror, border, shadow, torn edge, grayscale, invert
@@ -529,6 +540,8 @@ namespace SnapMeasure
             img.DropDownItems.Add(new ToolStripSeparator());
             MenuItem(img, "Grayscale", "gray", (s, e) => cv.ImageOp("gray")).ToolTipText = "Ctrl+G";
             MenuItem(img, "Invert colours", "invert", (s, e) => cv.ImageOp("invert")).ToolTipText = "Ctrl+I";
+            img.DropDownItems.Add(new ToolStripSeparator());
+            MenuItem(img, "Find and replace…", "find", (s, e) => ShowFind(false)).ToolTipText = "Ctrl+F, Ctrl+H";
             img.DropDown.ShowItemToolTips = true;
             bSave.DropDown.ShowItemToolTips = true;
             bar.Items.Add(img);
@@ -541,6 +554,8 @@ namespace SnapMeasure
             Ic(AddBtn(bar, "Fit", "Fit and centre the image (Home, 0, or double-click the middle mouse button)", (s, e) => cv.Fit()), "fit");
             IconOnly(AddBtn(bar, "Zoom to area", "Zoom to area: drag a box around the part to see (Z; Esc cancels)", (s, e) => { cv.StartZoomBox(); cv.Focus(); }), "zoomarea");
             IconOnly(AddBtn(bar, "Actual pixels", "Actual pixels 1:1 – one screen pixel per picture pixel (Ctrl+1)", (s, e) => { cv.ZoomCenter(1f); cv.Focus(); }), "actual");
+
+            BuildSearch();     // in the free middle of the bar
 
             // right end, next to the window's own buttons (the first added sits furthest right):
             // keep inside, rulers | add-ons | side panel, pin, settings, help
@@ -648,6 +663,7 @@ namespace SnapMeasure
         void BuildToolBar()
         {
             toolBar = new ClickStrip();
+            toolHeading = "";
             toolBar.SuspendLayout();
             toolIconPx = S(IconSize);      // the icons AddTool draws
             toolBar.Font = Font;
@@ -685,7 +701,7 @@ namespace SnapMeasure
             AddTool(Tool.Ellipse, "Ellipse / circle (E)");
             AddTool(Tool.Polygon, "Polygon – any number of edges (P)");
             AddTool(Tool.Cloud, "Revision cloud, with or without a callout (U)");
-            AddTool(Tool.Fill, "Fill: click inside a closed area to fill it, like a paint bucket – lines, shapes and sketches bound it, small gaps are closed (Shift+F)");
+            AddTool(Tool.Fill, "Fill, the paint bucket: click inside an outline drawn with your shapes and lines to fill it – small gaps are closed; lines in the picture don't count (Shift+F)");
             AddHeading("Highlight", Icons.HighlightCol);
             AddTool(Tool.Highlight, "Focus: highlight box, spotlight, grayscale, magnify or pixelate, in several shapes; Strength slider for magnify / pixelate (H, B = pixelate)");
             AddTool(Tool.Marker, "Highlighter pen: drag over text like a marker; Shift = straight stroke (Shift+H)");
@@ -709,6 +725,7 @@ namespace SnapMeasure
             bMatch.Margin = new Padding(0, S(1), 0, S(1));
             bMatch.Click += (s, e) => { ToggleMatch(); cv.Focus(); };
             toolBar.Items.Add(bMatch);
+            toolBar.ItemClicked += (s, e) => CloseSearch();
             toolBar.ResumeLayout(false);
 
             // the column sits in a holder that scrolls (mouse wheel) when even the compact column is too tall
@@ -847,6 +864,7 @@ namespace SnapMeasure
         /// <summary>Small section title in the tool column, in the colour its tools' icons share.</summary>
         void AddHeading(string text, Color group)
         {
+            toolHeading = text;
             ToolStripLabel l = new ToolStripLabel(text);
             l.Font = Native.UiFont("Segoe UI", 6.4f, k, FontStyle.Bold);
             l.ForeColor = Color.FromArgb(110, 120, 135);     // quiet grey: the icons carry the group colour
@@ -890,6 +908,7 @@ namespace SnapMeasure
                     e.Graphics.FillRectangle(br, 0, S(3), Math.Max(3, S(3)), b.Height - 2 * S(3));
             };
             toolButtons[t] = b;
+            toolGroup[t] = toolHeading;
             toolBar.Items.Add(b);
         }
 
@@ -1160,30 +1179,20 @@ namespace SnapMeasure
             cFontName.SelectedIndex = i;
         }
 
-        ComboBox AlignCombo()
+        CheckBox VAlignToggle(int valign, string tip)
         {
-            ComboBox c = Combo(96, "Left", "Centre", "Right");
-            LazyItemHeight(c, S(20));
-            c.DrawItem += (s, e) =>
+            CheckBox c = ToggleBase(Lang.T(tip));
+            c.Image = Icons.Cmd(valign == 0 ? "alignt" : valign == 1 ? "alignm" : "alignb", S(16));
+            c.CheckedChanged += (s, e) =>
             {
-                e.DrawBackground();
-                if (e.Index < 0) return;
-                using (Image im = Icons.Cmd(e.Index == 0 ? "alignl" : e.Index == 1 ? "alignc" : "alignr", S(16)))
-                    e.Graphics.DrawImage(im, e.Bounds.X + S(3), e.Bounds.Y + (e.Bounds.Height - im.Height) / 2);
-                Color fc = (e.State & DrawItemState.Selected) != 0 ? SystemColors.HighlightText : c.ForeColor;
-                TextRenderer.DrawText(e.Graphics, Lang.T((string)c.Items[e.Index]), c.Font, new Rectangle(e.Bounds.X + S(23), e.Bounds.Y, e.Bounds.Width - S(23), e.Bounds.Height), fc,
-                                      TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-            };
-            c.SelectedIndexChanged += (s, e) =>
-            {
-                int a = c.SelectedIndex;
-                if (loading || a < 0) return;
-                ApplyStyle(x => x.Align = a);
+                if (loading || !c.Checked) { if (!loading && !c.Checked) { loading = true; c.Checked = true; loading = false; } return; }
+                ApplyStyle(x => { if (x.Kind == ShapeKind.Text) { x.VAlign = valign; x.Cache = null; } });
                 LoadStyle();
+                cv.Invalidate();
             };
-            tip.SetToolTip(c, Lang.T("Text alignment"));
             return c;
         }
+
 
         ComboBox Combo(int width, params string[] items)
         {
@@ -1310,6 +1319,7 @@ namespace SnapMeasure
                 bool inside = cWhere.SelectedIndex != 1;
                 ApplyStyle(x =>
                 {
+                    if (x.Kind != ShapeKind.Highlight) return;      // Mode means something else on markers (2 = symbol)
                     // keep each mode's usual side when switching mode; the Inside / Outside box picks the other side
                     int m = FocusMode(b, s == cWhere ? inside : (b == (int)HighlightMode.Grayscale ? false : true));
                     // switching to magnify: the lens gets a magenta outline (the line colour can be changed after)
@@ -1439,7 +1449,6 @@ namespace SnapMeasure
             // text bar, simplified like Greenshot: font, Bold, Italic, Underline and one alignment list
             // (strike-out is on the text's right-click menu; the old align buttons stay off the bar)
             cFontName = FontCombo();
-            cAlign = AlignCombo();
             // 1.4.2 symbol picker: a label (it never takes the focus, so the text being typed stays open)
             Label lSym = new Label();
             lSym.Text = "Ω";
@@ -1464,16 +1473,12 @@ namespace SnapMeasure
                 }
                 symMenu.Show(lSym, new Point(0, lSym.Height));
             };
-            cVAlign = Combo(76, "Top", "Middle", "Bottom");
-            cVAlign.SelectedIndexChanged += (s, e) =>
-            {
-                int v = cVAlign.SelectedIndex;
-                if (loading || v < 0) return;
-                ApplyStyle(x => { if (x.Kind == ShapeKind.Text) { x.VAlign = v; x.Cache = null; } });
-                cv.Invalidate();
-            };
-            tip.SetToolTip(cVAlign, Lang.T("Where the text sits in the box: top, middle or bottom (drag the box taller to see it)"));
-            rowTextStyle = Grp("", cFontName, cBold, cItalic, cUnder, cAlign, cVAlign, lSym);
+            cTop = VAlignToggle(0, "Align top");
+            cMid = VAlignToggle(1, "Align middle");
+            cBot = VAlignToggle(2, "Align bottom");
+            textRow = new Control[] { cFontName, cBold, cItalic, cUnder, cTop, cMid, cBot, cAlignL, cAlignC, cAlignR, lSym };
+            rowTextStyle = Grp("", textRow);
+            cBot.Margin = new Padding(0, S(2), S(10), 0);  // a gap, then left / centre / right
             gHeads = Grp("Start", cHeadS);
             Label lEnd = new Label();
             lEnd.Text = Lang.T("End");
@@ -1510,7 +1515,7 @@ namespace SnapMeasure
             rowShow = Grp("Show", cShow);
             // 1.4.2: where a dimension's value sits: on the line (in a gap), above or below it
             cLabelAt = Combo(110, "On the line", "Above", "Below");
-            cLabelAt.SelectedIndexChanged += (s, e) => { int v = cLabelAt.SelectedIndex; if (v >= 0) ApplyStyle(x => { if (x.Kind == ShapeKind.Dimension) { x.Align = v; x.Cache = null; } }); };
+            cLabelAt.SelectedIndexChanged += (s, e) => { int v = cLabelAt.SelectedIndex; if (v >= 0) ApplyStyle(x => { if (x.Kind == ShapeKind.Dimension) { x.LabelAt = v; x.Cache = null; } }); };
             tip.SetToolTip(cLabelAt, Lang.T("Where the value sits: on the dimension line, above it or below it"));
             rowLabelAt = Grp("Text", cLabelAt);
             rowFrame = Grp("", cFrame);
@@ -1782,19 +1787,20 @@ namespace SnapMeasure
             nDec.Width = S(42);
             cCeil.Font = cFloor.Font = Font;     // measured before they are on the window: with the editor's (scaled) font
             Panel rounding = new Panel();
-            rounding.Size = new Size(nDec.Width + S(6) + cCeil.PreferredSize.Width + S(4) + cFloor.PreferredSize.Width,
-                                     Math.Max(nDec.PreferredSize.Height, Math.Max(cCeil.PreferredSize.Height, S(22))));
-            nDec.Location = new Point(0, (rounding.Height - nDec.Height) / 2);
-            cCeil.Location = new Point(nDec.Width + S(6), (rounding.Height - cCeil.PreferredSize.Height) / 2);
-            cFloor.Location = new Point(cCeil.Left + cCeil.PreferredSize.Width + S(4), cCeil.Top);
-            rounding.Controls.Add(nDec); rounding.Controls.Add(cCeil); rounding.Controls.Add(cFloor);
-            Panel rowDec = Row("Decimals", rounding);
+            rounding.Size = new Size(cCeil.PreferredSize.Width + S(10) + cFloor.PreferredSize.Width,
+                                     Math.Max(cCeil.PreferredSize.Height, S(22)));
+            cCeil.Location = new Point(0, (rounding.Height - cCeil.PreferredSize.Height) / 2);
+            cFloor.Location = new Point(cCeil.PreferredSize.Width + S(10), cCeil.Top);
+            rounding.Controls.Add(cCeil); rounding.Controls.Add(cFloor);
+            Panel rowDec = Row("Decimals", nDec);
+            Panel rowRound = Row("Rounding", rounding);
             tip.SetToolTip(cCeil, Lang.T("Round every value up (ceiling) at the chosen decimals"));
             tip.SetToolTip(cFloor, Lang.T("Round every value down (floor) at the chosen decimals"));
             // only one of the two: ticking one clears the other; neither = round to the nearest
             cCeil.CheckedChanged += (s, e) => { if (loading) return; if (cCeil.Checked) { loading = true; cFloor.Checked = false; loading = false; } RoundingEdited(); };
             cFloor.CheckedChanged += (s, e) => { if (loading) return; if (cFloor.Checked) { loading = true; cCeil.Checked = false; loading = false; } RoundingEdited(); };
             f.Controls.Add(rowDec);
+            f.Controls.Add(rowRound);
             f.Controls.Add(bCal);
             f.Controls.Add(bPreset);
             f.Controls.Add(cKeepScale);
@@ -2252,6 +2258,11 @@ namespace SnapMeasure
             return s != null && Canvas.IsFillShape(s);
         }
 
+        internal string StyleHeader { get { return lStyleFor.Text; } }      // for the self-checks
+        bool lineless;                  // the bar is a fill's: no line, no Closed
+        internal bool Lineless { get { return lineless; } }
+        internal bool PickerReady { get { return pickerSwatch != null && palBar.Enabled && pickerSwatch.Enabled; } }
+
         Shape StyleTarget()
         {
             if (cv.EditingShape != null) return cv.EditingShape;
@@ -2263,6 +2274,7 @@ namespace SnapMeasure
 
         static string KindName(Shape s)
         {
+            if (Canvas.IsFillShape(s)) return "Fill";
             switch (s.Kind)
             {
                 case ShapeKind.Rect: return "Rectangle";
@@ -2291,7 +2303,8 @@ namespace SnapMeasure
             Shape s = StyleTarget();
             loading = true;
             foreach (Control c in styleBar.Controls) c.Enabled = s != null || c == lStyleFor;
-            palBar.Enabled = s != null;
+            palBar.Enabled = true;
+            foreach (Control c in palBar.Controls) c.Enabled = s != null || c == pickerSwatch;
             if (s == null)
             {
                 lStyleFor.Text = Lang.T(cv.CurrentTool == Tool.Cutout ? "Cut-out (uses the area's or polygon's style)" : cv.CurrentTool == Tool.Ocr ? "Copy text (OCR)" : "Pick a tool or shape");
@@ -2346,7 +2359,7 @@ namespace SnapMeasure
                 // length (W) and polygon: tick Closed to close the outline. The Area tool (M) is always closed: no tick.
                 rowClosed.Visible = kd == ShapeKind.Perimeter || (kd == ShapeKind.Polygon && cv.CurrentTool != Tool.Cutout && !(cv.Selected == null && cv.CurrentTool == Tool.Fill));
                 rowLabelAt.Visible = kd == ShapeKind.Dimension;
-                if (rowLabelAt.Visible) cLabelAt.SelectedIndex = Math.Max(0, Math.Min(2, s.Align));
+                if (rowLabelAt.Visible) cLabelAt.SelectedIndex = Math.Max(0, Math.Min(2, s.LabelAt));
                 rowShow.Visible = (kd == ShapeKind.Area && cv.CurrentTool != Tool.Cutout) || kd == ShapeKind.Radius;
                 if (rowShow.Visible)
                 {
@@ -2356,6 +2369,9 @@ namespace SnapMeasure
                     cShow.SelectedIndex = kd == ShapeKind.Radius ? Array.IndexOf(RadiusShowMode, s.Mode) : Math.Max(0, Math.Min(items.Length - 1, s.Mode));
                 }
                 if (rowClosed.Visible) cClosed.Checked = s.Mode == 0 && s.FromArea == 0;
+                // a fill has no line: giving it one, or opening it, would quietly turn it into a polygon
+                lineless = Canvas.IsFillShape(s) && (s.Form == 1 || (cv.Selected == null && cv.CurrentTool == Tool.Fill));
+                if (lineless) gLine.Visible = gDash.Visible = rowClosed.Visible = false;
                 // text: the line width IS the frame (0 = no frame), so no separate Frame box
                 rowFrame.Visible = false;
                 tip.SetToolTip(nWidth, kd == ShapeKind.Text ? "Frame width – 0 = no frame" : "Line width");
@@ -2391,9 +2407,10 @@ namespace SnapMeasure
                 cUnder.Checked = s.Underline;
                 cStrike.Checked = s.Strikeout;
                 cAlignL.Checked = s.Align == 0; cAlignC.Checked = s.Align == 1; cAlignR.Checked = s.Align == 2;
-                cAlign.SelectedIndex = Math.Max(0, Math.Min(2, s.Align));
-                cVAlign.Visible = kd == ShapeKind.Text;
-                cVAlign.SelectedIndex = Math.Max(0, Math.Min(2, s.VAlign));
+                cTop.Visible = cMid.Visible = cBot.Visible = kd == ShapeKind.Text;
+                cTop.Checked = s.VAlign <= 0; cMid.Checked = s.VAlign == 1; cBot.Checked = s.VAlign >= 2;
+                for (int i = 0; i < textRow.Length; i++)       // showing a hidden button can move it
+                    if (textRow[i].Parent == rowTextStyle) rowTextStyle.Controls.SetChildIndex(textRow[i], i);
                 ShowFontName(s.HasTextStyle ? s.FontFamilyName : Renderer.DefaultFont);
             }
             LoadMarker();
@@ -2465,13 +2482,21 @@ namespace SnapMeasure
                 Color c = d.Color;
                 if (stroke) ApplyStyle(x => x.Stroke = c);
                 else ApplyStyle(x => { x.Fill = c; if (x.FillOpacity == 0) x.FillOpacity = 50; });
-                Settings.Set("PickedColor", (c.ToArgb() & 0xFFFFFF).ToString(CultureInfo.InvariantCulture));
-                if (pickerSwatch != null) pickerSwatch.Invalidate();
+                RememberPicked(c);
                 LoadStyle();
             }
         }
 
         Panel pickerSwatch;
+
+        /// <summary>A colour chosen with the screen picker or "More colours": shown on the swatch, and Ctrl+Plus
+        /// adds canvas in it.</summary>
+        internal void RememberPicked(Color c)
+        {
+            Settings.Set("PickedColor", (c.ToArgb() & 0xFFFFFF).ToString(CultureInfo.InvariantCulture));
+            Settings.Set("ExtendColour", "4");
+            if (pickerSwatch != null) pickerSwatch.Invalidate();
+        }
 
         /// <summary>The screen colour picker: the colour clicked becomes the line colour (right-click: the fill colour)
         /// of the tool or the selected shapes, and its HEX code goes to the clipboard.</summary>
@@ -2485,12 +2510,11 @@ namespace SnapMeasure
             if (!got.HasValue) { cv.Focus(); return; }
             Color c = Color.FromArgb(255, got.Value);
             string hex = "#" + c.R.ToString("X2") + c.G.ToString("X2") + c.B.ToString("X2");
-            Settings.Set("PickedColor", (c.ToArgb() & 0xFFFFFF).ToString(CultureInfo.InvariantCulture));
-            if (pickerSwatch != null) pickerSwatch.Invalidate();
+            RememberPicked(c);
             App.TrySetClipboardText(hex);
             if (StyleTarget() == null)
             {
-                Flash(hex + " " + Lang.T("copied") + " – " + Lang.T("pick a tool or select a shape to use it"));
+                Flash(hex + " " + Lang.T("copied") + " – " + Lang.T("Ctrl+Plus adds canvas in this colour"));
             }
             else
             {
@@ -2516,9 +2540,23 @@ namespace SnapMeasure
             g.TranslateTransform(r.X, r.Y);
             g.ScaleTransform(r.Width / 32f, r.Height / 32f);
             Color ink = dark ? Color.White : Color.FromArgb(36, 40, 48);
-            using (Pen p = new Pen(ink, 4.5f)) { p.StartCap = LineCap.Triangle; p.EndCap = LineCap.Round; g.DrawLine(p, 6, 26, 19, 13); }
-            using (Pen p = new Pen(ink, 3f)) { p.StartCap = p.EndCap = LineCap.Round; g.DrawLine(p, 15, 11, 21, 17); }
-            using (SolidBrush b = new SolidBrush(ink)) g.FillEllipse(b, 18, 4, 10, 10);
+            using (GraphicsPath tube = new GraphicsPath())
+            using (Pen p = new Pen(ink, 2.2f))
+            {
+                p.LineJoin = LineJoin.Round; p.StartCap = p.EndCap = LineCap.Round;
+                tube.AddLine(16.5f, 11.5f, 7.5f, 20.5f);
+                tube.AddBezier(7.5f, 20.5f, 4.5f, 24, 4.5f, 26.5f, 5, 27);
+                tube.AddBezier(5, 27, 5.5f, 27.5f, 8, 27.5f, 11.5f, 24.5f);
+                tube.AddLine(11.5f, 24.5f, 20.5f, 15.5f);
+                g.DrawPath(p, tube);            // not filled: the picked colour shows through the glass
+            }
+            using (Pen p = new Pen(Color.FromArgb(120, ink), 1.6f)) g.DrawLine(p, 9.5f, 19.5f, 16, 20);
+            using (Pen p = new Pen(ink, 4.2f)) { p.StartCap = p.EndCap = LineCap.Round; g.DrawLine(p, 15.5f, 8.5f, 23.5f, 16.5f); }
+            using (SolidBrush b = new SolidBrush(ink))
+            {
+                g.FillEllipse(b, 18.5f, 3.5f, 10, 10);
+                g.FillPolygon(b, new[] { new PointF(17, 11), new PointF(20, 6), new PointF(26, 12), new PointF(21, 15) });
+            }
             g.Restore(st);
         }
 
@@ -2723,6 +2761,7 @@ namespace SnapMeasure
         // ---------- 1.4.2 Find (Ctrl+F): annotation text, labels, values, tool names and (optionally) the picture's text ----------
         Form findForm;
         TextBox findBox;
+        Action<bool> findMode;           // folds or unfolds Replace in the open window
         TextRecognition.Result findOcr;
         object findOcrImg;
 
@@ -2730,15 +2769,15 @@ namespace SnapMeasure
         {
             public string Text;
             public Shape Shape;
-            public Tool? Tool;
             public Rectangle? Box;
+            public bool Counts;             // listed on the "Measurements & counts" tab, not under "Texts"
             public override string ToString() { return Text; }
         }
 
         // Find options (the ⋮ menu, like a PDF editor's): kept while the editor is open
-        bool findCase, findWhole, findAccents = true, findLabels = true, findTools = true, findPicture;
+        bool findCase, findWhole, findAccents = true, findLabels = true, findPicture;
 
-        static string StripMarks(string s)
+        internal static string StripMarks(string s)
         {
             if (string.IsNullOrEmpty(s)) return s ?? "";
             string d = s.Normalize(NormalizationForm.FormD);
@@ -2762,74 +2801,183 @@ namespace SnapMeasure
             return s => !string.IsNullOrEmpty(s) && (rx.IsMatch(s) || (rx2 != null && rx2.IsMatch(StripMarks(s))));
         }
 
-        void ShowFind()
+        /// <summary>Find (Ctrl+F) and Replace (Ctrl+H): one small window; Replace is folded away until asked for.</summary>
+        void ShowFind(bool replace)
         {
             cv.EndTextEdit(true);
-            if (findForm != null && !findForm.IsDisposed) { findForm.Activate(); findBox.Focus(); findBox.SelectAll(); return; }
+            if (findForm != null && !findForm.IsDisposed) { findForm.Activate(); findMode(replace); return; }
             Form f = new Form();
             f.Text = Lang.T("Find and replace");
-            f.FormBorderStyle = FormBorderStyle.SizableToolWindow;
+            f.FormBorderStyle = FormBorderStyle.FixedToolWindow;     // it sizes itself to what is shown
             f.ShowInTaskbar = false;
             f.AutoScaleMode = AutoScaleMode.None;      // laid out with S() already: no second enlargement from the font
             f.Font = Font;
             f.Owner = this;
             f.StartPosition = FormStartPosition.Manual;
-            f.ClientSize = new Size(S(360), S(390));
-            f.MinimumSize = new Size(S(300), S(250));
-            Point at = PointToScreen(new Point(Math.Max(0, ClientSize.Width - f.Width - S(24)), S(90)));
-            f.Location = at;
-            int cw = f.ClientSize.Width;
-            AnchorStyles lr = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
-            // labels stay visible once the boxes have text in them (the grey hint disappears as you type)
-            int lw = S(84);
-            Label lFind = new Label(), lRep = new Label();
-            lFind.Text = Lang.T("Find"); lRep.Text = Lang.T("Replace with");
-            lFind.AutoSize = lRep.AutoSize = false;
-            lFind.TextAlign = lRep.TextAlign = ContentAlignment.MiddleLeft;
-            lFind.SetBounds(S(8), S(8), lw, S(24));
-            lRep.SetBounds(S(8), S(40), lw, S(24));
-            TextBox t = new TextBox();
-            t.SetBounds(S(8) + lw, S(8), cw - S(8) - lw - S(104), S(24));
-            t.Anchor = lr;
-            // Case sensitive and Whole words as switch buttons, so it shows which are on; the rest in the ⋮ menu
-            CheckBox bCase = new CheckBox(), bWhole = new CheckBox();
-            bCase.Appearance = bWhole.Appearance = Appearance.Button;
-            bCase.TextAlign = bWhole.TextAlign = ContentAlignment.MiddleCenter;
-            bCase.UseMnemonic = bWhole.UseMnemonic = false;
-            bCase.Text = "Aa"; bWhole.Text = "ab|";
-            bCase.Checked = findCase; bWhole.Checked = findWhole;
-            bCase.SetBounds(cw - S(100), S(7), S(30), S(26));
-            bWhole.SetBounds(cw - S(68), S(7), S(30), S(26));
-            bCase.Anchor = bWhole.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            tip.SetToolTip(bCase, Lang.T("Case sensitive"));
-            tip.SetToolTip(bWhole, Lang.T("Whole words"));
-            // ⋮ = the other search options
-            Button bOpt = new Button();
-            bOpt.Text = "⋮"; bOpt.UseMnemonic = false; bOpt.FlatStyle = FlatStyle.System;
-            bOpt.SetBounds(cw - S(36), S(7), S(28), S(26));
-            bOpt.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            tip.SetToolTip(bOpt, Lang.T("More search options"));
-            TextBox rep = new TextBox();
-            rep.SetBounds(S(8) + lw, S(40), cw - S(16) - lw, S(24));
-            rep.Anchor = lr;
-            Button bRep = new Button(), bAll = new Button();
-            bRep.Text = Lang.T("Replace"); bAll.Text = Lang.T("Replace all");
-            bRep.FlatStyle = bAll.FlatStyle = FlatStyle.System;
-            bRep.SetBounds(S(8) + lw, S(72), S(90), S(26));
-            bAll.SetBounds(S(104) + lw, S(72), S(100), S(26));
+            f.KeyPreview = true;
+            f.ClientSize = new Size(S(340), S(110));
+            // every control is made now and only shown or hidden, so the dark colours and tick sizes reach all of them
+            TextBox t = new TextBox { Name = "find" };
+            SetCue(t, Lang.T("Type to find"));
+            Button bPrev = new Button { Name = "prev", Text = "<", FlatStyle = FlatStyle.System };
+            Button bNext = new Button { Name = "next", Text = ">", FlatStyle = FlatStyle.System };
+            tip.SetToolTip(bPrev, Lang.T("Previous (Shift+Enter)"));
+            tip.SetToolTip(bNext, Lang.T("Next (Enter)"));
+            Label lCount = new Label { Name = "count", AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+            FlowLayoutPanel ticks = new FlowLayoutPanel { WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty };
+            CheckBox bCase = new CheckBox { Name = "case", Text = Lang.T("Match case"), Checked = findCase };
+            CheckBox bWhole = new CheckBox { Name = "whole", Text = Lang.T("Whole words"), Checked = findWhole };
+            CheckBox bPic = new CheckBox { Name = "pic", Text = Lang.T("Picture text"), Checked = findPicture };
+            foreach (CheckBox c in new[] { bCase, bWhole, bPic })
+            {
+                c.AutoSize = true; c.UseMnemonic = false; c.Margin = new Padding(0, 0, S(10), 0);
+                ticks.Controls.Add(c);
+            }
+            tip.SetToolTip(bPic, Lang.T("Search words inside the picture too (OCR): found and zoomed to, not replaced"));
+            Button bExpand = new Button { Name = "expand", AutoSize = true, FlatStyle = FlatStyle.Flat, TextAlign = ContentAlignment.MiddleLeft };
+            bExpand.FlatAppearance.BorderSize = 0;
+            tip.SetToolTip(bExpand, Lang.T("Replace") + " (Ctrl+H)");
+            LinkLabel lMore = new LinkLabel { Name = "more", Text = Lang.T("More options"), AutoSize = true, LinkBehavior = LinkBehavior.HoverUnderline };
+            TextBox rep = new TextBox { Name = "rep" };
+            SetCue(rep, Lang.T("Replace with…"));
+            Button bRep = new Button { Name = "bRep", Text = Lang.T("Replace"), FlatStyle = FlatStyle.System };
+            Button bAll = new Button { Name = "bAll", Text = Lang.T("Replace all"), FlatStyle = FlatStyle.System };
             tip.SetToolTip(bRep, Lang.T("Replace in the chosen result, then go to the next one"));
             tip.SetToolTip(bAll, Lang.T("Replace in every annotation text (one undo step)"));
-            Label lInfo = new Label();
-            lInfo.AutoSize = false; lInfo.AutoEllipsis = true;
-            lInfo.TextAlign = ContentAlignment.MiddleLeft;
-            lInfo.SetBounds(S(8), S(104), cw - S(16), S(20));
-            lInfo.Anchor = lr;
-            ListBox lb = new ListBox();
-            lb.IntegralHeight = false;
-            lb.SetBounds(S(8), S(128), cw - S(16), f.ClientSize.Height - S(136));
-            lb.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right | AnchorStyles.Bottom;
-            f.Controls.Add(lFind); f.Controls.Add(t); f.Controls.Add(bCase); f.Controls.Add(bWhole); f.Controls.Add(bOpt);
-            f.Controls.Add(lRep); f.Controls.Add(rep); f.Controls.Add(bRep); f.Controls.Add(bAll); f.Controls.Add(lInfo); f.Controls.Add(lb);
+            Label lInfo = new Label { Name = "info", AutoSize = false, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+            ListBox lb = new ListBox { Name = "list", IntegralHeight = false, DrawMode = DrawMode.OwnerDrawFixed };
+            // two tabs over the one list: what Replace can change, and what SnapMeasure worked out
+            RadioButton tabTexts = new RadioButton { Name = "tabTexts" }, tabCounts = new RadioButton { Name = "tabCounts" };
+            foreach (RadioButton tab in new[] { tabTexts, tabCounts })
+            {
+                tab.Appearance = Appearance.Button; tab.FlatStyle = FlatStyle.Flat; tab.TextAlign = ContentAlignment.MiddleCenter;
+                tab.AutoCheck = false; tab.UseMnemonic = false; tab.Margin = Padding.Empty;
+                tab.FlatAppearance.BorderColor = SystemColors.ControlDark;
+                tab.FlatAppearance.CheckedBackColor = Color.FromArgb(204, 228, 247);
+            }
+            tabTexts.Checked = true;
+            List<FindHit> all = new List<FindHit>();        // the matches of both tabs
+            lb.DrawItem += (s, e) =>
+            {
+                if (e.Index < 0 || e.Index >= lb.Items.Count) return;
+                FindHit h = (FindHit)lb.Items[e.Index];
+                bool sel = (e.State & DrawItemState.Selected) != 0;
+                using (SolidBrush br = new SolidBrush(sel ? SystemColors.Highlight : lb.BackColor)) e.Graphics.FillRectangle(br, e.Bounds);
+                Color ink = sel ? SystemColors.HighlightText : lb.ForeColor;
+                Rectangle at = e.Bounds;
+                at.X += S(4); at.Width -= S(4);
+                TextRenderer.DrawText(e.Graphics, h.Text, f.Font, at, ink,
+                                      TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            };
+            // the two text boxes sit in a frame as tall as the buttons beside them; "2 of 3" is shown inside the find box
+            Panel findFrame = new Panel(), repFrame = new Panel();
+            foreach (Panel frame in new[] { findFrame, repFrame })
+            {
+                Panel p = frame;
+                TextBox inner = p == findFrame ? t : rep;
+                inner.BorderStyle = BorderStyle.None;
+                p.BackColor = SystemColors.Window;
+                p.Controls.Add(inner);
+                p.Cursor = Cursors.IBeam;
+                p.Click += (s, e) => inner.Focus();
+                p.Paint += (s, e) =>
+                {
+                    using (Pen pen = new Pen(inner.Focused ? SystemColors.Highlight : Theme.Dark ? Theme.Separator : SystemColors.ControlDark))
+                        e.Graphics.DrawRectangle(pen, 0, 0, p.Width - 1, p.Height - 1);
+                };
+                inner.GotFocus += (s, e) => p.Invalidate();
+                inner.LostFocus += (s, e) => p.Invalidate();
+            }
+            findFrame.Controls.Add(lCount);
+            lCount.TextAlign = ContentAlignment.MiddleRight;
+            lCount.Cursor = Cursors.IBeam;
+            lCount.Click += (s, e) => t.Focus();
+            // places the box and the count inside the find frame
+            Action inside = () =>
+            {
+                int w = lCount.Text.Length == 0 ? 0 : TextRenderer.MeasureText(lCount.Text, f.Font).Width + S(2);
+                lCount.SetBounds(findFrame.Width - w - S(6), 1, w, Math.Max(0, findFrame.Height - 2));
+                t.SetBounds(S(6), (findFrame.Height - t.PreferredHeight) / 2, Math.Max(S(40), findFrame.Width - S(14) - (w > 0 ? w + S(4) : 0)), t.PreferredHeight);
+            };
+            f.Controls.AddRange(new Control[] { findFrame, bPrev, bNext, ticks, bExpand, lMore, repFrame, bRep, bAll, lInfo, tabTexts, tabCounts, lb });
+            bool expanded = replace;
+            // places what is shown, top to bottom, and fits the window to it
+            Action arrange = () =>
+            {
+                int pad = S(10), th = TextRenderer.MeasureText("Ag가", f.Font).Height;
+                int line = Math.Max(S(26), th + S(10));      // tall enough for the font, Korean included
+                // each tab at least as wide as its words (a button keeps some room of its own around them)
+                int w1 = TextRenderer.MeasureText(tabTexts.Text, f.Font).Width + S(28), w2 = TextRenderer.MeasureText(tabCounts.Text, f.Font).Width + S(28);
+                // (the ticks' own widths: the row they were last spread over would keep the window wide)
+                int used = bCase.PreferredSize.Width + bWhole.PreferredSize.Width + bPic.PreferredSize.Width;
+                int cw = Math.Max(S(340), Math.Max(used + 2 * S(10), w1 + w2) + 2 * pad);
+                int bw = S(30), y = pad;
+                // every row starts at 'pad' and ends at 'cw - pad'
+                findFrame.SetBounds(pad, y, cw - 2 * pad - 2 * bw - S(6), line);
+                bNext.SetBounds(cw - pad - bw, y, bw, line);
+                bPrev.SetBounds(bNext.Left - S(2) - bw, y, bw, line);
+                inside();
+                y += line + S(8);
+                // the three ticks spread over the whole row
+                int gap = Math.Max(S(10), (cw - 2 * pad - used) / 2);
+                bCase.Margin = bWhole.Margin = new Padding(0, 0, gap, 0);
+                bPic.Margin = Padding.Empty;
+                ticks.Location = new Point(pad, y);
+                y += ticks.PreferredSize.Height + S(4);
+                bExpand.Text = (expanded ? "▾  " : "▸  ") + Lang.T("Replace");
+                bExpand.Location = new Point(pad - S(8), y);
+                lMore.Location = new Point(cw - pad - lMore.PreferredWidth, y + Math.Max(0, (bExpand.Height - lMore.PreferredHeight) / 2));
+                y += bExpand.Height + S(4);
+                repFrame.Visible = rep.Visible = bRep.Visible = bAll.Visible = expanded;
+                if (expanded)
+                {
+                    int aw = TextRenderer.MeasureText(bAll.Text, f.Font).Width + S(18), rw = TextRenderer.MeasureText(bRep.Text, f.Font).Width + S(18);
+                    bAll.SetBounds(cw - pad - aw, y, aw, line);
+                    bRep.SetBounds(bAll.Left - S(4) - rw, y, rw, line);
+                    repFrame.SetBounds(pad, y, bRep.Left - S(6) - pad, line);
+                    rep.SetBounds(S(6), (line - rep.PreferredHeight) / 2, repFrame.Width - S(12), rep.PreferredHeight);
+                    y += line + S(6);
+                }
+                lInfo.Visible = lInfo.Text.Length > 0;
+                if (lInfo.Visible) { lInfo.SetBounds(pad, y, cw - 2 * pad, th + S(4)); y += th + S(6); }
+                lb.ItemHeight = Math.Min(255, th + S(4));
+                // the tabs and the list show once anything is found, on either tab
+                tabTexts.Visible = tabCounts.Visible = lb.Visible = all.Count > 0;
+                if (lb.Visible)
+                {
+                    int first = w1 + (cw - 2 * pad - w1 - w2) / 2;      // the spare room shared between them
+                    tabTexts.SetBounds(pad, y, first, line);
+                    tabCounts.SetBounds(pad + first, y, cw - 2 * pad - first, line);
+                    y += line + S(2);
+                    lb.SetBounds(pad, y, cw - 2 * pad, S(160)); y += S(166);
+                }
+                f.ClientSize = new Size(cw, y + S(4));
+            };
+            // "2 of 3" beside the < > buttons
+            // the shown tab's matches
+            Func<List<int>> found = () =>
+            {
+                List<int> at = new List<int>();
+                for (int j = 0; j < lb.Items.Count; j++) at.Add(j);
+                return at;
+            };
+            Action count = () =>
+            {
+                List<int> at = found();
+                int n = at.Count, i = at.IndexOf(lb.SelectedIndex);
+                lCount.Text = t.Text.Trim().Length == 0 ? "" : n == 0 ? Lang.T("Nothing found") :
+                              i < 0 ? string.Format(Lang.T("{0} found"), n) : string.Format(Lang.T("{0} of {1}"), i + 1, n);
+                bPrev.Enabled = bNext.Enabled = n > 0;
+                inside();
+            };
+            Action<string> note = msg => { lInfo.Text = msg; arrange(); };
+            Action<int> step = d =>
+            {
+                List<int> at = found();
+                int n = at.Count, i = at.IndexOf(lb.SelectedIndex);
+                if (n == 0) return;
+                lb.SelectedIndex = at[i < 0 ? (d > 0 ? 0 : n - 1) : (i + d + n) % n];
+            };
             // Replace works only on text you typed: the buttons are on only when there is some to replace
             Func<string, int> replaceable = q =>
             {
@@ -2839,127 +2987,173 @@ namespace SnapMeasure
                 foreach (Shape x in cv.Shapes) if (!string.IsNullOrEmpty(x.Text)) n += rx.Matches(x.Text).Count;
                 return n;
             };
-            // after a replace, the list says so instead of a bare "Nothing found"
             string afterReplace = null;
+            Action fill = () =>
+            {
+                bool counts = tabCounts.Checked;
+                lb.BeginUpdate();
+                lb.Items.Clear();
+                foreach (FindHit h in all) if (h.Counts == counts) lb.Items.Add(h);
+                lb.EndUpdate();
+            };
+            Action<bool> pick = counts => { tabTexts.Checked = !counts; tabCounts.Checked = counts; };
+            tabTexts.Click += (s, e) => { if (tabTexts.Checked) return; pick(false); fill(); count(); };
+            tabCounts.Click += (s, e) => { if (tabCounts.Checked) return; pick(true); fill(); count(); };
+            bool stay = false;          // searching again after a replace or an edit: the tab doesn't change
             Action search = () =>
             {
                 string q = t.Text.Trim();
-                lb.BeginUpdate();
-                lb.Items.Clear();
-                List<FindHit> found = FindAll(q, findPicture);
-                foreach (FindHit h in found) lb.Items.Add(h);
-                if (q.Length > 0 && lb.Items.Count == 0)
-                    lb.Items.Add(new FindHit { Text = afterReplace != null ? Lang.T("No more matches for") + " “" + q + "”" : Lang.T("Nothing found") });
-                lb.EndUpdate();
-                string count = q.Length == 0 ? "" : found.Count + " " + Lang.T(found.Count == 1 ? "result" : "results");
-                lInfo.Text = afterReplace != null ? afterReplace + (found.Count > 0 ? " – " + count + " " + Lang.T("left") : "") : count;
+                all.Clear();
+                all.AddRange(FindAll(q, findPicture));
+                int n = all.FindAll(h => h.Counts).Count, m = all.Count - n;
+                tabTexts.Text = Lang.T("Texts") + " (" + m + ")";
+                tabCounts.Text = Lang.T("Measurements & counts") + " (" + n + ")";
+                // never an empty tab while the other one has matches
+                if (!stay && (tabCounts.Checked ? n == 0 && m > 0 : m == 0 && n > 0)) pick(!tabCounts.Checked);
+                fill();
+                lInfo.Text = afterReplace ?? "";
                 afterReplace = null;
                 bRep.Enabled = bAll.Enabled = replaceable(q) > 0;
+                count();
+                arrange();
             };
+            // undo, redo, picture operations and edits swap or change the shapes: search again
+            bool replacing = false;
+            Timer again = new Timer { Interval = 200 };
+            bool quiet = false;             // re-selecting a result after a rebuild must not jump the view
+            again.Tick += (s, e) =>
+            {
+                again.Stop();
+                if (f.IsDisposed) return;
+                FindHit was = lb.SelectedItem as FindHit;
+                stay = true; search(); stay = false;
+                if (was == null || was.Shape == null) return;
+                for (int i = 0; i < lb.Items.Count; i++)
+                {
+                    FindHit now = lb.Items[i] as FindHit;
+                    if (now == null || now.Shape != was.Shape) continue;
+                    quiet = true;
+                    try { lb.SelectedIndex = i; } finally { quiet = false; }
+                    break;
+                }
+            };
+            EventHandler docChanged = (s, e) => { if (!replacing && !f.IsDisposed) { again.Stop(); again.Start(); } };
+            cv.DocChanged += docChanged;
             bCase.CheckedChanged += (s, e) => { findCase = bCase.Checked; search(); };
             bWhole.CheckedChanged += (s, e) => { findWhole = bWhole.Checked; search(); };
-            // the options menu: ticks, like a PDF editor's find bar
+            bPic.CheckedChanged += (s, e) =>
+            {
+                if (bPic.Checked && !TextRecognition.Available)
+                {
+                    Flash(Lang.T("Windows has no text-recognition language installed."));
+                    f.BeginInvoke(new Action(() => bPic.Checked = false));
+                    return;
+                }
+                if (findPicture == bPic.Checked) return;
+                findPicture = bPic.Checked;
+                search();
+            };
+            // the rarely used choices
             ContextMenuStrip opt = new ContextMenuStrip();
-            Func<string, Func<bool>, Action<bool>, ToolStripMenuItem> addOpt = (text, get, set) =>
+            Action<string, Func<bool>, Action<bool>> addOpt = (text, get, set) =>
             {
                 ToolStripMenuItem mi = new ToolStripMenuItem(Lang.T(text));
                 mi.CheckOnClick = true;
                 mi.Checked = get();
                 mi.CheckedChanged += (s, e) => { set(mi.Checked); search(); };
                 opt.Items.Add(mi);
-                return mi;
             };
             addOpt("Ignore accents", () => findAccents, v => findAccents = v);
-            opt.Items.Add(new ToolStripSeparator());
             addOpt("Include labels and values", () => findLabels, v => findLabels = v);
-            addOpt("Include tool names", () => findTools, v => findTools = v);
-            ToolStripMenuItem miPic = null;
-            miPic = addOpt("Include the picture's text (OCR)", () => findPicture, v =>
-            {
-                if (v && !TextRecognition.Available)
-                {
-                    Flash(Lang.T("Windows has no text-recognition language installed."));
-                    findPicture = false;
-                    BeginInvoke(new Action(() => miPic.Checked = false));
-                    return;
-                }
-                findPicture = v;
-            });
             opt.Closing += (s, e) => { if (e.CloseReason == ToolStripDropDownCloseReason.ItemClicked) e.Cancel = true; };   // tick several in one go
-            bOpt.Click += (s, e) => opt.Show(bOpt, new Point(0, bOpt.Height));
+            lMore.LinkClicked += (s, e) => opt.Show(lMore, new Point(0, lMore.Height));
+            bPrev.Click += (s, e) => step(-1);
+            bNext.Click += (s, e) => step(1);
+            Action<bool> mode = on =>
+            {
+                expanded = on;
+                arrange();
+                TextBox box = on && t.Text.Length > 0 ? rep : t;
+                box.Focus(); box.SelectAll();
+            };
+            bExpand.Click += (s, e) => mode(!expanded);
             // Replace: the chosen result (or the first), then on to the next; Replace all: every annotation text
             bRep.Click += (s, e) =>
             {
                 string q = t.Text.Trim();
                 if (q.Length == 0) return;
+                again.Stop();
                 FindHit h = lb.SelectedItem as FindHit;
-                if (h == null || h.Shape == null)
-                    foreach (object o in lb.Items) { FindHit x = o as FindHit; if (x != null && x.Shape != null && FindRegex(q).IsMatch(x.Shape.Text ?? "")) { h = x; break; } }
-                if (h == null || h.Shape == null || !cv.Shapes.Contains(h.Shape)) { lInfo.Text = Lang.T("Nothing to replace"); return; }
+                // a word in the picture is chosen: nothing else may change in its place
+                if (h != null && h.Shape == null) { note(Lang.T("Only text you typed can be replaced")); return; }
+                replacing = true; try { cv.EndTextEdit(true); } finally { replacing = false; }     // or the open text box would write the old text back
+                if (h == null)
+                    foreach (FindHit x in all) { if (x != null && x.Shape != null && FindRegex(q).IsMatch(x.Shape.Text ?? "")) { h = x; break; } }
+                if (h == null || h.Shape == null || !cv.Shapes.Contains(h.Shape)) { note(Lang.T("Nothing to replace")); return; }
                 Regex rx = FindRegex(q);
                 string old = h.Shape.Text ?? "";
-                if (!rx.IsMatch(old)) { lInfo.Text = Lang.T("Only text you typed can be replaced"); return; }
+                if (!rx.IsMatch(old)) { note(Lang.T("Only text you typed can be replaced")); return; }
                 cv.PushUndo(cv.Snapshot());
                 h.Shape.Text = rx.Replace(old, rep.Text.Replace("$", "$$"), 1);
                 h.Shape.Cache = null;
-                cv.NotifyDocChanged(); cv.Invalidate();
                 int idx = lb.SelectedIndex;
+                replacing = true; try { cv.NotifyDocChanged(); } finally { replacing = false; }
+                cv.Invalidate();
                 afterReplace = Lang.T("Replaced 1");
-                search();
-                FindHit first = lb.Items.Count > 0 ? lb.Items[0] as FindHit : null;
-                if (first != null && (first.Shape != null || first.Box != null || first.Tool != null))
-                    lb.SelectedIndex = Math.Max(0, Math.Min(lb.Items.Count - 1, idx));
+                stay = true; search(); stay = false;
+                List<int> now = found();
+                if (now.Count > 0) lb.SelectedIndex = now.Exists(j => j >= idx) ? now.Find(j => j >= idx) : now[now.Count - 1];
             };
             bAll.Click += (s, e) =>
             {
                 string q = t.Text.Trim();
                 if (q.Length == 0) return;
+                again.Stop();
+                replacing = true; try { cv.EndTextEdit(true); } finally { replacing = false; }
                 Regex rx = FindRegex(q);
                 int n = 0;
                 foreach (Shape x in cv.Shapes) if (!string.IsNullOrEmpty(x.Text)) n += rx.Matches(x.Text).Count;
-                if (n == 0) { lInfo.Text = Lang.T("Nothing to replace"); return; }
+                if (n == 0) { note(Lang.T("Nothing to replace")); return; }
                 cv.PushUndo(cv.Snapshot());
                 foreach (Shape x in cv.Shapes)
                     if (!string.IsNullOrEmpty(x.Text) && rx.IsMatch(x.Text)) { x.Text = rx.Replace(x.Text, rep.Text.Replace("$", "$$")); x.Cache = null; }
-                cv.NotifyDocChanged(); cv.Invalidate();
+                replacing = true; try { cv.NotifyDocChanged(); } finally { replacing = false; }
+                cv.Invalidate();
                 afterReplace = Lang.T("Replaced") + " " + n;
-                search();
+                stay = true; search(); stay = false;
                 Flash(Lang.T("Replaced") + " " + n + " – Ctrl+Z " + Lang.T("to undo"));
             };
             t.TextChanged += (s, e) => search();
-            lb.SelectedIndexChanged += (s, e) => GoTo(lb.SelectedItem as FindHit);
-            t.KeyDown += (s, e) =>
+            lb.SelectedIndexChanged += (s, e) => { count(); if (!quiet) GoTo(lb.SelectedItem as FindHit); };
+            f.KeyDown += (s, e) =>
             {
-                if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Down)
-                {
-                    e.SuppressKeyPress = true;
-                    if (lb.Items.Count > 0) lb.SelectedIndex = e.KeyCode == Keys.Enter ? (lb.SelectedIndex + 1) % lb.Items.Count : Math.Min(lb.Items.Count - 1, lb.SelectedIndex + 1);
-                }
+                // SuppressKeyPress: a text box would take Ctrl+H as Backspace
+                if (e.KeyData == (Keys.Control | Keys.H)) { e.SuppressKeyPress = true; mode(true); }
+                else if (e.KeyData == (Keys.Control | Keys.F)) { e.SuppressKeyPress = true; mode(false); }
                 else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; f.Close(); }
+                else if (e.KeyCode == Keys.Enter && rep.Focused) { e.SuppressKeyPress = true; bRep.PerformClick(); }
+                else if (e.KeyCode == Keys.Enter && (t.Focused || lb.Focused)) { e.SuppressKeyPress = true; step(e.Shift ? -1 : 1); }
+                else if (e.KeyCode == Keys.Down && t.Focused) { e.SuppressKeyPress = true; step(1); }
             };
-            rep.KeyDown += (s, e) =>
-            {
-                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; bRep.PerformClick(); }
-                else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; f.Close(); }
-            };
-            lb.KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) f.Close(); };
-            f.FormClosed += (s, e) => { cv.FindMark = null; cv.Invalidate(); findForm = null; opt.Dispose(); };
-            findForm = f; findBox = t;
-            bRep.Enabled = bAll.Enabled = false;
+            f.FormClosed += (s, e) => { cv.DocChanged -= docChanged; again.Stop(); again.Dispose(); cv.FindMark = null; cv.Invalidate(); findForm = null; findMode = null; opt.Dispose(); };
+            findForm = f; findBox = t; findMode = mode;
             Theme.Apply(f);                 // dark mode, like every other window
-            lInfo.ForeColor = Theme.Dark ? Theme.Label2 : SystemColors.GrayText;
+            if (Theme.Dark) tabTexts.FlatAppearance.CheckedBackColor = tabCounts.FlatAppearance.CheckedBackColor = Theme.AccentFill;
+            findFrame.BackColor = repFrame.BackColor = lCount.BackColor = t.BackColor;
+            t.BorderStyle = rep.BorderStyle = BorderStyle.None;     // the frames draw the edge
+            bExpand.BackColor = f.BackColor;
+            bExpand.ForeColor = Theme.Text;
+            lInfo.ForeColor = lCount.ForeColor = Theme.Dark ? Theme.Label2 : SystemColors.GrayText;
             if (Theme.Dark) lb.BorderStyle = BorderStyle.None;      // the list's own edge drew a bright white frame
-            if (Theme.Dark)
-                foreach (CheckBox sw in new[] { bCase, bWhole })
-                {
-                    sw.FlatStyle = FlatStyle.Flat;
-                    sw.BackColor = Theme.Fill; sw.ForeColor = Theme.Label;
-                    sw.FlatAppearance.BorderColor = Theme.Separator;
-                    sw.FlatAppearance.CheckedBackColor = Theme.AccentFill;
-                    sw.FlatAppearance.MouseOverBackColor = Theme.FillHover;
-                }
+            search();
+            f.Shown += (s, e) =>
+            {
+                arrange();          // the tick boxes have their final size now
+                f.Location = PointToScreen(new Point(Math.Max(0, ClientSize.Width - f.Width - S(24)), S(90)));
+                mode(expanded);
+            };
+            f.Location = PointToScreen(new Point(Math.Max(0, ClientSize.Width - f.Width - S(24)), S(90)));
             f.Show(this);
-            t.Focus();
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
@@ -2971,10 +3165,11 @@ namespace SnapMeasure
             t.HandleCreated += (s, e) => SendCue(t.Handle, 0x1501, (IntPtr)1, cue);     // EM_SETCUEBANNER
         }
 
-        /// <summary>The matches for 'q' (with the Find options): shapes, tools, then the picture's own text.</summary>
+        /// <summary>The matches for 'q' (with the Find options): typed texts and the picture's own text, then
+        /// the measurements and counts.</summary>
         List<FindHit> FindAll(string q, bool ocr)
         {
-            List<FindHit> hits = new List<FindHit>();
+            List<FindHit> hits = new List<FindHit>(), texts = new List<FindHit>(), values = new List<FindHit>(), picture = new List<FindHit>();
             if (q.Length == 0) return hits;
             Func<string, bool> has = FindMatcher(q);
             Dictionary<Shape, string> names = Renderer.Labels(cv.Shapes, cv.Scale);
@@ -2987,18 +3182,13 @@ namespace SnapMeasure
                 string kind = Lang.T(KindName(s));
                 string text = (s.Text ?? "").Replace("\r", "").Replace("\n", " ");
                 string val = r != null ? r.Display : "";
-                if (has(text) || (findLabels && (has(n) || has(kind) || has(val) || (r != null && has(r.Label)))))
+                if (has(text) || (findLabels && (has(n) || has(val) || (r != null && has(r.Label)))))
                 {
-                    if (n == text) n = null;      // a symbol marker's label is its own text: show it once
-                    string show = (string.IsNullOrEmpty(n) ? "" : n + "  ") + kind + (text.Length > 0 ? " – " + text : val.Length > 0 ? " – " + val : "");
-                    hits.Add(new FindHit { Text = show.Length > 90 ? show.Substring(0, 88) + "…" : show, Shape = s });
+                    // a symbol marker reads like a number or letter marker: its character, then what it is
+                    string show = s.IsSymbolMarker ? text + "  " + kind
+                        : (string.IsNullOrEmpty(n) || n == text ? "" : n + "  ") + kind + (text.Length > 0 ? " – " + text : val.Length > 0 ? " – " + val : "");
+                    (has(text) ? texts : values).Add(new FindHit { Text = show.Length > 90 ? show.Substring(0, 88) + "…" : show, Shape = s });
                 }
-            }
-            if (findTools)
-            foreach (KeyValuePair<Tool, ToolStripButton> kv in toolButtons)
-            {
-                string tipText = kv.Value.ToolTipText ?? "";
-                if (has(tipText)) hits.Add(new FindHit { Text = "🛠 " + Lang.T("Tool") + ": " + (tipText.Length > 80 ? tipText.Substring(0, 78) + "…" : tipText), Tool = kv.Key });
             }
             if (ocr && cv.Image != null)
             {
@@ -3016,19 +3206,75 @@ namespace SnapMeasure
                         if (!has(lt)) continue;
                         Rectangle box = line[0].Box;
                         foreach (TextRecognition.Word w in line) if (has(w.Text)) { box = w.Box; break; }
-                        hits.Add(new FindHit { Text = "🔍 " + (lt.Length > 80 ? lt.Substring(0, 78) + "…" : lt), Box = box });
+                        picture.Add(new FindHit { Text = Lang.T("Picture") + ": " + (lt.Length > 80 ? lt.Substring(0, 78) + "…" : lt), Box = box });
                     }
                 }
                 catch (Exception ex) { Flash(Lang.T("Could not read the picture's text:") + " " + ex.Message); }
                 finally { Cursor = Cursors.Default; }
             }
+            hits.AddRange(texts);                           // what Replace can change
+            hits.AddRange(picture);
+            foreach (FindHit h in values) h.Counts = true;  // worked out by SnapMeasure: found only
+            hits.AddRange(values);
             return hits;
         }
+
+        /// <summary>For the self-test: the Find window's tabs and shown rows after searching 'q'; 'counts' clicks a tab first.</summary>
+        internal string FindTab(string q, bool? counts)
+        {
+            if (findForm == null || findForm.IsDisposed) ShowFind(false);
+            Func<string, Control> c = n => findForm.Controls.Find(n, true)[0];
+            findBox.Text = q;
+            if (counts.HasValue)
+                typeof(RadioButton).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(c(counts.Value ? "tabCounts" : "tabTexts"), new object[] { EventArgs.Empty });
+            List<string> rows = new List<string>();
+            foreach (object o in ((ListBox)c("list")).Items) rows.Add(o.ToString());
+            return (((RadioButton)c("tabCounts")).Checked ? "counts " : "texts ") + c("tabTexts").Text + " " + c("tabCounts").Text + "|" + string.Join("|", rows.ToArray());
+        }
+        /// <summary>For the self-test: a "word in the picture" row is chosen and Replace pressed; what Find then says.</summary>
+        internal string ReplaceOnPictureRow(string q, string with)
+        {
+            FindTab(q, false);
+            ListBox lb = (ListBox)findForm.Controls.Find("list", true)[0];
+            lb.SelectedIndex = lb.Items.Add(new FindHit { Text = "picture word", Box = new Rectangle(1, 1, 20, 10) });
+            findMode(true);
+            findForm.Controls.Find("rep", true)[0].Text = with;
+            Button b = (Button)findForm.Controls.Find("bRep", true)[0];
+            typeof(Button).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(b, new object[] { EventArgs.Empty });
+            return findForm.Controls.Find("info", true)[0].Text;
+        }
+        /// <summary>For the self-test: Find's width as it is, with a very long tab title, and after the next search.</summary>
+        internal string FindWidths(string q)
+        {
+            FindTab(q, false);
+            int was = findForm.ClientSize.Width;
+            findForm.Controls.Find("tabCounts", true)[0].Text = new string('W', 60);
+            findMode(true);
+            int wide = findForm.ClientSize.Width;
+            findBox.Text = q + " ";
+            findBox.Text = q;
+            return (wide > was) + "|" + (findForm.ClientSize.Width == was);
+        }
+        /// <summary>For the self-test: Replace all (or Replace until the list is empty), then which tab shows, how many
+        /// it lists and which one is chosen (choosing one zooms to it).</summary>
+        internal string ReplaceThen(string q, string with, bool all)
+        {
+            FindTab(q, false);
+            findMode(true);
+            findForm.Controls.Find("rep", true)[0].Text = with;
+            ListBox lb = (ListBox)findForm.Controls.Find("list", true)[0];
+            RadioButton counts = (RadioButton)findForm.Controls.Find("tabCounts", true)[0];
+            for (int i = 0; i < (all ? 1 : 5) && lb.Items.Count > 0 && !counts.Checked; i++)
+                typeof(Button).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(findForm.Controls.Find(all ? "bAll" : "bRep", true)[0], new object[] { EventArgs.Empty });
+            return (counts.Checked ? "counts " : "texts ") + lb.Items.Count + " " + lb.SelectedIndex;
+        }
+        internal void CloseFind() { if (findForm != null && !findForm.IsDisposed) findForm.Close(); }
 
         void GoTo(FindHit h)
         {
             if (h == null) return;
-            if (h.Tool.HasValue) { cv.FindMark = null; cv.CurrentTool = h.Tool.Value; cv.Invalidate(); return; }
             RectangleF r;
             if (h.Shape != null)
             {
@@ -3184,8 +3430,9 @@ namespace SnapMeasure
             catch (Exception ex) { MessageBox.Show(this, Lang.T("Could not print:") + " " + ex.Message, "SnapMeasure", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
 
-        /// <summary>Ctrl+Plus / Ctrl+Minus: 10 px more or less on every side; new room takes the colour last chosen in Extend canvas.</summary>
-        void StepCanvas(bool grow)
+        /// <summary>Ctrl+Plus / Ctrl+Minus: 10 px more or less on every side; new room takes the colour last
+        /// picked with the pipette, or the background last chosen in Extend canvas, whichever is newer.</summary>
+        internal void StepCanvas(bool grow)
         {
             cv.EndTextEdit(true);
             if (cv.Image == null) return;
@@ -3193,9 +3440,9 @@ namespace SnapMeasure
             {
                 if (grow)
                 {
-                    int ci = Settings.GetInt("ExtendColour", 0);
-                    Color back = ci == 2 ? Color.Transparent : ci == 3 ? Color.Black : Color.White;
-                    if (ci == 1) { try { back = cv.Image.GetPixel(0, 0); } catch (Exception) { } }
+                    Color edge = Color.White;
+                    try { edge = cv.Image.GetPixel(0, 0); } catch (Exception) { }
+                    Color back = Dialogs.ExtendBack(Dialogs.ExtendChoice(), edge);
                     cv.ExtendCanvas(10, 10, 10, 10, back);
                 }
                 else if (!cv.ShrinkCanvas(10)) { Flash(Lang.T("No added room left – Ctrl+Minus stops at the picture's own edge.")); return; }
@@ -3306,6 +3553,7 @@ namespace SnapMeasure
             {
                 ProjectExtras ex = new ProjectExtras();
                 ex.Crop = cv.CropRect;
+                ex.AddedRoom = (int[])cv.AddedRoom.Clone();
                 ex.HGuides.AddRange(cv.HGuides);
                 ex.VGuides.AddRange(cv.VGuides);
                 ProjectFile.Save(path, cv.Image, cv.Shapes, cv.Scale, ex);
@@ -3331,7 +3579,8 @@ namespace SnapMeasure
                 SetPaletteColor(mods == Keys.Alt, code - Keys.D1);
                 return true;
             }
-            bool inText = ActiveControl is TextBoxBase || ActiveControl is NumericUpDown || cv.IsEditingText || textListEditing;
+            bool inText = ActiveControl is TextBoxBase || ActiveControl is NumericUpDown || cv.IsEditingText || textListEditing ||
+                          (tsSearch != null && tsSearch.Focused) || (searchOwn != null && searchOwn.Focused);
             switch (keyData)
             {
                 case Keys.Control | Keys.Z: if (!inText) { cv.Undo(); return true; } break;
@@ -3367,7 +3616,9 @@ namespace SnapMeasure
                 // 1.4.2: Ctrl+I = invert, Ctrl+G = grayscale (in a text box Ctrl+I stays italic)
                 case Keys.Control | Keys.I: if (!inText) { cv.ImageOp("invert"); Flash(Lang.T("Colours inverted (Ctrl+Z undoes it)")); return true; } break;
                 case Keys.Control | Keys.G: if (!inText) { cv.ImageOp("gray"); Flash(Lang.T("Grayscale (Ctrl+Z undoes it)")); return true; } break;
-                case Keys.Control | Keys.F: if (!inText) { ShowFind(); return true; } break;
+                case Keys.Control | Keys.F: if (!inText) { ShowFind(false); return true; } break;
+                case Keys.Control | Keys.H: if (!inText) { ShowFind(true); return true; } break;
+                case Keys.Control | Keys.K: if (!cv.IsEditingText && !textListEditing) { FocusSearch(); return true; } break;
                 case Keys.F4: TogglePanel(); return true;
                 case Keys.Alt | Keys.L: if (!cv.IsEditingText) { PickColor(true); return true; } break;
                 case Keys.Alt | Keys.F: if (!cv.IsEditingText) { PickColor(false); return true; } break;

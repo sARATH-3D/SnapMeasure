@@ -205,9 +205,14 @@ namespace SnapMeasure
                     // screens), and the 13 px glyph matches a 9 pt Segoe UI line of about 16 px
                     float k = cc.Font.Height / 16f;
                     if (k < 1.15f) return;
-                    int size = (int)Math.Round(13f * k), extra = size - 13;
+                    int size = (int)Math.Round(13f * k), native = 13;
+                    // at 150 % / 200 % Windows already draws a bigger box: drawing over it left its right edge showing
+                    try { using (Graphics g = cc.CreateGraphics()) native = CheckBoxRenderer.GetGlyphSize(g, System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal).Width; }
+                    catch (Exception) { }
+                    if (size - native < 3) return;
+                    int extra = size - native;
                     cc.Padding = new Padding(cc.Padding.Left + extra, cc.Padding.Top, cc.Padding.Right, cc.Padding.Bottom);
-                    cc.Paint += (s, e) => DrawTick(cc, e.Graphics, size, extra);
+                    cc.Paint += (s, e) => DrawTick(cc, e.Graphics, size, extra, native);
                     cc.Invalidate();
                 };
                 if (c.IsHandleCreated) setUp(); else c.HandleCreated += (s, e) => setUp();
@@ -223,7 +228,7 @@ namespace SnapMeasure
             }
         }
 
-        static void DrawTick(Control c, Graphics g, int size, int extra)
+        static void DrawTick(Control c, Graphics g, int size, int extra, int native)
         {
             try
             {
@@ -239,8 +244,8 @@ namespace SnapMeasure
                 // cover the small glyph Windows drew (it sits 'extra' px further right, centred the same way)
                 Color bg = c.BackColor;
                 for (Control p = c; bg.A < 255 && p.Parent != null; p = p.Parent) bg = p.Parent.BackColor;
-                int sy = top ? c.Padding.Top + Math.Max(0, (lineH - 13) / 2) : (c.Height - 13) / 2;
-                using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, 0, Math.Min(y, sy) - 1, extra + 15, size + 2);
+                int sy = top ? c.Padding.Top + Math.Max(0, (lineH - native) / 2) : (c.Height - native) / 2;
+                using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, 0, Math.Min(y, sy) - 1, extra + native + 2, size + 2);
 
                 bool en = c.Enabled;
                 Color accent = Dark ? Accent : Color.FromArgb(0, 103, 192);
@@ -391,6 +396,8 @@ namespace SnapMeasure
             {
                 c.ForeColor = MapFore(fore);
                 if (back.A != 0) c.BackColor = MapBack(back);
+                CheckBox tg = c as CheckBox;
+                if (tg != null && tg.Appearance == Appearance.Button) tg.FlatAppearance.CheckedBackColor = AccentFill;
                 WinTheme(c, "DarkMode_Explorer", null);
                 ReadableWhenOff(c);
                 return;
@@ -489,12 +496,27 @@ namespace SnapMeasure
                 TextRenderer.DrawText(e.Graphics, e.Header.Text, lv.Font, t, Label2,
                                       TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             };
-            lv.DrawItem += (s, e) => { e.DrawDefault = true; };
-            lv.DrawSubItem += (s, e) => { e.DrawDefault = true; };
+            // Windows writes a selected row in black, unreadable on dark: that row is drawn here instead
+            lv.DrawItem += (s, e) => { e.DrawDefault = lv.View != View.Details || !e.Item.Selected; };
+            lv.DrawSubItem += (s, e) =>
+            {
+                if (!e.Item.Selected) { e.DrawDefault = true; return; }
+                DrawSelectedCell(e.Graphics, lv, e.Item, e.ColumnIndex, e.Bounds);
+            };
             WinTheme(lv, "DarkMode_Explorer", null);
             // the header strip to the right of the last column is painted by Windows (white): paint it dark too
             Action hdr = () => { try { IntPtr h = SendMessage(lv.Handle, 0x101F, IntPtr.Zero, IntPtr.Zero); if (h != IntPtr.Zero) new HeaderFiller(lv, h); } catch (Exception) { } };
             if (lv.IsHandleCreated) hdr(); else lv.HandleCreated += (s, e) => hdr();
+        }
+
+        static void DrawSelectedCell(Graphics g, ListView lv, ListViewItem item, int col, Rectangle r)
+        {
+            if (col == 0) r.Width = Math.Min(r.Width, lv.Columns[0].Width);     // Windows gives the first cell the whole row
+            using (SolidBrush bg = new SolidBrush(AccentFill)) g.FillRectangle(bg, r);
+            Font f = item.UseItemStyleForSubItems || col >= item.SubItems.Count ? item.Font : item.SubItems[col].Font;
+            Rectangle t = new Rectangle(r.X, r.Y, Math.Max(0, r.Width - 2), r.Height);     // text where the other rows have it
+            TextRenderer.DrawText(g, col < item.SubItems.Count ? item.SubItems[col].Text : "", f, t, Label,
+                                  TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine);
         }
 
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);

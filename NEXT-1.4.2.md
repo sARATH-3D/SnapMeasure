@@ -1,6 +1,6 @@
 # SnapMeasure 1.4.2: requested changes (noted 2026-11-26)
 
-Status: **built locally 2026-11-26, not committed.** All 16 items are in the source; version 1.4.2.0; 204/204 self-checks pass. Not yet checked by eye in the running editor (the screen was locked). Nothing pushed, tagged or uploaded.
+Status: **built locally 2026-11-26.** Version 1.4.2.0. Three local commits on `release-1.4.2` (`0e0fa7e`, `677c084`, then the cloud review fixes and the later rounds below); 250/250 self-checks pass. Release files prepared in `Share` (MSIX not installed, WACK not run). Nothing pushed, tagged or uploaded.
 
 Implementation choices made while building:
 - Stamp moved to **Shift+Z** (Z = zoom to area). Fill tool = **Shift+F**. Find = **Ctrl+F**. Symbol marker = **Shift+M**.
@@ -27,6 +27,62 @@ Design pass (full UI check of every window in light and dark, 2026-11-26), built
 - Same names for the same things: "Calibrate from a known length" and "Drawing scales" dialogs; "Copy all text" in the Copy menu; Extend canvas says "Add space around the picture" and "Background".
 - Symbol dialog: wider box for 12 characters, "or pick a symbol:". Save-changes question without the old "?" icon.
 - Tick boxes and option buttons drawn at the text's size when the text is enlarged (they stayed 13 px).
+
+Cloud review fixes (ultrareview, 2026-11-26), built locally, 214/214 self-checks pass:
+- Dimension value position has its own setting (it moved with text alignment).
+- Freehand closes onto its own start when released; turned boxes and ellipses bound a fill and take freehand ends.
+- Fill on a filled area changes its colour instead of hiding a second fill under it.
+- Remove background judges the cropped picture, and changes nothing when there is nothing to clear.
+- Origin coordinates: "12.5" is never read as 125 on decimal-comma Windows.
+- Find: finishes the open text box before replacing; the result list follows undo and edits.
+- Ctrl+Minus: never empties a cropped picture; the added room is saved in .snapm.
+- No self-check, try by hand: Find / Replace (with a text box open, and after Ctrl+Z) and freehand closing onto its start.
+
+Second cloud review (2026-11-26), 216/216 self-checks pass: 8 of its 10 findings were already fixed above. Also fixed:
+- The Focus mode list no longer turns selected number markers into symbol markers; files saved that way open as numbers.
+- Arcs, radius arcs and angle arms bound a fill.
+- Korean texts for the new features (and Appearance/Light/Dark, missing since 1.4.0). Written by Claude: have a native speaker check before the Store release.
+
+Speed fix (benchmark, 2026-11-26): a very large outline took 13.7 s and 1.7 GB to fill. Fill now stays within the picture for clicks on it, and refuses areas reaching too far beyond it. Find waits 200 ms for changes to settle before searching again. 218/218 self-checks pass. Still slow: filling on an A1 page at 300 dpi takes about 6 s; a wait cursor shows meanwhile.
+
+Find window made simpler (user's feedback, 2026-11-26): Ctrl+F opens Find, Ctrl+H opens it with Replace unfolded; Match case / Whole words / Picture text ticks on one line; < > with "2 of 3"; rarely used choices under More options; list and Replace shown only when needed.
+
+Tool search and Fill icon (user's feedback, 2026-11-26): a search box in the top bar (Ctrl+K) picks tools and commands; Find is for the drawing's text only ("Include tool names" removed; its button moved to Adjust → Find and replace). Fill icon recoloured to the draw group's red. 225/225 self-checks pass; typing into the box with the real keyboard not yet tried.
+
+Screenshot round (user's feedback, 2026-11-26), 232/232 self-checks pass. These replace the older Fill notes above.
+- Fill is bounded by annotations only (planned: options for a THERM .bmp import later). A closed shape nothing touches is filled with its own outline; large areas are worked at a smaller scale.
+- A fill with holes or more than 12 corners shows no corner handles; corners snap to the lines they came from.
+- Fill icon redrawn as a tipped bucket with a drop. Alignment: six toggle buttons (top / middle / bottom for text boxes, left / centre / right) instead of two lists.
+- Find list in sections: Texts, Measurements & counts, Picture text; type names no longer match; symbol markers read like number markers.
+- Scale panel: Ceil / Floor on their own "Rounding" row; the unit after "1 pixel =" is no longer cut off. Tick boxes at 200% fixed. Search box centred. Dark mode: pressed toggle buttons are readable.
+- Open: which message blocks the header (item 2); Remove background: keep, replace or drop (item 9).
+
+Third screenshot round (2026-11-26/27), 240/240 self-checks pass:
+- Fill is now worked out from the lines' geometry (no pixel grid): loose ends are ignored, so no jagged notches; cut-outs stay open and fill on their own; clouds are filled to their scallops.
+- An unfilled revision cloud is picked on its outline, so it and its fill can be selected and deleted separately.
+- A selected fill is headed "Fill (selected)". Search box: soft pill with a magnifier. Colour picker button works with nothing selected.
+- A selected fill's bar offers no Line or Closed. Fill timed with up to 300 revision clouds (under 1.5 s).
+- Right-click, tested: Polygon, open polygon, Area, Length, Perimeter, Focus perimeter and Cut-out end at the last clicked point; Angle, Arc and Radius finish on their third click, and a right-click after two cancels them. Asked the user for the steps that show the reported problem.
+- Open, suggestions only: picked colour for Extend canvas; slimmer text bar; Find list layout; Fill icon (three candidates); the header "message"; Remove background.
+
+Fourth round (user's choices, 2026-11-27), 243/243 self-checks pass:
+- Find has two tabs, Texts (picture words included, marked "Picture:") and Measurements & counts; an empty tab is left for the other one when only that has matches.
+- Fill icon: choice B, an all-red outline bucket.
+- The "message that blocks the header" was the capture screen's hint: now one short line (translated), gone after 3 s or when the pointer comes near. Arrow keys and Enter are described in the README instead.
+- Open, suggestions only: picked colour for Extend canvas; slimmer text bar; Remove background.
+
+Fifth round (user's screenshots, 2026-11-27), 246/246 self-checks pass:
+- Replace with a picture-word row chosen changes nothing and says so.
+- Ctrl+Plus / Extend canvas use the colour last picked with the pipette ("Picked colour" in the dialog).
+- Colour picker icon redrawn as a dropper: round bulb, collar, hollow tube.
+- Find window laid out to one left and right edge; the count sits inside the find box.
+- Ctrl+Shift+T is a default key for Capture text (it takes "reopen closed tab" from browsers while SnapMeasure runs).
+
+Dark mode: the selected row of the Texts and measurements lists was written in black; it now has light text on blue (checked in off-screen pictures).
+
+Also fixed (247/247): the Find window shrinks back after a wide title; a colour from *More colours* is used by Ctrl+Plus too.
+
+Fixed after the on-screen test (250/250): Find stays on its tab after Replace and Replace all; a window opened light keeps its light search box after Appearance is switched to Dark.
 
 Notes in *italics* are suggestions or findings from the current code, not decisions.
 

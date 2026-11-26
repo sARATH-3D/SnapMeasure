@@ -179,7 +179,24 @@ namespace SnapMeasure
         readonly Font font, small;
         int Zoom { get { return Math.Max(8, (int)Math.Round(8 * k)); } }   // magnifier pixels per screen pixel
         readonly float k;            // UI scale of the monitor the capture starts on (2 on a 200 % screen)
-        const string Hint = "Drag to select an area  ·  Click a window to capture it  ·  Arrow keys = 1 px nudge  ·  Enter = all screens  ·  Esc / right-click = cancel";
+        // short, and only for a moment: it sits where the title bar of the window being picked is
+        readonly string hint = Lang.T("Drag an area or click a window  ·  Esc = cancel");
+        bool hintOn = true;
+        readonly Timer hintTimer = new Timer { Interval = 3000 };
+        internal bool HintShown { get { return hintOn; } }             // for the self-checks
+        internal Rectangle HintArea { get { return hintRect; } }
+        internal void PointerAt(Point p)
+        {
+            Rectangle near = hintRect; near.Inflate((int)(40 * k), (int)(40 * k));
+            if (near.Contains(p)) HideHint();
+        }
+        void HideHint()
+        {
+            if (!hintOn) return;
+            hintOn = false;
+            hintTimer.Stop();
+            Invalidate(hintRect);
+        }
 
         public RegionSelector(Bitmap shot, Rectangle vs, List<Rectangle> wins)
         {
@@ -196,6 +213,7 @@ namespace SnapMeasure
             Cursor = Cursors.Cross;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.Opaque, true);
             Bounds = vs;
+            hintTimer.Tick += (s, e) => HideHint();
 
             dim = new Bitmap(shot.Width, shot.Height, PixelFormat.Format24bppRgb);
             using (Graphics g = Graphics.FromImage(dim))
@@ -208,8 +226,9 @@ namespace SnapMeasure
             cur = new Point(cp.X - vs.X, cp.Y - vs.Y);
 
             Rectangle scr = Screen.FromPoint(cp).Bounds;
-            Size hs = TextRenderer.MeasureText(Hint, small);
-            hintRect = new Rectangle(scr.X - vs.X + (scr.Width - hs.Width) / 2 - (int)(12 * k), scr.Y - vs.Y + (int)(14 * k), hs.Width + (int)(24 * k), hs.Height + (int)(12 * k));
+            Size hs = TextRenderer.MeasureText(hint, small);
+            int hw = hs.Width + (int)(16 * k);
+            hintRect = new Rectangle(scr.X - vs.X + (scr.Width - hw) / 2, scr.Y - vs.Y + (int)(6 * k), hw, hs.Height + (int)(6 * k));
             UpdateHover();
         }
 
@@ -226,6 +245,7 @@ namespace SnapMeasure
             Bounds = vs;
             Activate();
             Focus();
+            if (hintOn) hintTimer.Start();
         }
 
         Rectangle CurrentRect() { return dragging ? sel : hover; }
@@ -315,10 +335,10 @@ namespace SnapMeasure
                 TextRenderer.DrawText(g, t, font, lr, Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
             }
 
-            if (clip.IntersectsWith(hintRect))
+            if (hintOn && clip.IntersectsWith(hintRect))
             {
                 using (SolidBrush b = new SolidBrush(Color.FromArgb(225, 20, 20, 20))) g.FillRectangle(b, hintRect);
-                TextRenderer.DrawText(g, Hint, small, hintRect, Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
+                TextRenderer.DrawText(g, hint, small, hintRect, Color.White, TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
             }
             if (showMag) DrawMag(g);
         }
@@ -373,6 +393,7 @@ namespace SnapMeasure
         protected override void OnMouseMove(MouseEventArgs e)
         {
             cur = e.Location;
+            PointerAt(cur);
             if (dragging) sel = Norm(start, cur); else UpdateHover();
             Dirty();
         }
@@ -415,7 +436,7 @@ namespace SnapMeasure
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { dim.Dispose(); font.Dispose(); small.Dispose(); }
+            if (disposing) { hintTimer.Dispose(); dim.Dispose(); font.Dispose(); small.Dispose(); }
             base.Dispose(disposing);
         }
     }

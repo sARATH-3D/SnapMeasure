@@ -100,6 +100,7 @@ namespace SnapMeasure
         public PointF LabelOffset;          // Area: where its label sits, from the middle of the area (1.3)
         public RectangleF LabelRect;        // Area: the label box as last drawn (for its handles; not saved)
         public int Align;            // 0 left, 1 centre, 2 right (Text, speech bubble)
+        public int LabelAt;          // 1.4.2 Dimension: 0 value on the line, 1 above, 2 below (not Align: that is text alignment)
         public int VAlign;           // 1.4.2: 0 top, 1 middle, 2 bottom – where the text sits in a taller text box
         public int HeadStart;        // Line / Arrow / Dimension: HeadStyle at the first point
         public int HeadEnd = 1;      // … and at the second point
@@ -1295,6 +1296,33 @@ namespace SnapMeasure
         }
 
         static bool IsCloudStyle(Shape s) { return s.Dash == (int)LineStyle.Cloud; }
+
+        /// <summary>The scallops of a revision cloud, or of a shape drawn with the cloud line style, as they are drawn
+        /// (turned, closed ones ending where they start). Null for everything else.</summary>
+        public static List<PointF> CloudOutline(Shape s)
+        {
+            if (s.Pts.Count < 2) return null;
+            bool cloud = s.Kind == ShapeKind.Cloud;
+            if (!cloud && !(IsCloudStyle(s) && (s.Kind == ShapeKind.Rect || s.Kind == ShapeKind.Ellipse ||
+                (s.Kind == ShapeKind.Polygon && !s.IsOpenPath && s.Pts.Count >= 3) || (s.Kind == ShapeKind.Area && s.Pts.Count >= 3)))) return null;
+            float w = Math.Max(0.5f, s.Width);
+            bool boxed = cloud || s.Kind == ShapeKind.Rect || s.Kind == ShapeKind.Ellipse;
+            RectangleF r = boxed ? Geo.Rect(s.Pts[0], s.Pts[1]) : RectangleF.Empty;
+            PointF[] pts;
+            using (GraphicsPath gp = cloud ? CloudPath(r, w)
+                : s.Kind == ShapeKind.Rect ? CloudPolyPath(new PointF[] { new PointF(r.X, r.Y), new PointF(r.Right, r.Y), new PointF(r.Right, r.Bottom), new PointF(r.X, r.Bottom) }, true, w)
+                : s.Kind == ShapeKind.Ellipse ? CloudPolyPath(EllipsePoints(r, 64), true, w)
+                : CloudPolyPath(s.Pts, true, w))
+            {
+                if (gp.PointCount < 3) return null;
+                if (boxed && Math.Abs(s.Angle) > 0.01f)
+                    using (Matrix m = new Matrix()) { m.RotateAt(s.Angle, Geo.Center(r)); gp.Transform(m); }
+                pts = gp.PathPoints;
+            }
+            List<PointF> o = new List<PointF>(pts);
+            if (Geo.Dist(o[0], o[o.Count - 1]) > 0.01f) o.Add(o[0]);
+            return o;
+        }
 
         static PointF[] EllipsePoints(RectangleF r, int n)
         {
@@ -2545,8 +2573,8 @@ namespace SnapMeasure
                 // shaft between the heads, with a gap in the middle for the value when it fits
                 float s0 = HeadBack(s.HeadStart, w, hl, hw), s1 = L - HeadBack(s.HeadEnd, w, hl, hw);
                 float gapHalf = tsz.Width / 2f + 4f + w;
-                // 1.4.2 label position (Align): 0 = on the line (in a gap, above when it doesn't fit), 1 = above, 2 = below
-                int place = s.Align;
+                // 1.4.2 label position (LabelAt): 0 = on the line (in a gap, above when it doesn't fit), 1 = above, 2 = below
+                int place = s.LabelAt;
                 bool inline = place == 0 && s1 - s0 > 2f * gapHalf + 6f;
                 if (s1 > s0)
                 {
@@ -2761,10 +2789,12 @@ namespace SnapMeasure
                 case ShapeKind.Perimeter:
                 case ShapeKind.Freehand:
                     {
-                        if (s.Kind != ShapeKind.Freehand)
+                        // a traced fill (many corners, or holes) is colour, not geometry: no corner handles
+                        bool traced = Canvas.IsFillShape(s) && (s.Holes != null || s.Pts.Count > 12);
+                        if (s.Kind != ShapeKind.Freehand && !traced)
                             for (int i = 0; i < s.Pts.Count; i++) h.Add(new Handle(s.Pts[i], HKind.Point, i));
                         // the corners of its cut-outs: drag to reshape a cut-out (Ctrl+click removes a corner)
-                        if (s.Holes != null)
+                        if (s.Holes != null && !traced)
                             for (int k = 0; k < s.Holes.Count; k++)
                                 for (int i = 0; i < s.Holes[k].Count && i < HoleStride; i++) h.Add(new Handle(s.Holes[k][i], HKind.HolePoint, k * HoleStride + i));
                         // area / perimeter label: yellow knob in its middle = move it, corner = size of its text
@@ -3031,6 +3061,23 @@ namespace SnapMeasure
             if ((s.Kind == ShapeKind.Area || s.Kind == ShapeKind.Perimeter || s.Kind == ShapeKind.Radius) && !s.LabelRect.IsEmpty && s.LabelRect.Contains(p)) return true;
             if (s.Rotatable && s.Angle != 0f) p = Geo.Rot(p, Center(s), -s.Angle);
             float t = tol + s.Width / 2f;
+            if ((s.Kind == ShapeKind.Cloud || s.Kind == ShapeKind.Rect || s.Kind == ShapeKind.Ellipse) && s.Pts.Count >= 2)
+            {
+                if (s.Kind == ShapeKind.Cloud && s.Mode != 0 && s.Pts.Count > 2)
+                {
+                    RectangleF cr = Renderer.CalloutRect(s); cr.Inflate(tol, tol);
+                    if (cr.Contains(p)) return true;
+                }
+                float turn = s.Angle; s.Angle = 0;                  // p is already turned back
+                List<PointF> o;
+                try { o = Renderer.CloudOutline(s); } finally { s.Angle = turn; }
+                if (o != null)
+                {
+                    if (s.FillOpacity > 0 && Geo.InPolygon(p, o)) return true;
+                    for (int i = 1; i < o.Count; i++) if (Geo.SegDist(p, o[i - 1], o[i]) <= t) return true;
+                    return false;
+                }
+            }
             switch (s.Kind)
             {
                 case ShapeKind.Rect:
@@ -3053,13 +3100,6 @@ namespace SnapMeasure
                     return false;
                 case ShapeKind.Origin:
                     return Geo.Dist(p, s.Pts[0]) <= Math.Max(6f, s.FontSize * 0.9f) * 1.8f + tol;
-                case ShapeKind.Cloud:
-                    if (s.Mode != 0 && s.Pts.Count > 2)
-                    {
-                        RectangleF cr = Renderer.CalloutRect(s); cr.Inflate(tol, tol);
-                        if (cr.Contains(p)) return true;
-                    }
-                    goto case ShapeKind.Pixelate;
                 case ShapeKind.Pixelate:
                 case ShapeKind.Highlight:
                 case ShapeKind.Image:
@@ -3295,6 +3335,7 @@ namespace SnapMeasure
     public class ProjectExtras
     {
         public Rectangle? Crop;
+        public int[] AddedRoom;     // left, top, right, bottom added by Extend canvas / Ctrl+Plus
         public List<float> HGuides = new List<float>(), VGuides = new List<float>();
     }
 
@@ -3330,6 +3371,7 @@ namespace SnapMeasure
             if (!string.IsNullOrEmpty(s.FontName)) w.WriteAttributeString("fontName", s.FontName);
             w.WriteAttributeString("align", s.Align.ToString(Inv));
             if (s.VAlign != 0) w.WriteAttributeString("valign", s.VAlign.ToString(Inv));
+            if (s.LabelAt != 0) w.WriteAttributeString("labelAt", s.LabelAt.ToString(Inv));
             if (s.Kind == ShapeKind.Freehand)
             {
                 // own names: older files stored a default "arrow at the end" on every shape, which must not turn into freehand arrows
@@ -3517,6 +3559,7 @@ namespace SnapMeasure
             { string fn = e.GetAttribute("fontName"); s.FontName = string.IsNullOrEmpty(fn) || fn.Length > 64 ? null : fn; }
             s.Align = PI(e.GetAttribute("align"), s.Kind == ShapeKind.Bubble ? 1 : 0);
             s.VAlign = Math.Max(0, Math.Min(2, PI(e.GetAttribute("valign"), 0)));
+            s.LabelAt = Math.Max(0, Math.Min(2, PI(e.GetAttribute("labelAt"), 0)));
             if (s.Kind == ShapeKind.Freehand)
             {
                 s.HeadStart = PI(e.GetAttribute("arrowStart"), 0);
@@ -3534,6 +3577,7 @@ namespace SnapMeasure
                 s.Heads = PI(e.GetAttribute("heads"), s.Kind == ShapeKind.Arrow ? 1 : 0);
             }
             s.Text = e.GetAttribute("text");
+            if (s.Kind == ShapeKind.Counter && (s.Mode > 2 || (s.Mode == 2 && s.Text.Length == 0))) s.Mode = 0;
             s.Dash = PI(e.GetAttribute("dash"), 0);
             s.Form = PI(e.GetAttribute("form"), 0);
             s.Strength = PI(e.GetAttribute("strength"), 0);
@@ -3608,6 +3652,8 @@ namespace SnapMeasure
                 if (sc.MarkerReverse) w.WriteAttributeString("markerReverse", "1");
                 if (sc.OriginX != 0) w.WriteAttributeString("originX", F(sc.OriginX));
                 if (sc.OriginY != 0) w.WriteAttributeString("originY", F(sc.OriginY));
+                if (ex.AddedRoom != null && ex.AddedRoom.Length == 4 && Array.Exists(ex.AddedRoom, v => v > 0))
+                    w.WriteAttributeString("addedRoom", ex.AddedRoom[0] + "," + ex.AddedRoom[1] + "," + ex.AddedRoom[2] + "," + ex.AddedRoom[3]);
                 if (ex.Crop.HasValue)
                 {
                     Rectangle r = ex.Crop.Value;
@@ -3743,6 +3789,13 @@ namespace SnapMeasure
             XmlNode imgNode = root.SelectSingleNode("image");
             if (imgNode == null) throw new InvalidDataException("The project has no image.");
             Bitmap img = DecodeImage(imgNode.InnerText);
+            string[] ar = root.GetAttribute("addedRoom").Split(',');
+            if (ar.Length == 4)
+            {
+                int[] room = new int[4];
+                for (int i = 0; i < 4; i++) room[i] = Math.Max(0, Math.Min(i % 2 == 0 ? img.Width : img.Height, PI(ar[i], 0)));
+                ex.AddedRoom = room;
+            }
             foreach (XmlElement e in root.SelectNodes("shape"))
             {
                 Shape s;

@@ -867,9 +867,7 @@ namespace SnapMeasure
             if (!CropRect.HasValue) return;
             Rectangle r = CropRect.Value;
             // added room that the crop cut away is gone too
-            int[] m = AddedRoom;
-            AddedRoom = new int[] { Math.Max(0, m[0] - r.X), Math.Max(0, m[1] - r.Y),
-                                 Math.Max(0, m[2] - (Image.Width - r.Right)), Math.Max(0, m[3] - (Image.Height - r.Bottom)) };
+            AddedRoom = RoomAfterCrop(r);
             Bitmap b = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(b))
                 g.DrawImage(Image, new Rectangle(0, 0, r.Width, r.Height), r, GraphicsUnit.Pixel);
@@ -880,6 +878,14 @@ namespace SnapMeasure
             for (int i = 0; i < HGuides.Count; i++) HGuides[i] -= r.Y;
             for (int i = 0; i < VGuides.Count; i++) VGuides[i] -= r.X;
             CropRect = null;
+        }
+
+        /// <summary>The added room left on each side once cropped to 'r' – never more than the crop itself is wide or tall.</summary>
+        int[] RoomAfterCrop(Rectangle r)
+        {
+            int[] m = AddedRoom;
+            return new int[] { Math.Min(r.Width, Math.Max(0, m[0] - r.X)), Math.Min(r.Height, Math.Max(0, m[1] - r.Y)),
+                               Math.Min(r.Width, Math.Max(0, m[2] - (Image.Width - r.Right))), Math.Min(r.Height, Math.Max(0, m[3] - (Image.Height - r.Bottom))) };
         }
 
         static PointF[] BoxPts(RectangleF r)
@@ -1019,13 +1025,14 @@ namespace SnapMeasure
         {
             if (Image == null || px <= 0) return false;
             // what is left of the added room once a crop is made permanent
-            int[] m = AddedRoom;
-            if (CropRect.HasValue)
-            {
-                Rectangle cr = CropRect.Value;
-                m = new int[] { Math.Max(0, m[0] - cr.X), Math.Max(0, m[1] - cr.Y), Math.Max(0, m[2] - (Image.Width - cr.Right)), Math.Max(0, m[3] - (Image.Height - cr.Bottom)) };
-            }
+            int[] m = CropRect.HasValue ? RoomAfterCrop(CropRect.Value) : AddedRoom;
             int l = Math.Min(px, m[0]), t = Math.Min(px, m[1]), r = Math.Min(px, m[2]), b = Math.Min(px, m[3]);
+            // never below 16 px: a crop can lie wholly inside the added room
+            int vw = CropRect.HasValue ? CropRect.Value.Width : Image.Width, vh = CropRect.HasValue ? CropRect.Value.Height : Image.Height;
+            int over = l + r - Math.Max(0, vw - 16);
+            if (over > 0) { int cut = Math.Min(over, r); r -= cut; l = Math.Max(0, l - (over - cut)); }
+            over = t + b - Math.Max(0, vh - 16);
+            if (over > 0) { int cut = Math.Min(over, b); b -= cut; t = Math.Max(0, t - (over - cut)); }
             if (l + t + r + b == 0) return false;
             EndTextEdit(true);
             creating = null;
@@ -1073,9 +1080,13 @@ namespace SnapMeasure
         static List<PointF> SnapOutline(Shape s)
         {
             if (s.Pts.Count < 2) return null;
+            List<PointF> cloud = Renderer.CloudOutline(s);       // scallops are followed, not the box under them
+            if (cloud != null) return cloud;
             switch (s.Kind)
             {
-                case ShapeKind.Line: case ShapeKind.Arrow: case ShapeKind.Dimension: case ShapeKind.Freehand:
+                case ShapeKind.Arc: case ShapeKind.Radius:
+                    return s.Pts.Count >= 3 ? Geo.ArcPoints(s.Pts[0], s.Pts[1], s.Pts[2], 96) : new List<PointF>(s.Pts);
+                case ShapeKind.Line: case ShapeKind.Arrow: case ShapeKind.Dimension: case ShapeKind.Freehand: case ShapeKind.Angle:
                     return s.IsMarkerPen ? null : new List<PointF>(s.Pts);
                 case ShapeKind.Polygon: case ShapeKind.Area: case ShapeKind.Perimeter: case ShapeKind.Polyline:
                     {
@@ -1086,12 +1097,10 @@ namespace SnapMeasure
                 case ShapeKind.Rect: case ShapeKind.Cloud:
                     {
                         RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
-                        if (Math.Abs(s.Angle) > 0.01f) return null;
-                        return new List<PointF> { new PointF(r.Left, r.Top), new PointF(r.Right, r.Top), new PointF(r.Right, r.Bottom), new PointF(r.Left, r.Bottom), new PointF(r.Left, r.Top) };
+                        return Turned(new List<PointF> { new PointF(r.Left, r.Top), new PointF(r.Right, r.Top), new PointF(r.Right, r.Bottom), new PointF(r.Left, r.Bottom), new PointF(r.Left, r.Top) }, s.Angle, r);
                     }
                 case ShapeKind.Ellipse:
                     {
-                        if (Math.Abs(s.Angle) > 0.01f) return null;
                         RectangleF r = Geo.Rect(s.Pts[0], s.Pts[1]);
                         List<PointF> e = new List<PointF>();
                         for (int i = 0; i <= 120; i++)
@@ -1099,10 +1108,19 @@ namespace SnapMeasure
                             double a = i * Math.PI * 2 / 120;
                             e.Add(new PointF(r.X + r.Width / 2f + (float)Math.Cos(a) * r.Width / 2f, r.Y + r.Height / 2f + (float)Math.Sin(a) * r.Height / 2f));
                         }
-                        return e;
+                        return Turned(e, s.Angle, r);
                     }
                 default: return null;
             }
+        }
+
+        /// <summary>The outline turned by the shape's angle about the middle of its box, as it is drawn.</summary>
+        static List<PointF> Turned(List<PointF> pts, float angle, RectangleF r)
+        {
+            if (Math.Abs(angle) <= 0.01f) return pts;
+            PointF[] a = pts.ToArray();
+            using (Matrix m = new Matrix()) { m.RotateAt(angle, Geo.Center(r)); m.TransformPoints(a); }
+            return new List<PointF>(a);
         }
 
         /// <summary>The tool as far as clicking goes: a Focus with the Perimeter form is drawn corner by corner, like an area.</summary>
@@ -1331,31 +1349,69 @@ namespace SnapMeasure
             List<KeyValuePair<List<PointF>, float>> lines = new List<KeyValuePair<List<PointF>, float>>();
             foreach (Shape s in Shapes)
             {
+                if (IsFillShape(s)) continue;     // earlier fills are colour, not boundaries
                 List<PointF> e = SnapOutline(s);
-                if (e != null) lines.Add(new KeyValuePair<List<PointF>, float>(e, s.Width));
+                if (e == null) continue;
+                lines.Add(new KeyValuePair<List<PointF>, float>(e, s.Width));
+                // cut-outs are outlines too: the fill stops at them
+                if (s.Holes != null && CanHaveHoles(s))
+                    foreach (List<PointF> h in s.Holes)
+                        if (h.Count >= 3) lines.Add(new KeyValuePair<List<PointF>, float>(new List<PointF>(h) { h[0] }, s.Width));
             }
             string why;
             List<List<PointF>> loops;
-            try { loops = Regions.FillOutline(Image, lines, ip, FillGap, FillTolerance, out why); }
-            catch (Exception ex) { loops = null; why = "Could not fill: " + ex.Message; }
+            Cursor wasCursor = Cursor.Current;
+            Cursor.Current = Cursors.WaitCursor;     // for the odd slow one
+            try { loops = Regions.FillOutline(lines, ip, FillGap, out why); }
+            catch (Exception ex) { loops = null; why = Lang.T("Could not fill:") + " " + ex.Message; }
+            finally { Cursor.Current = wasCursor; }
             if (loops == null) { if (Message != null) Message(why ?? "Nothing to fill there"); return false; }
             Shape f = NewShape(Tool.Fill, ip);
             f.Kind = ShapeKind.Polygon;
             f.Mode = 0;
+            f.Form = 1;         // marked as a fill: its style bar offers no line or Closed
             f.Pts = loops[0];
             f.Holes = loops.Count > 1 ? loops.GetRange(1, loops.Count - 1) : null;
             f.Cache = null;
+            // already filled there: the same area takes the new colour; a part of it gets its own fill on top
+            int old = -1;
+            for (int i = Shapes.Count - 1; i >= 0 && old < 0; i--)
+                if (IsFillShape(Shapes[i]) && InFill(Shapes[i], ip)) old = i;
+            if (old >= 0)
+            {
+                double was = Math.Abs(Geo.SignedArea(Shapes[old].Pts)), now = Math.Abs(Geo.SignedArea(f.Pts));
+                if (Math.Abs(was - now) <= was * 0.05)
+                {
+                    PushUndo(Snapshot());
+                    Shape o = Shapes[old];
+                    o.Fill = f.Fill; o.FillOpacity = f.FillOpacity; o.Cache = null;
+                    Selected = null; Sel.Clear();
+                    FireDoc(); FireSel(); Invalidate();
+                    if (Message != null) Message("Fill colour changed – Ctrl+Z to undo");
+                    return true;
+                }
+            }
             PushUndo(Snapshot());
-            Shapes.Insert(0, f);      // under the lines that bound it
+            Shapes.Insert(old + 1, f);      // under the lines that bound it, above an older fill
             Selected = null; Sel.Clear();
             FireDoc(); FireSel(); Invalidate();
             if (Message != null) Message("Filled – change its colour with Fill, or Ctrl+Z to undo");
             return true;
         }
 
-        /// <summary>Fill tool: gaps up to about twice this many pixels in a line are closed; colour edges in the picture
-        /// count from this difference (0–255) to the clicked colour.</summary>
-        public int FillGap = 2, FillTolerance = 48;
+        static bool InFill(Shape s, PointF p)
+        {
+            if (s.Pts.Count < 3) return false;
+            using (GraphicsPath gp = new GraphicsPath(FillMode.Alternate))
+            {
+                gp.AddPolygon(s.Pts.ToArray());
+                if (s.Holes != null) foreach (List<PointF> h in s.Holes) if (h.Count >= 3) gp.AddPolygon(h.ToArray());
+                return gp.IsVisible(p);
+            }
+        }
+
+        /// <summary>Fill tool: gaps up to about twice this many pixels in a line are closed.</summary>
+        public int FillGap = 2;
 
         /// <summary>1.4.2 Adjust → Remove background: the plain colour at the picture's edges becomes transparent.
         /// Returns how many pixels were cleared (0 = no plain background found, nothing changed).</summary>
@@ -1365,18 +1421,17 @@ namespace SnapMeasure
             EndTextEdit(true);
             creating = null;
             int removed;
-            Bitmap nb = Regions.RemoveBackground(Image, 40, out removed);
+            Bitmap nb;
+            // a crop is not yet permanent: look at the visible part only
+            if (CropRect.HasValue)
+                using (Bitmap part = Image.Clone(CropRect.Value, PixelFormat.Format32bppArgb))
+                    nb = Regions.RemoveBackground(part, 40, out removed);
+            else nb = Regions.RemoveBackground(Image, 40, out removed);
             if (nb == null) return 0;
             PushUndo(Snapshot());
             Bitmap preBake = Image;
             BakeCrop();
             Bitmap baked = ReferenceEquals(preBake, Image) ? null : Image;
-            if (baked != null)
-            {
-                // the crop was made permanent: work on what is visible
-                nb.Dispose();
-                nb = Regions.RemoveBackground(Image, 40, out removed) ?? Effects.To32(Image);
-            }
             Image = nb;
             if (baked != null) ReleaseImage(baked);
             Invalidate(); FireDoc();
@@ -1388,7 +1443,7 @@ namespace SnapMeasure
         {
             if (!HasOrigin) return;
             string cur = Scale.Fmt(Scale.OriginX) + " ; " + Scale.Fmt(Scale.OriginY);
-            string t = AskText != null ? AskText("Origin coordinates X ; Y in " + Scale.Unit + " (e.g. 1250 ; 300)", cur) : null;
+            string t = AskText != null ? AskText(Lang.T("Origin coordinates X ; Y in") + " " + Scale.Unit + " (e.g. 1250 ; 300)", cur) : null;
             if (t == null) return;
             double x, y;
             if (!ParseXY(t, out x, out y)) { if (Message != null) Message("Type two numbers: X ; Y"); return; }
@@ -1396,7 +1451,7 @@ namespace SnapMeasure
             PushUndo(Snapshot());
             Scale.OriginX = x; Scale.OriginY = y;
             FireDoc(); Invalidate();
-            if (Message != null) Message("Origin is now X " + Scale.Fmt(x) + " ; Y " + Scale.Fmt(y));
+            if (Message != null) Message(Lang.T("Origin is now X") + " " + Scale.Fmt(x) + " ; Y " + Scale.Fmt(y));
         }
 
         /// <summary>"1250 ; 300", "1250 300" or "1250, 300" (the current culture's numbers, or invariant ones).</summary>
@@ -1416,7 +1471,7 @@ namespace SnapMeasure
         static bool Num(string s, out double v)
         {
             s = s.Trim();
-            if (double.TryParse(s, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out v) && !double.IsNaN(v) && !double.IsInfinity(v)) return true;
+            if (double.TryParse(s, NumberStyles.Float, CultureInfo.CurrentCulture, out v) && !double.IsNaN(v) && !double.IsInfinity(v)) return true;
             return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out v) && !double.IsNaN(v) && !double.IsInfinity(v);
         }
 
@@ -2546,7 +2601,9 @@ namespace SnapMeasure
                         if (tool == Tool.Freehand && c.Pts.Count >= 2)
                         {
                             // 1.4.2: the end snaps onto a nearby point or line (or closes onto the start)
+                            creating = c;       // Snap needs the stroke to find its own start
                             PointF end = Snap(c.Pts[c.Pts.Count - 1]);
+                            creating = null;
                             if (snapPt.HasValue) c.Pts.Add(end);
                             snapPt = null;
                         }

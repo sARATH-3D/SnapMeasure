@@ -1,6 +1,6 @@
 # SnapMeasure — Quick User Guide
 
-For SnapMeasure 1.4.1 · [Trailer video (40 s)](SnapMeasure-trailer.mp4) · [Full feature list](../README.md)
+For SnapMeasure 1.4.2 · [Trailer video (40 s)](SnapMeasure-trailer.mp4) · [Full feature list](../README.md)
 
 ## What SnapMeasure does
 
@@ -42,7 +42,7 @@ Press `PrtSc`, drag a box around what you want (or click a window), and the pict
 | The whole screen under the mouse | `Ctrl+PrtSc` or `Ctrl+Shift+3` |
 | The same region again | `Shift+PrtSc` or `Ctrl+Shift+4` |
 | A long page that scrolls | `Ctrl+Shift+5`, then pick the area. SnapMeasure scrolls and joins the pieces; `Esc` or **Stop** ends it |
-| Text only (OCR), copied to the clipboard | `Ctrl+Shift+6` |
+| Text only (OCR), copied to the clipboard | `Ctrl+Shift+T` or `Ctrl+Shift+6` |
 | The picture already on the clipboard | `Ctrl+Shift+7` |
 
 **PDF drawings:** right-click the tray icon → *Open…* and choose a PDF. Pick the page and the sharpness (100–300 dpi). SnapMeasure keeps the page's real paper size, so the scale can be exact (Step 2).
@@ -73,7 +73,8 @@ Pick a tool from the column on the left (or press its key), click the points, an
 | Angle | `G` | Click arm end, corner, other arm end | ∠1 in degrees |
 | Radius | `Shift+R` | Click 3 points on a curve | R, Ø and arc length |
 | Count | `N` | Click each item; letters with `Shift+N` | Σ1 = 14 nr |
-| Coordinates | `I` | First click = origin 0,0; then click points | X / Y, Y up like CAD |
+| Coordinates | `I` | First click = origin 0,0 (double-click it to give it other values); then click points | X / Y, Y up like CAD |
+| Symbol | `Shift+M` | Click, then type or pick a symbol or short text | A mark such as Ø or "Type B-3"; it does not count up |
 
 **Name what you measure:** double-click a measurement or a marker and type a label, for example *Spandrel L01* or *Blind panel*. Labels go to Excel with the values.
 
@@ -89,7 +90,8 @@ Add notes for colleagues on the same picture; they are saved with it.
 | Write on the picture | Text (drag a box to wrap) | `T` |
 | Add a comment with a tail | Speech bubble | `S` |
 | Circle a change | Revision cloud | `U` |
-| Mark approval | Stamp: Approved, Checked, For construction and 18 more, with the date | `Z` |
+| Mark approval | Stamp: Approved, Checked, For construction and 18 more, with the date | `Shift+Z` |
+| Colour in an area | Fill (click inside a closed outline) | `Shift+F` |
 | Highlight text | Highlighter pen | `Shift+H` |
 | Hide private details | Pixelate | `B` |
 | Leave a note only you see | Note (never printed or saved in the picture) | `O` |
@@ -119,7 +121,10 @@ One click copies every value; `Ctrl+S` keeps the work.
 | `Home` or `0` | Fit the picture to the window |
 | `Ctrl` + mouse wheel | Zoom |
 | `Space` + drag | Pan |
-| `Shift+Z` | Zoom to a box |
+| `Z` | Zoom to a box |
+| `Ctrl+K` | Search tools and commands |
+| `Ctrl+F` / `Ctrl+H` | Find / replace text in the drawing |
+| `Ctrl+I` / `Ctrl+G` | Invert colours / grayscale |
 | `F4` | Show or hide the scale and measurements panel |
 | `Ctrl+R` | Show or hide the rulers (drag from a ruler for a guide) |
 | `Ctrl+A`, `Ctrl+D` | Select all, duplicate |
